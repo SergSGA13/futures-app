@@ -123,7 +123,7 @@ async function loadStatsPreview() {
     const text = await res.text();
     const rows = parseCSV(text);
 
- // Find last TOTAL row that has data in column V (index 21)
+    // Find last TOTAL row that has data in column V (index 21)
     // This corresponds to sheet row 22 (V22=winrate, K22=last7d)
     // Row above it corresponds to sheet row 21 (V21=total)
     let totalIdx = -1;
@@ -139,7 +139,6 @@ async function loadStatsPreview() {
     const winrate = rows[totalIdx][21]     || '—';
     const last7d  = rows[totalIdx][10]     || '—';
     const total   = rows[totalIdx - 1]?.[21] || '—';
-
 
     document.getElementById('statWinrate').textContent = winrate;
     document.getElementById('statTotal').textContent   = total;

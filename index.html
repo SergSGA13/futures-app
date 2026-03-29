@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Futures Prediction</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="app-header">
+    <div class="header-inner">
+      <button class="back-btn" id="backBtn" onclick="goBack()" style="display:none">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M19 12H5M12 5l-7 7 7 7"/>
+        </svg>
+      </button>
+      <div class="header-logo">
+        <img src="logo.png" alt="Logo" class="logo-img" onerror="this.style.display='none';document.getElementById('logoText').style.display='block'" />
+        <span id="logoText" class="logo-text" style="display:none">⚡</span>
+        <span class="header-title" id="headerTitle">Futures Prediction</span>
+      </div>
+      <div class="header-spacer"></div>
+    </div>
+  </header>
+
+  <!-- PAGES -->
+  <main class="app-main">
+
+    <!-- HOME PAGE -->
+    <div class="page active" id="page-home">
+      <div class="home-hero">
+        <div class="hero-glow"></div>
+        <h1 class="hero-title">Futures<br/><span class="gradient-text">Prediction</span></h1>
+        <p class="hero-sub">Торговые сигналы · Стратегии · Обучение</p>
+      </div>
+      <div class="menu-grid">
+        <div class="menu-card" onclick="navigate('futures-prediction')">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+              <path d="M3 3v18h18" stroke="#66A3FF" stroke-width="2" stroke-linecap="round"/>
+              <path d="M7 12l4-4 4 4 4-4" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>Futures Prediction</h3>
+            <p>Сигналы · Правила · Стратегия входа</p>
+          </div>
+          <div class="card-arrow">›</div>
+        </div>
+
+        <div class="menu-card" onclick="navigate('futures-strategy')">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
+              <rect x="13" y="3" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
+              <rect x="3" y="13" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
+              <rect x="13" y="13" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>Futures Strategy</h3>
+            <p>Торговые стратегии · Бектесты</p>
+          </div>
+          <div class="card-arrow">›</div>
+        </div>
+
+        <div class="menu-card" onclick="navigate('indicators')">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="#66A3FF" stroke-width="2"/>
+              <path d="M12 7v5l3 3" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>Индикаторы</h3>
+            <p>TradingView индикаторы</p>
+          </div>
+          <div class="card-arrow">›</div>
+        </div>
+
+        <div class="menu-card" onclick="navigate('articles')">
+          <div class="card-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+              <path d="M4 4h16v16H4z" rx="2" stroke="#66A3FF" stroke-width="2"/>
+              <path d="M8 9h8M8 13h8M8 17h4" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>Статьи</h3>
+            <p>Психология · Обучение</p>
+          </div>
+          <div class="card-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- Stats preview -->
+      <div class="stats-preview" onclick="navigate('statistics')">
+        <div class="stats-header">
+          <span class="stats-label">📊 Статистика сигналов</span>
+          <span class="stats-link">Подробнее ›</span>
+        </div>
+        <div class="stats-row" id="statsPreview">
+          <div class="stat-item">
+            <span class="stat-val" id="statWinrate">—</span>
+            <span class="stat-key">Винрейт</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-val" id="statTotal">—</span>
+            <span class="stat-key">Всего</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-val" id="stat7d">—</span>
+            <span class="stat-key">За 7 дней</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Community links -->
+      <div class="links-section">
+        <a href="https://t.me/Prediction_Futures" class="tg-link" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#66A3FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
+          Основной канал
+        </a>
+        <a href="https://t.me/+Bx9PHt1Dy743ZTgy" class="tg-link" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#9D50FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
+          Чат сообщества
+        </a>
+      </div>
+    </div>
+
+    <!-- FUTURES PREDICTION PAGE -->
+    <div class="page" id="page-futures-prediction">
+      <div class="page-content">
+
+        <div class="warning-block">
+          <div class="warning-title">🔴 Важное предупреждение</div>
+          <p>Стратегия <strong>НЕ работает</strong> на сильных трендах и импульсах без откатов!</p>
+          <ul class="warning-list">
+            <li>Цена движется импульсно без откатов</li>
+            <li>Происходят сильные безоткатные движения</li>
+            <li>Рынок находится в активном тренде</li>
+          </ul>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">📊 Принципы работы</h2>
+          <div class="profit-loss-grid">
+            <div class="profit-block">
+              <div class="pl-icon">✅</div>
+              <div>
+                <div class="pl-title">Где зарабатываем</div>
+                <div class="pl-text">В боковых движениях (консолидациях) — рынок большую часть времени находится именно здесь</div>
+              </div>
+            </div>
+            <div class="loss-block">
+              <div class="pl-icon">❌</div>
+              <div>
+                <div class="pl-title">Где теряем</div>
+                <div class="pl-text">На импульсах и переходах к новым ценовым диапазонам — это наша зона уязвимости</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">🎯 Базовые правила</h2>
+          <div class="rules-grid">
+            <div class="rule-item">
+              <span class="rule-num">1</span>
+              <span>Размер позиции: <strong>1–5%</strong> от депозита на один сигнал</span>
+            </div>
+            <div class="rule-item">
+              <span class="rule-num">2</span>
+              <span>Время входа: оптимально <strong>10 минут</strong></span>
+            </div>
+            <div class="rule-item">
+              <span class="rule-num">3</span>
+              <span>Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала</span>
+            </div>
+            <div class="rule-item">
+              <span class="rule-num">4</span>
+              <span>При <strong>3+ сигналах подряд</strong>: приоритет сигналам 69% и 70%</span>
+            </div>
+            <div class="rule-item">
+              <span class="rule-num">5</span>
+              <span><strong>Не заходите</strong> на один сигнал 3–4 ставками</span>
+            </div>
+            <div class="rule-item">
+              <span class="rule-num">6</span>
+              <span>При получении сигнала войти по <strong>«лучшей цене»</strong> с откатом</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">⚠️ Риск-менеджмент</h2>
+          <div class="risk-list">
+            <div class="risk-item"><span class="risk-icon">🚫</span> НЕ завышайте риски</div>
+            <div class="risk-item"><span class="risk-icon">🚫</span> НЕ входите в сделку более одного раза на ускорении</div>
+            <div class="risk-item"><span class="risk-icon">🧊</span> Сохраняйте хладнокровие</div>
+            <div class="risk-item"><span class="risk-icon">📋</span> Держитесь плана</div>
+            <div class="risk-item"><span class="risk-icon">💡</span> Убытки на импульсах — нормальная часть работы</div>
+          </div>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">📋 Чек-лист перед входом</h2>
+          <div class="checklist">
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span>Рынок в боковом движении?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span>Нет сильного импульса?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span>Размер позиции не более 5% от депозита?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span>Готов принять убыток, если сигнал не сработает?</span>
+            </label>
+          </div>
+          <button class="reset-btn" onclick="resetChecklist()">Сбросить</button>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">💪 Психология торговли</h2>
+          <div class="psychology-grid">
+            <div class="psych-item">🎯 Дисциплина важнее прибыли</div>
+            <div class="psych-item">🛡️ Контроль рисков — основа успеха</div>
+            <div class="psych-item">⏳ Терпение в боковых движениях окупается</div>
+            <div class="psych-item">📚 Каждый убыток — это урок</div>
+          </div>
+          <div class="goal-block">
+            🎯 Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги
+          </div>
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title">🔗 Полезные ссылки</h2>
+          <div class="useful-links">
+            <a href="https://t.me/Prediction_Futures" target="_blank" class="useful-link">
+              <span>📢</span> Основной канал сигналов
+            </a>
+            <a href="https://t.me/+Bx9PHt1Dy743ZTgy" target="_blank" class="useful-link">
+              <span>💬</span> Чат для общения
+            </a>
+            <a href="https://youtube.com/shorts/1zcRLGRpLR8?si=TuMt3svf7b6xGSVW" target="_blank" class="useful-link">
+              <span>▶️</span> Видео-гайд: открытие позиций
+            </a>
+            <a href="https://t.me/Prediction_Futures/542" target="_blank" class="useful-link">
+              <span>📌</span> Пример входа по «лучшей цене»
+            </a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- FUTURES STRATEGY PAGE -->
+    <div class="page" id="page-futures-strategy">
+      <div class="page-content">
+        <div class="wip-container">
+          <div class="wip-icon">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="#66A3FF" stroke-width="1.5" stroke-dasharray="4 2"/>
+              <path d="M12 8v4l3 3" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h2 class="wip-title">В разработке</h2>
+          <p class="wip-desc">Проводятся бектесты стратегий.<br/>Раздел будет запущен в ближайшее время.</p>
+          <div class="wip-progress">
+            <div class="progress-bar">
+              <div class="progress-fill"></div>
+            </div>
+            <span class="progress-label">Бектестирование...</span>
+          </div>
+          <div class="wip-features">
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Торговые стратегии с описаниями</span>
+            </div>
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Результаты бектестов</span>
+            </div>
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Условия входа и выхода</span>
+            </div>
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Риск-менеджмент для каждой стратегии</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INDICATORS PAGE -->
+    <div class="page" id="page-indicators">
+      <div class="page-content">
+        <div class="wip-container">
+          <div class="wip-icon">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+              <path d="M3 3v18h18" stroke="#66A3FF" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M7 16l4-6 4 2 4-6" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 2"/>
+            </svg>
+          </div>
+          <h2 class="wip-title">В разработке</h2>
+          <p class="wip-desc">Индикаторы для TradingView<br/>скоро будут доступны здесь.</p>
+          <div class="wip-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: 40%"></div>
+            </div>
+            <span class="progress-label">Разработка...</span>
+          </div>
+          <div class="wip-features">
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Индикаторы для MEXC Futures Prediction</span>
+            </div>
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Инструкции по установке</span>
+            </div>
+            <div class="wip-feature">
+              <span class="feature-dot"></span>
+              <span>Настройка оповещений</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARTICLES PAGE -->
+    <div class="page" id="page-articles">
+      <div class="page-content">
+        <div class="articles-list">
+
+          <div class="article-card" onclick="navigate('article-tilt')">
+            <div class="article-tag">Психология</div>
+            <h3 class="article-title">Тильт — не враг. Он всего лишь симптом.</h3>
+            <p class="article-preview">Все привыкли: тильт — это главный враг трейдера. Но правда глубже: тильт — это не болезнь. Это симптом страха...</p>
+            <div class="article-footer">
+              <span class="article-read">Читать →</span>
+            </div>
+          </div>
+
+          <div class="article-card" onclick="navigate('article-paradigm')">
+            <div class="article-tag">Мышление</div>
+            <h3 class="article-title">Две парадигмы трейдинга</h3>
+            <p class="article-preview">Почему одни зарабатывают стабильно, а другие — нет? Ответ не в стратегии, а в парадигме, через которую вы смотрите на рынок...</p>
+            <div class="article-footer">
+              <span class="article-read">Читать →</span>
+            </div>
+          </div>
+
+          <div class="article-card" onclick="navigate('article-what-is')">
+            <div class="article-tag">Обучение</div>
+            <h3 class="article-title">Что такое Futures Prediction на MEXC?</h3>
+            <p class="article-preview">Пошаговое руководство: как открывать позиции, как рассчитываются выплаты, лимиты и FAQ...</p>
+            <div class="article-footer">
+              <span class="article-read">Читать →</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ARTICLE: TILT -->
+    <div class="page" id="page-article-tilt">
+      <div class="page-content">
+        <div class="article-tag standalone">Психология</div>
+        <h1 class="article-full-title">Тильт — не враг.<br/>Он всего лишь симптом.</h1>
+        <div class="article-body">
+          <p>Все привыкли: тильт — это главный враг трейдера. Сливы, эмоции, бессмысленные сделки. Но правда глубже: <strong>тильт — это не болезнь. Это симптом страха.</strong></p>
+
+          <div class="article-highlight red">
+            <strong>🔴 Страх Потерять</strong>
+            <p>Закрываешь прибыль слишком рано. Боишься заходить в сделку. Или пересиживаешь минус, лишь бы не фиксить убыток. Потому что «страшно признать ошибку».</p>
+          </div>
+
+          <div class="article-highlight red">
+            <strong>🔴 Страх Упустить</strong>
+            <p>Влетаешь без сигнала. Гонишься за движением. Покупаешь на хаях. Потому что «вдруг всё уйдёт без меня».</p>
+          </div>
+
+          <p>Эти два страха — как клещи, что сдавливают голову. Именно они ломают систему. А тильт — уже последствие.</p>
+
+          <div class="article-highlight dark">
+            <strong>❌ Тильт начинается не со слива, а с отклонения от правил</strong>
+            <ul>
+              <li>Испугался — закрыл рано</li>
+              <li>Упустил движение — начал злиться</li>
+              <li>Захотел «исправить» — начал мстить рынку</li>
+            </ul>
+          </div>
+
+          <div class="article-highlight blue">
+            <strong>✅ Лекарство от тильта</strong>
+            <p>Не «отходи от компьютера» и не «делай перерыв». А прямо взгляни в страх. Признай его. Научись действовать по системе, несмотря на него.</p>
+            <p>Когда страх перестаёт управлять решениями — тильт уходит сам.</p>
+          </div>
+        </div>
+        <a href="https://t.me/Prediction_Futures/1036" target="_blank" class="source-link">Читать в Telegram →</a>
+      </div>
+    </div>
+
+    <!-- ARTICLE: PARADIGM -->
+    <div class="page" id="page-article-paradigm">
+      <div class="page-content">
+        <div class="article-tag standalone">Мышление</div>
+        <h1 class="article-full-title">Две парадигмы трейдинга</h1>
+        <div class="article-body">
+          <p>Каждый, кто переживал глубокую просадку, задавался вопросом: <em>«Что я делаю не так?»</em></p>
+          <p>Меняют стратегии, индикаторы, читают аналитику… но снова тильт и выгорание. Ответ не в стратегии — а в парадигме, через которую вы смотрите на рынок.</p>
+
+          <div class="paradigm-grid">
+            <div class="paradigm-card bad">
+              <div class="paradigm-label">🔺 Количественный подход</div>
+              <div class="paradigm-subtitle">Путь новичка</div>
+              <div class="paradigm-thought">«Надо угадывать»</div>
+              <ul class="paradigm-list">
+                <li>Убыток = ошибка, даже если всё сделал по правилам</li>
+                <li>Эмоции управляют решениями</li>
+                <li>После серии неудач — срыв и слив</li>
+                <li>Попытка контролировать рынок, а не себя</li>
+              </ul>
+            </div>
+            <div class="paradigm-card good">
+              <div class="paradigm-label">🔹 Качественный подход</div>
+              <div class="paradigm-subtitle">Путь профи</div>
+              <div class="paradigm-thought">«Надо исполнять»</div>
+              <ul class="paradigm-list">
+                <li>Хорошая сделка — та, что по правилам, даже если в минус</li>
+                <li>Убытки — часть процесса, а не провал</li>
+                <li>Главное — стабильность на дистанции</li>
+                <li>Прибыль — побочный эффект правильных действий</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="article-highlight blue">
+            <strong>💡 Главный вывод</strong>
+            <p>Профессионал отличается от новичка не инструментами, а мышлением. Меняется не стратегия — меняешься ты.</p>
+            <p>С переходом к качественной парадигме трейдинг становится работой, а не игрой в угадайку.</p>
+          </div>
+        </div>
+        <a href="https://t.me/Prediction_Futures/730" target="_blank" class="source-link">Читать в Telegram →</a>
+      </div>
+    </div>
+
+    <!-- ARTICLE: WHAT IS FUTURES PREDICTION -->
+    <div class="page" id="page-article-what-is">
+      <div class="page-content">
+        <div class="article-tag standalone">Обучение</div>
+        <h1 class="article-full-title">Что такое Futures Prediction на MEXC?</h1>
+        <div class="article-body">
+          <p>Фьючерсные прогнозы — это простой способ заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
+
+          <div class="steps-list">
+            <div class="step-item">
+              <div class="step-num">1</div>
+              <div class="step-content">
+                <strong>Выберите базовый актив</strong>
+                <p>BTC, ETH, SOL и другие криптовалюты на MEXC</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">2</div>
+              <div class="step-content">
+                <strong>Выберите время истечения</strong>
+                <p>5м, 10м, 30м, 1ч или 1д — в зависимости от ваших предпочтений</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">3</div>
+              <div class="step-content">
+                <strong>Введите сумму</strong>
+                <p>Минимум: 5 USDT · Максимум: 150 USDT на сделку</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">4</div>
+              <div class="step-content">
+                <strong>Выберите направление</strong>
+                <p><span class="dir-up">↑ Рост</span> — если ожидаете рост · <span class="dir-down">↓ Падение</span> — если ожидаете снижение</p>
+              </div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">5</div>
+              <div class="step-content">
+                <strong>Подтвердите и ждите</strong>
+                <p>Позицию нельзя закрыть досрочно — расчёт автоматически по истечении</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="content-card">
+            <h3 class="section-title">💰 Расчёт выплат</h3>
+            <div class="formula-block">
+              <div class="formula">Сумма расчёта = Основная сумма + Прибыль</div>
+              <div class="formula">Прибыль = Сумма × Коэффициент выплат</div>
+            </div>
+            <div class="example-block">
+              <div class="example-title">Пример (выплата 82%, вход 10 USDT):</div>
+              <div class="example-row win">✅ Верный прогноз: получаете 18.2 USDT (+8.2 USDT)</div>
+              <div class="example-row loss">❌ Неверный прогноз: теряете 10 USDT</div>
+              <div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div>
+            </div>
+          </div>
+
+          <div class="content-card">
+            <h3 class="section-title">📊 Основные лимиты</h3>
+            <div class="limits-list">
+              <div class="limit-item"><span>🚫</span> Дневные убытки: максимум 10 000 USDT</div>
+              <div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div>
+              <div class="limit-item"><span>🔢</span> Сделок в день: до 100</div>
+              <div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div>
+              <div class="limit-item"><span>🤖</span> API-торговля недоступна</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- STATISTICS PAGE -->
+    <div class="page" id="page-statistics">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom: 16px">📊 Статистика сигналов</h2>
+        <div class="stats-iframe-wrap">
+          <iframe
+            src="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/pubhtml?widget=true&headers=false"
+            class="stats-iframe"
+            frameborder="0"
+            title="Статистика сигналов"
+          ></iframe>
+        </div>
+        <a href="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/edit" target="_blank" class="source-link" style="margin-top: 12px">
+          Открыть полную таблицу →
+        </a>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- BOTTOM NAV -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" id="nav-home" onclick="navigate('home')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+      <span>Главная</span>
+    </button>
+    <button class="nav-btn" id="nav-futures-prediction" onclick="navigate('futures-prediction')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      <span>Сигналы</span>
+    </button>
+    <button class="nav-btn" id="nav-statistics" onclick="navigate('statistics')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/>
+      </svg>
+      <span>Статистика</span>
+    </button>
+    <button class="nav-btn" id="nav-articles" onclick="navigate('articles')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+      </svg>
+      <span>Статьи</span>
+    </button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

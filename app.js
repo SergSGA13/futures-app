@@ -123,12 +123,23 @@ async function loadStatsPreview() {
     const text = await res.text();
     const rows = parseCSV(text);
 
-    // V21 = row index 20, col index 21
-    // V22 = row index 21, col index 21
-    // K22 = row index 21, col index 10
-    const total   = rows[20]?.[21] || '—';
-    const winrate = rows[21]?.[21] || '—';
-    const last7d  = rows[21]?.[10] || '—';
+ // Find last TOTAL row that has data in column V (index 21)
+    // This corresponds to sheet row 22 (V22=winrate, K22=last7d)
+    // Row above it corresponds to sheet row 21 (V21=total)
+    let totalIdx = -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i][0] === 'TOTAL' && rows[i][21] && rows[i][21] !== '') {
+        totalIdx = i;
+        break;
+      }
+    }
+
+    if (totalIdx === -1) return;
+
+    const winrate = rows[totalIdx][21]     || '—';
+    const last7d  = rows[totalIdx][10]     || '—';
+    const total   = rows[totalIdx - 1]?.[21] || '—';
+
 
     document.getElementById('statWinrate').textContent = winrate;
     document.getElementById('statTotal').textContent   = total;

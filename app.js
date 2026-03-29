@@ -45,6 +45,8 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
+  if (pageId === 'statistics') loadPnlChart();
+
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
 
@@ -145,6 +147,85 @@ async function loadStatsPreview() {
     document.getElementById('stat7d').textContent      = last7d;
   } catch(e) {
     console.log('Stats not available', e);
+  }
+}
+
+// ===== PNL CHART =====
+let pnlChartInstance = null;
+
+async function loadPnlChart() {
+  if (pnlChartInstance) return; // already loaded
+  try {
+    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=PNL%20Charts`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const rows = parseCSV(text);
+
+    const labels = [];
+    const data = [];
+    let lastDate = null;
+
+    for (let i = 1; i < rows.length; i++) {
+      const dateStr = rows[i][0];
+      const pnlStr  = rows[i][1];
+      if (!dateStr || !pnlStr) continue;
+
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      const date = new Date(parts[2], parts[1] - 1, parts[0]);
+
+      // First series only — stop when dates restart
+      if (lastDate && date < lastDate) break;
+      lastDate = date;
+
+      labels.push(`${parts[0]}.${parts[1]}`);
+      data.push(parseInt(pnlStr));
+    }
+
+    const ctx = document.getElementById('pnlChart').getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
+    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+    pnlChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          borderColor: '#9D50FF',
+          backgroundColor: gradient,
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.35,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.parsed.y.toLocaleString()} USDT`
+          }
+        }},
+        scales: {
+          x: {
+            ticks: { color: '#7B84B0', maxTicksLimit: 7, maxRotation: 0, font: { size: 11 } },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          },
+          y: {
+            ticks: { color: '#7B84B0', font: { size: 11 },
+              callback: v => v >= 1000 ? `${v/1000}k` : v
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          }
+        }
+      }
+    });
+  } catch(e) {
+    console.log('PNL chart not available', e);
   }
 }
 

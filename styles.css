@@ -735,6 +735,25 @@ html, body {
 }
 .nav-btn span { letter-spacing: -0.2px; }
 
+/* ===== PNL CHART ===== */
+.pnl-chart-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.pnl-chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.pnl-chart-wrap {
+  position: relative;
+  height: 180px;
+}
+
 /* ===== SCROLLBAR ===== */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }

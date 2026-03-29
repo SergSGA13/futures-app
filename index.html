@@ -540,6 +540,14 @@
     <div class="page" id="page-statistics">
       <div class="page-content">
         <h2 class="section-title" style="margin-bottom: 16px">📊 Статистика сигналов</h2>
+
+        <div class="pnl-chart-card">
+          <div class="pnl-chart-title">📈 Total PNL по датам</div>
+          <div class="pnl-chart-wrap">
+            <canvas id="pnlChart"></canvas>
+          </div>
+        </div>
+
         <div class="stats-iframe-wrap">
           <iframe
             src="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/pubhtml?widget=true&headers=false"
@@ -584,6 +592,7 @@
     </button>
   </nav>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

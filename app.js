@@ -91,28 +91,52 @@ function resetChecklist() {
 }
 
 // ===== STATISTICS PREVIEW =====
-// Tries to load data from Google Sheets (published as JSON via Apps Script or direct read)
-// Since we can't directly parse Sheets as JSON without an API key,
-// we show placeholder stats and link to full sheet
-function loadStatsPreview() {
-  // Placeholder until user sets up Apps Script endpoint
-  document.getElementById('statWinrate').textContent = '—';
-  document.getElementById('statTotal').textContent = '—';
-  document.getElementById('stat7d').textContent = '—';
+function parseCSV(text) {
+  const rows = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    const cols = [];
+    let inQuote = false;
+    let cell = '';
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        inQuote = !inQuote;
+      } else if (ch === ',' && !inQuote) {
+        cols.push(cell.trim());
+        cell = '';
+      } else {
+        cell += ch;
+      }
+    }
+    cols.push(cell.trim());
+    rows.push(cols);
+  }
+  return rows;
 }
 
-// Uncomment and fill in your Apps Script Web App URL to load real stats:
-// async function loadStatsPreview() {
-//   try {
-//     const res = await fetch('YOUR_APPS_SCRIPT_URL');
-//     const data = await res.json();
-//     document.getElementById('statWinrate').textContent = data.winrate + '%';
-//     document.getElementById('statTotal').textContent = data.total;
-//     document.getElementById('stat7d').textContent = data.last7d;
-//   } catch(e) {
-//     console.log('Stats not available');
-//   }
-// }
+async function loadStatsPreview() {
+  try {
+    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ANAL%20L7D`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const rows = parseCSV(text);
+
+    // V21 = row index 20, col index 21
+    // V22 = row index 21, col index 21
+    // K22 = row index 21, col index 10
+    const total   = rows[20]?.[21] || '—';
+    const winrate = rows[21]?.[21] || '—';
+    const last7d  = rows[21]?.[10] || '—';
+
+    document.getElementById('statWinrate').textContent = winrate;
+    document.getElementById('statTotal').textContent   = total;
+    document.getElementById('stat7d').textContent      = last7d;
+  } catch(e) {
+    console.log('Stats not available', e);
+  }
+}
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {

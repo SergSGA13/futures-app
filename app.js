@@ -142,9 +142,9 @@ async function loadStatsPreview() {
     const last7d  = rows[totalIdx][10]     || '—';
     const total   = rows[totalIdx - 1]?.[21] || '—';
 
-    document.getElementById('statWinrate').textContent = winrate;
-    document.getElementById('statTotal').textContent   = total;
     document.getElementById('stat7d').textContent      = last7d;
+    document.getElementById('statTotal').textContent   = total;
+    document.getElementById('statWinrate').textContent = winrate;
   } catch(e) {
     console.log('Stats not available', e);
   }

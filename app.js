@@ -45,7 +45,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') loadPnlChart();
+  if (pageId === 'statistics') { loadPnlChart(); loadL7dChart(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -117,17 +117,23 @@ function parseCSV(text) {
   return rows;
 }
 
+let analL7dRows = null; // cache for reuse in chart
+
+async function fetchAnalL7d() {
+  if (analL7dRows) return analL7dRows;
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ANAL%20L7D`;
+  const res = await fetch(url);
+  const text = await res.text();
+  analL7dRows = parseCSV(text);
+  return analL7dRows;
+}
+
 async function loadStatsPreview() {
   try {
-    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ANAL%20L7D`;
-    const res = await fetch(url);
-    const text = await res.text();
-    const rows = parseCSV(text);
+    const rows = await fetchAnalL7d();
 
-    // Find last TOTAL row that has data in column V (index 21)
-    // This corresponds to sheet row 22 (V22=winrate, K22=last7d)
-    // Row above it corresponds to sheet row 21 (V21=total)
+    // Find last TOTAL row with data in column V (index 21) = sheet row 22
     let totalIdx = -1;
     for (let i = rows.length - 1; i >= 0; i--) {
       if (rows[i][0] === 'TOTAL' && rows[i][21] && rows[i][21] !== '') {
@@ -135,16 +141,18 @@ async function loadStatsPreview() {
         break;
       }
     }
-
     if (totalIdx === -1) return;
 
-    const winrate = rows[totalIdx][21]     || '—';
-    const last7d  = rows[totalIdx][10]     || '—';
-    const total   = rows[totalIdx - 1]?.[21] || '—';
+    // K22 = WinRate Last 7 Day, K21 = Signals Last 7 Day (fallback: col H of TOTAL row)
+    const winrate7d  = rows[totalIdx][10]       || '—';
+    const signals7d  = rows[totalIdx - 1]?.[10] || rows[totalIdx][7] || '—';
+    const winrateAll = rows[totalIdx][21]        || '—';
+    const totalAll   = rows[totalIdx - 1]?.[21]  || '—';
 
-    document.getElementById('stat7d').textContent      = last7d;
-    document.getElementById('statTotal').textContent   = total;
-    document.getElementById('statWinrate').textContent = winrate;
+    document.getElementById('statWinrate7d').textContent  = winrate7d;
+    document.getElementById('statSignals7d').textContent  = signals7d;
+    document.getElementById('statWinrate').textContent    = winrateAll;
+    document.getElementById('statTotal').textContent      = totalAll;
   } catch(e) {
     console.log('Stats not available', e);
   }
@@ -188,6 +196,7 @@ async function loadPnlChart() {
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
     gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
 
+    const minVal = Math.min(...data);
     pnlChartInstance = new Chart(ctx, {
       type: 'line',
       data: {
@@ -212,12 +221,13 @@ async function loadPnlChart() {
         }},
         scales: {
           x: {
-            ticks: { color: '#7B84B0', maxTicksLimit: 7, maxRotation: 0, font: { size: 11 } },
+            ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } },
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
-            ticks: { color: '#7B84B0', font: { size: 11 },
-              callback: v => v >= 1000 ? `${v/1000}k` : v
+            min: minVal < 0 ? minVal : 0,
+            ticks: { color: '#7B84B0', font: { size: 11 }, maxTicksLimit: 6,
+              callback: v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v < -999 ? `${(v/1000).toFixed(0)}k` : v
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           }
@@ -226,6 +236,74 @@ async function loadPnlChart() {
     });
   } catch(e) {
     console.log('PNL chart not available', e);
+  }
+}
+
+// ===== L7D RESULTS CHART =====
+let l7dChartInstance = null;
+
+async function loadL7dChart() {
+  if (l7dChartInstance) return;
+  try {
+    const rows = await fetchAnalL7d();
+
+    // Rows 2..N-1 are signal codes. Skip header (row 0) and TOTAL/Active/TimeFrame rows.
+    // Col 0=CODE, Col 1=TotalUP, Col 2=WinUP, Col 4=TotalDOWN, Col 5=WinDOWN, Col 7=TotalAll
+    const codes = [];
+    const winRates = [];
+    const colors = [];
+
+    for (let i = 1; i < rows.length; i++) {
+      const code    = rows[i][0];
+      const totalUP = parseInt(rows[i][1]) || 0;
+      const winUP   = parseInt(rows[i][2]) || 0;
+      const totalDN = parseInt(rows[i][4]) || 0;
+      const winDN   = parseInt(rows[i][5]) || 0;
+      const total   = totalUP + totalDN;
+
+      // Skip non-code rows and codes with no trades
+      if (!code || code === 'TOTAL' || code === 'Active' || code === 'TimeFrame' || code === 'TimeZone') break;
+      if (total === 0) continue;
+
+      const wr = Math.round((winUP + winDN) / total * 100);
+      codes.push(code);
+      winRates.push(wr);
+      colors.push(wr >= 65 ? '#4EFFA0' : wr >= 50 ? '#FFD166' : '#FF5272');
+    }
+
+    const ctx = document.getElementById('l7dChart').getContext('2d');
+    l7dChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: codes,
+        datasets: [{
+          data: winRates,
+          backgroundColor: colors,
+          borderRadius: 6,
+          borderSkipped: false,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: ctx => `WinRate: ${ctx.parsed.y}%` }
+        }},
+        scales: {
+          x: {
+            ticks: { color: '#7B84B0', font: { size: 11 } },
+            grid: { display: false },
+          },
+          y: {
+            min: 0, max: 100,
+            ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          }
+        }
+      }
+    });
+  } catch(e) {
+    console.log('L7D chart not available', e);
   }
 }
 

@@ -103,16 +103,20 @@
         </div>
         <div class="stats-row" id="statsPreview">
           <div class="stat-item">
-            <span class="stat-val" id="stat7d">—</span>
-            <span class="stat-key">За 7 дней</span>
+            <span class="stat-val" id="statWinrate7d">—</span>
+            <span class="stat-key">WinRate Last 7 Day</span>
           </div>
           <div class="stat-item">
-            <span class="stat-val" id="statTotal">—</span>
-            <span class="stat-key">Всего</span>
+            <span class="stat-val" id="statSignals7d">—</span>
+            <span class="stat-key">Signals Last 7 Day</span>
           </div>
           <div class="stat-item">
             <span class="stat-val" id="statWinrate">—</span>
-            <span class="stat-key">Винрейт</span>
+            <span class="stat-key">WinRate Total</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-val" id="statTotal">—</span>
+            <span class="stat-key">Last Total</span>
           </div>
         </div>
       </div>
@@ -545,6 +549,13 @@
           <div class="pnl-chart-title">📈 Total PNL по датам</div>
           <div class="pnl-chart-wrap">
             <canvas id="pnlChart"></canvas>
+          </div>
+        </div>
+
+        <div class="pnl-chart-card">
+          <div class="pnl-chart-title">🏆 Results Last 7 Days</div>
+          <div class="pnl-chart-wrap">
+            <canvas id="l7dChart"></canvas>
           </div>
         </div>
 

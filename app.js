@@ -45,7 +45,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { loadPnlChart(); loadL7dChart(); }
+  if (pageId === 'statistics') { loadPnlChart(); loadL7dChart(); renderAnalTables(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -237,6 +237,53 @@ async function loadPnlChart() {
   } catch(e) {
     console.log('PNL chart not available', e);
   }
+}
+
+// ===== ANAL L7D TABLES =====
+function buildAnalTable(rows, startIdx, endIdx) {
+  // Columns A-H: code, upTotal, upWin, upWR, downTotal, downWin, downWR, total
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  for (let i = startIdx; i <= endIdx; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    const code = r[0];
+    if (!code) continue;
+    // Skip section header rows (no numeric data)
+    const isHeader = !r[1] && !r[7];
+    if (isHeader) continue;
+    const isTotal = code === 'TOTAL';
+    html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
+    for (let c = 0; c < 8; c++) {
+      const val = r[c] || (c === 0 ? '' : '-');
+      // Color WR% cells
+      let cls = '';
+      if ((c === 3 || c === 6) && val.includes('%')) {
+        const num = parseInt(val);
+        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+      }
+      html += `<td class="${cls}">${val}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+async function renderAnalTables() {
+  const rows = await fetchAnalL7d();
+  // A19:H22 → CSV indices 15-18 (Active section: ETHUSDT.P, BTCUSDT.P, TOTAL)
+  // A36:H41 → CSV indices 32-37 (TimeFrame section)
+  const pairsHtml = buildAnalTable(rows, 16, 18); // skip "Active" header row at 15
+  const tfHtml    = buildAnalTable(rows, 33, 37); // skip "TimeFrame" header row at 32
+
+  document.getElementById('analPairsTable').innerHTML = pairsHtml;
+  document.getElementById('analTFTable').innerHTML    = tfHtml;
+  document.getElementById('analPairsCard').style.display = 'block';
+  document.getElementById('analTFCard').style.display    = 'block';
 }
 
 // ===== L7D RESULTS CHART =====

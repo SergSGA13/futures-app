@@ -272,17 +272,27 @@ function buildAnalTable(rows, startIdx, endIdx) {
   return html;
 }
 
-async function renderAnalTables() {
-  const rows = await fetchAnalL7d();
-  // A19:H22 → CSV indices 15-18 (Active section: ETHUSDT.P, BTCUSDT.P, TOTAL)
-  // A36:H41 → CSV indices 32-37 (TimeFrame section)
-  const pairsHtml = buildAnalTable(rows, 33, 37); // A36:H41 → skip "TimeFrame" header at 32
-  const tfHtml    = buildAnalTable(rows, 33, 37); // skip "TimeFrame" header row at 32
+let analTablesLoaded = false;
 
-  document.getElementById('analPairsTable').innerHTML = pairsHtml;
-  document.getElementById('analTFTable').innerHTML    = tfHtml;
-  document.getElementById('analPairsCard').style.display = 'block';
-  document.getElementById('analTFCard').style.display    = 'block';
+async function renderAnalTables() {
+  if (analTablesLoaded) return;
+  try {
+    const rows = await fetchAnalL7d();
+    if (!rows || !rows.length) return;
+
+    // By Trading Pair: A36:H41 → CSV indices 33-37 (skip header at 32)
+    const pairsHtml = buildAnalTable(rows, 33, 37);
+    // By TimeZone: indices 27-31 (0-14, 15-29, 30-44, 45-59, TOTAL)
+    const tzHtml    = buildAnalTable(rows, 27, 31);
+
+    document.getElementById('analPairsTable').innerHTML = pairsHtml;
+    document.getElementById('analTFTable').innerHTML    = tzHtml;
+    document.getElementById('analPairsCard').style.display = 'block';
+    document.getElementById('analTFCard').style.display    = 'block';
+    analTablesLoaded = true;
+  } catch(e) {
+    console.log('Anal tables error:', e);
+  }
 }
 
 // ===== L7D RESULTS CHART =====

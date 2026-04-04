@@ -800,7 +800,7 @@ html, body {
 }
 .signal-row {
   display: grid;
-  grid-template-columns: 44px 52px 1fr 48px;
+  grid-template-columns: 44px 44px 58px 1fr 44px;
   align-items: center;
   gap: 6px;
   padding: 7px 0;
@@ -817,6 +817,7 @@ html, body {
 .sig-win     { color: #4EFFA0; }
 .sig-lose    { color: #FF5272; }
 .sig-pending { color: var(--text-muted); }
+.sig-price { font-size: 11px; color: var(--text-muted); text-align: right; }
 .signals-group-btn {
   display: flex;
   align-items: center;

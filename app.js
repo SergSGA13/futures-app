@@ -196,7 +196,6 @@ async function loadPnlChart() {
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
     gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
 
-    const minVal = Math.min(...data);
     pnlChartInstance = new Chart(ctx, {
       type: 'line',
       data: {
@@ -225,9 +224,9 @@ async function loadPnlChart() {
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
-            min: minVal < 0 ? minVal : 0,
-            ticks: { color: '#7B84B0', font: { size: 11 }, maxTicksLimit: 6,
-              callback: v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v < -999 ? `${(v/1000).toFixed(0)}k` : v
+            min: 0,
+            ticks: { color: '#7B84B0', font: { size: 11 }, stepSize: 5000,
+              callback: v => `${(v/1000).toFixed(0)}k`
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           }
@@ -277,7 +276,7 @@ async function renderAnalTables() {
   const rows = await fetchAnalL7d();
   // A19:H22 → CSV indices 15-18 (Active section: ETHUSDT.P, BTCUSDT.P, TOTAL)
   // A36:H41 → CSV indices 32-37 (TimeFrame section)
-  const pairsHtml = buildAnalTable(rows, 16, 18); // skip "Active" header row at 15
+  const pairsHtml = buildAnalTable(rows, 33, 37); // A36:H41 → skip "TimeFrame" header at 32
   const tfHtml    = buildAnalTable(rows, 33, 37); // skip "TimeFrame" header row at 32
 
   document.getElementById('analPairsTable').innerHTML = pairsHtml;

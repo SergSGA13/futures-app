@@ -280,15 +280,28 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair: A36:H41 → CSV indices 33-37 (skip header at 32)
-    const pairsHtml = buildAnalTable(rows, 33, 37);
-    // By TimeZone: indices 27-31 (0-14, 15-29, 30-44, 45-59, TOTAL)
-    const tzHtml    = buildAnalTable(rows, 27, 31);
+    // Find "Active" section dynamically → By Trading Pair
+    let activeIdx = -1;
+    let tzIdx = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] === 'Active' && activeIdx === -1) activeIdx = i + 1;
+      if (rows[i][0] === 'TimeZone' && tzIdx === -1) tzIdx = i + 1;
+    }
 
-    document.getElementById('analPairsTable').innerHTML = pairsHtml;
-    document.getElementById('analTFTable').innerHTML    = tzHtml;
-    document.getElementById('analPairsCard').style.display = 'block';
-    document.getElementById('analTFCard').style.display    = 'block';
+    if (activeIdx !== -1) {
+      // ETHUSDT.P, BTCUSDT.P, TOTAL → 3 rows after "Active" header
+      const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 2);
+      document.getElementById('analPairsTable').innerHTML = pairsHtml;
+      document.getElementById('analPairsCard').style.display = 'block';
+    }
+
+    if (tzIdx !== -1) {
+      // 0-14, 15-29, 30-44, 45-59, TOTAL → up to 5 rows after "TimeZone" header
+      const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 4);
+      document.getElementById('analTFTable').innerHTML = tzHtml;
+      document.getElementById('analTFCard').style.display = 'block';
+    }
+
     analTablesLoaded = true;
   } catch(e) {
     console.log('Anal tables error:', e);

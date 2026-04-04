@@ -466,6 +466,7 @@ async function loadTodaySignals() {
     list.innerHTML = reversed.map(r => {
       const pair   = r[1]  || '—';
       const dir    = r[2]  || '—';
+      const price  = r[3]  || '';
       const result = r[9]  || '';
       const time   = (r[17] || r[11] || '').substring(0, 5) || '—'; // HH:MM
 
@@ -482,6 +483,7 @@ async function loadTodaySignals() {
         <span class="sig-time">${time}</span>
         <span class="sig-pair">${pairShort}</span>
         <span class="sig-dir ${dirClass}">${dirLabel}</span>
+        <span class="sig-price">${price}</span>
         <span class="sig-res ${resClass}">${resLabel}</span>
       </div>`;
     }).join('');

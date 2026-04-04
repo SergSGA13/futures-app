@@ -758,6 +758,35 @@ html, body {
   height: 180px;
 }
 
+/* ===== ANAL L7D TABLES ===== */
+.anal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  overflow-x: auto;
+  display: block;
+}
+.anal-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 5px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--card-border);
+  white-space: nowrap;
+}
+.anal-table th:first-child { text-align: left; }
+.anal-table td {
+  padding: 6px 6px;
+  text-align: center;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text-muted);
+}
+.anal-table td:first-child { text-align: left; color: var(--text); font-weight: 600; }
+.anal-table tr.anal-total td { color: var(--text); font-weight: 700; border-top: 1px solid var(--card-border); }
+.wr-green { color: #4EFFA0 !important; font-weight: 700; }
+.wr-yellow { color: #FFD166 !important; font-weight: 700; }
+.wr-red { color: #FF5272 !important; font-weight: 700; }
+
 /* ===== SCROLLBAR ===== */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }

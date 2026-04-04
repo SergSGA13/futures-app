@@ -758,6 +758,86 @@ html, body {
   height: 180px;
 }
 
+/* ===== TODAY'S SIGNALS ===== */
+.signals-block {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.signals-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.signals-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.signals-timer {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg3);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.signals-loading, .signals-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+.signals-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--card-border);
+  margin-bottom: 8px;
+}
+.signal-row {
+  display: grid;
+  grid-template-columns: 44px 52px 1fr 48px;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 13px;
+}
+.signal-row:last-child { border-bottom: none; }
+.sig-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sig-pair { font-weight: 700; color: var(--text); }
+.sig-dir { font-weight: 700; font-size: 12px; }
+.sig-up   { color: #4EFFA0; }
+.sig-down { color: #FF5272; }
+.sig-res  { font-size: 12px; font-weight: 700; text-align: right; }
+.sig-win     { color: #4EFFA0; }
+.sig-lose    { color: #FF5272; }
+.sig-pending { color: var(--text-muted); }
+.signals-group-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 11px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, rgba(102,163,255,0.15), rgba(157,80,255,0.15));
+  border: 1px solid rgba(102,163,255,0.3);
+  color: var(--blue);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.signals-group-btn:active {
+  background: linear-gradient(135deg, rgba(102,163,255,0.25), rgba(157,80,255,0.25));
+  border-color: rgba(102,163,255,0.5);
+}
+
 /* ===== ARTICLE IMAGES ===== */
 .article-img {
   width: 100%;

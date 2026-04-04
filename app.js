@@ -432,16 +432,14 @@ function formatTimerAgo(timeStr) {
 async function loadTodaySignals() {
   try {
     const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-    // Select only B,C,J,L,N → Col2,Col3,Col10,Col12,Col14
-    const query = encodeURIComponent('select Col2,Col3,Col10,Col12,Col14');
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Лист1&tq=${query}`;
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=%D0%9B%D0%B8%D1%81%D1%821`;
     const res = await fetch(url);
     const text = await res.text();
     const rows = parseCSV(text);
     const today = todayStr();
 
-    // Result columns: 0=B(pair), 1=C(dir), 2=J(result), 3=L(time), 4=N(date)
-    const todayRows = rows.filter((r, i) => i > 0 && r[4] === today);
+    // Full sheet columns: B=1(pair), C=2(dir), J=9(result), L=11(time), N=13(date)
+    const todayRows = rows.filter((r, i) => i > 0 && r[13] === today);
 
     const list = document.getElementById('signalsList');
 
@@ -453,7 +451,7 @@ async function loadTodaySignals() {
 
     // Last signal time for timer (index 3 = column L)
     const lastRow = todayRows[todayRows.length - 1];
-    const lastTime = lastRow[3];
+    const lastTime = lastRow[11];
 
     // Start live timer
     if (signalTimerInterval) clearInterval(signalTimerInterval);
@@ -466,10 +464,10 @@ async function loadTodaySignals() {
     // Render list (newest first)
     const reversed = [...todayRows].reverse();
     list.innerHTML = reversed.map(r => {
-      const pair   = r[0] || '—';
-      const dir    = r[1] || '—';
-      const result = r[2] || '';
-      const time   = r[3] ? r[3].substring(0, 5) : '—'; // HH:MM
+      const pair   = r[1]  || '—';
+      const dir    = r[2]  || '—';
+      const result = r[9]  || '';
+      const time   = r[11] ? r[11].substring(0, 5) : '—'; // HH:MM
 
       const isUp   = dir === 'UP';
       const isWin  = result === 'WIN';
@@ -489,8 +487,8 @@ async function loadTodaySignals() {
     }).join('');
 
     // Summary line
-    const wins   = todayRows.filter(r => r[2] === 'WIN').length;
-    const losses = todayRows.filter(r => r[2] === 'LOSE').length;
+    const wins   = todayRows.filter(r => r[9] === 'WIN').length;
+    const losses = todayRows.filter(r => r[9] === 'LOSE').length;
     const wr     = todayRows.length > 0 ? Math.round(wins / (wins + losses || 1) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';

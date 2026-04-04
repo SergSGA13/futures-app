@@ -438,8 +438,8 @@ async function loadTodaySignals() {
     const rows = parseCSV(text);
     const today = todayStr(); // DD.MM.YYYY
 
-    // N (index 13) contains date DD.MM.YYYY — filter by today
-    const todayRows = rows.filter((r, i) => i > 0 && r[13] === today);
+    // M (index 12) contains date DD.MM.YYYY — filter by today
+    const todayRows = rows.filter((r, i) => i > 0 && r[12] === today);
 
     const list = document.getElementById('signalsList');
 

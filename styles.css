@@ -758,6 +758,27 @@ html, body {
   height: 180px;
 }
 
+/* ===== ARTICLE IMAGES ===== */
+.article-img {
+  width: 100%;
+  border-radius: var(--radius);
+  display: block;
+  margin: 4px 0 16px;
+}
+.article-img-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.img-caption {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
 /* ===== ANAL L7D TABLES ===== */
 .anal-table {
   width: 100%;

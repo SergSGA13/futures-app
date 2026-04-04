@@ -436,9 +436,9 @@ async function loadTodaySignals() {
     const res = await fetch(url);
     const text = await res.text();
     const rows = parseCSV(text);
-    const today = todayStr();
+    const today = todayStr(); // DD.MM.YYYY
 
-    // Full sheet columns: B=1(pair), C=2(dir), J=9(result), L=11(time), N=13(date)
+    // N (index 13) contains date DD.MM.YYYY — filter by today
     const todayRows = rows.filter((r, i) => i > 0 && r[13] === today);
 
     const list = document.getElementById('signalsList');
@@ -499,6 +499,20 @@ async function loadTodaySignals() {
     console.log('Signals error:', e);
     document.getElementById('signalsList').innerHTML = '<div class="signals-empty">Ошибка загрузки</div>';
   }
+}
+
+// ===== REFRESH HOME =====
+function refreshHome() {
+  const btn = document.querySelector('.refresh-btn');
+  btn.classList.add('spinning');
+  // Reset caches so data reloads
+  analL7dRows = null;
+  analTablesLoaded = false;
+  pnlChartInstance?.destroy(); pnlChartInstance = null;
+  l7dChartInstance?.destroy(); l7dChartInstance = null;
+  Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {
+    btn.classList.remove('spinning');
+  });
 }
 
 // ===== INIT =====

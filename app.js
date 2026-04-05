@@ -150,23 +150,15 @@ async function fetchAnalL7d() {
 async function loadStatsPreview() {
   try {
     const rows = await fetchAnalL7d();
+    if (!rows || rows.length < 22) return;
 
-    // Find the FIRST TOTAL row that has data in col K (index 10) — sheet row 22
-    let totalIdx = -1;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === 'TOTAL' && rows[i][10] && rows[i][10] !== '') {
-        totalIdx = i;
-        break;
-      }
-    }
-    if (totalIdx === -1) return;
-
-    // K22 = WinRate Last 7 Day, K21 = Signals Last 7 Day
-    // V22 = WinRate Total,       V21 = Signals Total
-    const winrate7d  = rows[totalIdx][10]      || '—';
-    const signals7d  = rows[totalIdx - 1]?.[10] || '—';
-    const winrateAll = rows[totalIdx][21]       || '—';
-    const totalAll   = rows[totalIdx - 1]?.[21] || '—';
+    // Fixed positions: sheet row N = parsed rows[N-1]
+    // K22 = rows[21][10], K21 = rows[20][10]
+    // V22 = rows[21][21], V21 = rows[20][21]
+    const winrate7d  = rows[21]?.[10] || '—';
+    const signals7d  = rows[20]?.[10] || '—';
+    const winrateAll = rows[21]?.[21] || '—';
+    const totalAll   = rows[20]?.[21] || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;
@@ -358,21 +350,15 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair — find anchor row "ETHUSDT.P", take 3 rows (ETH, BTC, TOTAL)
-    const pairAnchor = rows.findIndex(r => r[0] === 'ETHUSDT.P');
-    if (pairAnchor !== -1) {
-      const pairsHtml = buildAnalTable(rows, pairAnchor, pairAnchor + 2);
-      document.getElementById('analPairsTable').innerHTML = pairsHtml;
-      document.getElementById('analPairsCard').style.display = 'block';
-    }
+    // By Trading Pair — sheet A19:H22 = rows[18..21]
+    const pairsHtml = buildAnalTable(rows, 18, 21);
+    document.getElementById('analPairsTable').innerHTML = pairsHtml;
+    document.getElementById('analPairsCard').style.display = 'block';
 
-    // By TimeZone — find anchor row "0-14", take 5 rows (4 zones + TOTAL)
-    const tzAnchor = rows.findIndex(r => r[0] === '0-14');
-    if (tzAnchor !== -1) {
-      const tzHtml = buildAnalTable(rows, tzAnchor, tzAnchor + 4);
-      document.getElementById('analTFTable').innerHTML = tzHtml;
-      document.getElementById('analTFCard').style.display = 'block';
-    }
+    // By TimeZone — sheet A36:H41 = rows[35..40]
+    const tzHtml = buildAnalTable(rows, 35, 40);
+    document.getElementById('analTFTable').innerHTML = tzHtml;
+    document.getElementById('analTFCard').style.display = 'block';
 
     // By Hour Zone — cols L-S (indices 11-17)
     const hourHtml = buildHourTable(rows);

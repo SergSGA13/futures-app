@@ -144,6 +144,8 @@ async function fetchAnalL7d() {
   const res = await fetch(url);
   const text = await res.text();
   analL7dRows = parseCSV(text);
+  // DEBUG — удалить после проверки
+  console.log('ANAL L7D col A (rows 0-45):', analL7dRows.slice(0, 45).map((r, i) => `[${i}] "${r[0]}"`).join('\n'));
   return analL7dRows;
 }
 

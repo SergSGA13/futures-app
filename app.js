@@ -264,9 +264,10 @@ function buildAnalTable(rows, startIdx, endIdx, labelMap = {}) {
     if (!code) continue;
     const displayName = labelMap[code] || code;
     const isTotal = displayName === 'TOTAL';
-    // Skip rows with zero total trades (except TOTAL summary row)
+    const isMapped = labelMap.hasOwnProperty(code);
+    // Show labeled rows always; skip unlabeled zero-trade rows
     const total = parseInt(r[7]) || 0;
-    if (!isTotal && total === 0) continue;
+    if (!isTotal && !isMapped && total === 0) continue;
     html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
     for (let c = 0; c < 8; c++) {
       const val = c === 0 ? displayName : (r[c] || '-');
@@ -351,10 +352,10 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair — sheet A19:H22 = rows[18..21]
-    // Col A has numeric codes: "1"=ETHUSDT.P, "3"=BTCUSDT.P, "4"=TOTAL
-    const pairMap = { '1': 'ETHUSDT.P', '3': 'BTCUSDT.P', '4': 'TOTAL' };
-    const pairsHtml = buildAnalTable(rows, 18, 21, pairMap);
+    // By Trading Pair — sheet A20:H23 = rows[19..22]
+    // Col A codes: "2"=ETHUSDT.P, "3"=BTCUSDT.P, "5"=TOTAL
+    const pairMap = { '2': 'ETHUSDT.P', '3': 'BTCUSDT.P', '5': 'TOTAL' };
+    const pairsHtml = buildAnalTable(rows, 19, 22, pairMap);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 

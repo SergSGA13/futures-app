@@ -150,19 +150,15 @@ async function fetchAnalL7d() {
 async function loadStatsPreview() {
   try {
     const rows = await fetchAnalL7d();
-    if (!rows || rows.length < 22) return;
+    if (!rows || rows.length < 18) return;
 
-    // DEBUG stats
-    console.log('rows[20] cols 8-22:', rows[20]?.slice(8, 23));
-    console.log('rows[21] cols 8-22:', rows[21]?.slice(8, 23));
-
-    // Fixed positions: sheet row N = parsed rows[N-1]
-    // K22 = rows[21][10], K21 = rows[20][10]
-    // V22 = rows[21][21], V21 = rows[20][21]
-    const winrate7d  = rows[21]?.[10] || '—';
-    const signals7d  = rows[20]?.[10] || '—';
-    const winrateAll = rows[21]?.[21] || '—';
-    const totalAll   = rows[20]?.[21] || '—';
+    // K/V stats are at sheet rows 17-18 = parsed rows[16] and rows[17]
+    // rows[17]: col[10]=WinRate L7D, col[21]=WinRate Total
+    // rows[16]: col[10]=Signals L7D,  col[21]=Signals Total
+    const winrate7d  = rows[17]?.[10] || '—';
+    const signals7d  = rows[16]?.[10] || '—';
+    const winrateAll = rows[17]?.[21] || '—';
+    const totalAll   = rows[16]?.[21] || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;
@@ -356,15 +352,15 @@ async function renderAnalTables() {
     if (!rows || !rows.length) return;
 
     // By Trading Pair — sheet A19:H22 = rows[18..21]
-    // Col A has numeric codes: map to real pair names
-    const pairMap = { '1': 'ETHUSDT.P', '2': 'ETHUSDT.P', '3': 'BTCUSDT.P', '4': 'BTCUSDT.P', '5': 'TOTAL', 'TOTAL': 'TOTAL' };
+    // Col A has numeric codes: "1"=ETHUSDT.P, "3"=BTCUSDT.P, "4"=TOTAL
+    const pairMap = { '1': 'ETHUSDT.P', '3': 'BTCUSDT.P', '4': 'TOTAL' };
     const pairsHtml = buildAnalTable(rows, 18, 21, pairMap);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
     // By TimeZone — sheet A36:H41 = rows[35..40]
-    // Col A has numeric codes: map to time ranges
-    const tzMap = { '6': '0-14', '7': '0-14', '8': '15-29', '9': '30-44', '10': '45-59', '11': 'TOTAL', 'TOTAL': 'TOTAL' };
+    // Col A has numeric codes: "7"="0-14", "8"="15-29", "9"="30-44", "10"="45-59", "11"=TOTAL
+    const tzMap = { '7': '0-14', '8': '15-29', '9': '30-44', '10': '45-59', '11': 'TOTAL' };
     const tzHtml = buildAnalTable(rows, 35, 40, tzMap);
     document.getElementById('analTFTable').innerHTML = tzHtml;
     document.getElementById('analTFCard').style.display = 'block';

@@ -346,14 +346,14 @@ async function renderAnalTables() {
     // By Trading Pair — CSV rows[15]=ETHUSDT.P, rows[16]=BTCUSDT.P, rows[17]=TOTAL
     // (col A is empty in CSV export; labels are hard-coded here)
     const pairsHtml = buildAnalTable([
-      { label: 'ETHUSDT.P', row: rows[15] },
-      { label: 'BTCUSDT.P', row: rows[16] },
+      { label: 'ETH', row: rows[15] },
+      { label: 'BTC', row: rows[16] },
       { label: 'TOTAL',     row: rows[17] },
     ]);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
-    // By TimeZone — CSV rows[24]=0-14, [25]=15-29, [26]=30-44, [27]=45-59, [28]=TOTAL
+    // By Time Zone — CSV rows[24]=0-14, [25]=15-29, [26]=30-44, [27]=45-59, [28]=TOTAL
     // (col A is empty in CSV export; labels are hard-coded here)
     const tzHtml = buildAnalTable([
       { label: '0-14',  row: rows[24] },

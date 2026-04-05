@@ -144,13 +144,6 @@ async function fetchAnalL7d() {
   const res = await fetch(url);
   const text = await res.text();
   analL7dRows = parseCSV(text);
-  // DEBUG — удалить после проверки
-  console.log('ANAL L7D rows 0-25 (cols A-J):\n' + analL7dRows.slice(0, 25).map((r, i) =>
-    `[${i}] A="${r[0]}" B="${r[1]}" C="${r[2]}" D="${r[3]}" E="${r[4]}" F="${r[5]}" G="${r[6]}" H="${r[7]}" I="${r[8]}" J="${r[9]}"`
-  ).join('\n'));
-  console.log('ANAL L7D rows 15-22 (проверка индикаторы+пары):\n' + analL7dRows.slice(15, 23).map((r, i) =>
-    `[${15+i}] A="${r[0]}" B="${r[1]}" C="${r[2]}" H="${r[7]}"`
-  ).join('\n'));
   return analL7dRows;
 }
 
@@ -158,21 +151,22 @@ async function loadStatsPreview() {
   try {
     const rows = await fetchAnalL7d();
 
-    // Find last TOTAL row with data in column V (index 21) = sheet row 22
+    // Find the FIRST TOTAL row that has data in col K (index 10) — sheet row 22
     let totalIdx = -1;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      if (rows[i][0] === 'TOTAL' && rows[i][21] && rows[i][21] !== '') {
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] === 'TOTAL' && rows[i][10] && rows[i][10] !== '') {
         totalIdx = i;
         break;
       }
     }
     if (totalIdx === -1) return;
 
-    // K22 = WinRate Last 7 Day, K21 = Signals Last 7 Day (fallback: col H of TOTAL row)
-    const winrate7d  = rows[totalIdx][10]       || '—';
-    const signals7d  = rows[totalIdx - 1]?.[10] || rows[totalIdx][7] || '—';
-    const winrateAll = rows[totalIdx][21]        || '—';
-    const totalAll   = rows[totalIdx - 1]?.[21]  || '—';
+    // K22 = WinRate Last 7 Day, K21 = Signals Last 7 Day
+    // V22 = WinRate Total,       V21 = Signals Total
+    const winrate7d  = rows[totalIdx][10]      || '—';
+    const signals7d  = rows[totalIdx - 1]?.[10] || '—';
+    const winrateAll = rows[totalIdx][21]       || '—';
+    const totalAll   = rows[totalIdx - 1]?.[21] || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;
@@ -276,10 +270,10 @@ function buildAnalTable(rows, startIdx, endIdx) {
     if (!r) continue;
     const code = r[0];
     if (!code) continue;
-    // Skip section header rows (no numeric data)
-    const isHeader = !r[1] && !r[7];
-    if (isHeader) continue;
     const isTotal = code === 'TOTAL';
+    // Skip rows with zero total trades (except TOTAL summary row)
+    const total = parseInt(r[7]) || 0;
+    if (!isTotal && total === 0) continue;
     html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
     for (let c = 0; c < 8; c++) {
       const val = r[c] || (c === 0 ? '' : '-');
@@ -364,15 +358,21 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair — sheet A19:H22 → rows[18]..rows[21]
-    const pairsHtml = buildAnalTable(rows, 18, 21);
-    document.getElementById('analPairsTable').innerHTML = pairsHtml;
-    document.getElementById('analPairsCard').style.display = 'block';
+    // By Trading Pair — find anchor row "ETHUSDT.P", take 3 rows (ETH, BTC, TOTAL)
+    const pairAnchor = rows.findIndex(r => r[0] === 'ETHUSDT.P');
+    if (pairAnchor !== -1) {
+      const pairsHtml = buildAnalTable(rows, pairAnchor, pairAnchor + 2);
+      document.getElementById('analPairsTable').innerHTML = pairsHtml;
+      document.getElementById('analPairsCard').style.display = 'block';
+    }
 
-    // By TimeZone — sheet A36:H41 → rows[35]..rows[40]
-    const tzHtml = buildAnalTable(rows, 35, 40);
-    document.getElementById('analTFTable').innerHTML = tzHtml;
-    document.getElementById('analTFCard').style.display = 'block';
+    // By TimeZone — find anchor row "0-14", take 5 rows (4 zones + TOTAL)
+    const tzAnchor = rows.findIndex(r => r[0] === '0-14');
+    if (tzAnchor !== -1) {
+      const tzHtml = buildAnalTable(rows, tzAnchor, tzAnchor + 4);
+      document.getElementById('analTFTable').innerHTML = tzHtml;
+      document.getElementById('analTFCard').style.display = 'block';
+    }
 
     // By Hour Zone — cols L-S (indices 11-17)
     const hourHtml = buildHourTable(rows);
@@ -399,18 +399,16 @@ async function loadL7dChart() {
     const winRates = [];
     const colors = [];
 
-    // Indicator codes are in sheet rows 2–18 → parsed rows[1]..rows[17]
-    for (let i = 1; i <= 17 && i < rows.length; i++) {
-      const code    = rows[i][0];
+    // Indicator names in col A, sheet rows 2–14 = parsed rows[1..13]
+    for (let i = 1; i <= 13 && i < rows.length; i++) {
       const totalUP = parseInt(rows[i][1]) || 0;
       const winUP   = parseInt(rows[i][2]) || 0;
       const totalDN = parseInt(rows[i][4]) || 0;
       const winDN   = parseInt(rows[i][5]) || 0;
       const total   = totalUP + totalDN;
 
-      // Skip blank and TOTAL rows
-      if (!code || code === 'TOTAL') continue;
       if (total === 0) continue;
+      const code = rows[i][0] || `v.${i}`; // col A name, fallback to index
 
       const wr = Math.round((winUP + winDN) / total * 100);
       codes.push(code);

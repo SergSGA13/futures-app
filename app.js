@@ -292,6 +292,64 @@ function buildAnalTable(rows, startIdx, endIdx) {
 
 let analTablesLoaded = false;
 
+function buildHourTable(rows) {
+  // Hour zone data: col[12]=hour(0-23), col[13]=upTotal, col[14]=upWin, col[15]=upWR,
+  //                 col[16]=downTotal, col[17]=downWin, col[18]=downWR
+  const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  let totalRow = null;
+  for (let i = 1; i < rows.length; i++) {
+    const hour = rows[i][12];
+    if (hour === '' || hour === undefined) {
+      // TOTAL row: cols 13-18 have totals, col[12] is empty
+      if (rows[i][13] && rows[i][13] !== '') totalRow = rows[i];
+      continue;
+    }
+    const h = parseInt(hour);
+    if (isNaN(h) || h < 0 || h > 23) continue;
+
+    const vals = [
+      `${h}:00`,
+      rows[i][13] || '-', rows[i][14] || '-',
+      rows[i][15] || '-',
+      rows[i][16] || '-', rows[i][17] || '-',
+      rows[i][18] || '-',
+    ];
+    html += '<tr>';
+    vals.forEach((v, ci) => {
+      let cls = '';
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
+        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+      }
+      html += `<td class="${cls}">${v}</td>`;
+    });
+    html += '</tr>';
+  }
+
+  // Append total
+  if (totalRow) {
+    const vals = ['Total', totalRow[13]||'-', totalRow[14]||'-', totalRow[15]||'-',
+                  totalRow[16]||'-', totalRow[17]||'-', totalRow[18]||'-'];
+    html += '<tr class="anal-total">';
+    vals.forEach((v, ci) => {
+      let cls = '';
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
+        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+      }
+      html += `<td class="${cls}">${v}</td>`;
+    });
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  return html;
+}
+
 async function renderAnalTables() {
   if (analTablesLoaded) return;
   try {
@@ -307,18 +365,21 @@ async function renderAnalTables() {
     }
 
     if (activeIdx !== -1) {
-      // ETHUSDT.P, BTCUSDT.P, TOTAL → 3 rows after "Active" header
       const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 2);
       document.getElementById('analPairsTable').innerHTML = pairsHtml;
       document.getElementById('analPairsCard').style.display = 'block';
     }
 
     if (tzIdx !== -1) {
-      // 0-14, 15-29, 30-44, 45-59, TOTAL → up to 5 rows after "TimeZone" header
       const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 4);
       document.getElementById('analTFTable').innerHTML = tzHtml;
       document.getElementById('analTFCard').style.display = 'block';
     }
+
+    // By Hour Zone — cols L-S (indices 12-18)
+    const hourHtml = buildHourTable(rows);
+    document.getElementById('analHourTable').innerHTML = hourHtml;
+    document.getElementById('analHourCard').style.display = 'block';
 
     analTablesLoaded = true;
   } catch(e) {

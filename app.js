@@ -152,6 +152,10 @@ async function loadStatsPreview() {
     const rows = await fetchAnalL7d();
     if (!rows || rows.length < 22) return;
 
+    // DEBUG stats
+    console.log('rows[20] cols 8-22:', rows[20]?.slice(8, 23));
+    console.log('rows[21] cols 8-22:', rows[21]?.slice(8, 23));
+
     // Fixed positions: sheet row N = parsed rows[N-1]
     // K22 = rows[21][10], K21 = rows[20][10]
     // V22 = rows[21][21], V21 = rows[20][21]
@@ -250,7 +254,7 @@ async function loadPnlChart() {
 }
 
 // ===== ANAL L7D TABLES =====
-function buildAnalTable(rows, startIdx, endIdx) {
+function buildAnalTable(rows, startIdx, endIdx, labelMap = {}) {
   // Columns A-H: code, upTotal, upWin, upWR, downTotal, downWin, downWR, total
   const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
@@ -262,16 +266,17 @@ function buildAnalTable(rows, startIdx, endIdx) {
     if (!r) continue;
     const code = r[0];
     if (!code) continue;
-    const isTotal = code === 'TOTAL';
+    const displayName = labelMap[code] || code;
+    const isTotal = displayName === 'TOTAL';
     // Skip rows with zero total trades (except TOTAL summary row)
     const total = parseInt(r[7]) || 0;
     if (!isTotal && total === 0) continue;
     html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
     for (let c = 0; c < 8; c++) {
-      const val = r[c] || (c === 0 ? '' : '-');
+      const val = c === 0 ? displayName : (r[c] || '-');
       // Color WR% cells
       let cls = '';
-      if ((c === 3 || c === 6) && val.includes('%')) {
+      if ((c === 3 || c === 6) && String(val).includes('%')) {
         const num = parseInt(val);
         cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
       }
@@ -351,12 +356,16 @@ async function renderAnalTables() {
     if (!rows || !rows.length) return;
 
     // By Trading Pair — sheet A19:H22 = rows[18..21]
-    const pairsHtml = buildAnalTable(rows, 18, 21);
+    // Col A has numeric codes: map to real pair names
+    const pairMap = { '1': 'ETHUSDT.P', '2': 'ETHUSDT.P', '3': 'BTCUSDT.P', '4': 'BTCUSDT.P', '5': 'TOTAL', 'TOTAL': 'TOTAL' };
+    const pairsHtml = buildAnalTable(rows, 18, 21, pairMap);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
     // By TimeZone — sheet A36:H41 = rows[35..40]
-    const tzHtml = buildAnalTable(rows, 35, 40);
+    // Col A has numeric codes: map to time ranges
+    const tzMap = { '6': '0-14', '7': '0-14', '8': '15-29', '9': '30-44', '10': '45-59', '11': 'TOTAL', 'TOTAL': 'TOTAL' };
+    const tzHtml = buildAnalTable(rows, 35, 40, tzMap);
     document.getElementById('analTFTable').innerHTML = tzHtml;
     document.getElementById('analTFCard').style.display = 'block';
 

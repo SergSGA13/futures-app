@@ -150,15 +150,22 @@ async function fetchAnalL7d() {
 async function loadStatsPreview() {
   try {
     const rows = await fetchAnalL7d();
-    if (!rows || rows.length < 22) return;
 
-    // Fixed positions: sheet row N = parsed rows[N-1]
-    // K22 = rows[21][10], K21 = rows[20][10]
-    // V22 = rows[21][21], V21 = rows[20][21]
-    const winrate7d  = rows[21]?.[10] || '—';
-    const signals7d  = rows[20]?.[10] || '—';
-    const winrateAll = rows[21]?.[21] || '—';
-    const totalAll   = rows[20]?.[21] || '—';
+    // Find last TOTAL row with data in column V (index 21) = sheet row 22
+    let totalIdx = -1;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i][0] === 'TOTAL' && rows[i][21] && rows[i][21] !== '') {
+        totalIdx = i;
+        break;
+      }
+    }
+    if (totalIdx === -1) return;
+
+    // K22 = WinRate Last 7 Day, K21 = Signals Last 7 Day (fallback: col H of TOTAL row)
+    const winrate7d  = rows[totalIdx][10]       || '—';
+    const signals7d  = rows[totalIdx - 1]?.[10] || rows[totalIdx][7] || '—';
+    const winrateAll = rows[totalIdx][21]        || '—';
+    const totalAll   = rows[totalIdx - 1]?.[21]  || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;
@@ -262,10 +269,10 @@ function buildAnalTable(rows, startIdx, endIdx) {
     if (!r) continue;
     const code = r[0];
     if (!code) continue;
+    // Skip section header rows (no numeric data)
+    const isHeader = !r[1] && !r[7];
+    if (isHeader) continue;
     const isTotal = code === 'TOTAL';
-    // Skip rows with zero total trades (except TOTAL summary row)
-    const total = parseInt(r[7]) || 0;
-    if (!isTotal && total === 0) continue;
     html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
     for (let c = 0; c < 8; c++) {
       const val = r[c] || (c === 0 ? '' : '-');
@@ -283,89 +290,37 @@ function buildAnalTable(rows, startIdx, endIdx) {
   return html;
 }
 
-
-function buildHourTable(rows) {
-  // Hour zone data at L45:S70 (0-indexed cols 11-18):
-  // col[11]=hour(0-23), col[12]=upTotal, col[13]=upWin, col[14]=upWR,
-  // col[15]=downTotal, col[16]=downWin, col[17]=downWR, col[18]=total
-  const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%'];
-  let html = '<table class="anal-table"><thead><tr>';
-  headers.forEach(h => { html += `<th>${h}</th>`; });
-  html += '</tr></thead><tbody>';
-
-  let totalRow = null;
-  let dataFound = false;
-  for (let i = 1; i < rows.length; i++) {
-    const hour = rows[i][11]; // col L = index 11
-    if (hour === '' || hour === undefined || hour === null) {
-      // Possible TOTAL row: col[12] (M) has total data when col[11] is empty
-      if (rows[i][12] && rows[i][12] !== '') totalRow = rows[i];
-      continue;
-    }
-    const h = parseInt(hour);
-    if (isNaN(h) || h < 0 || h > 23) continue;
-
-    dataFound = true;
-    const vals = [
-      `${h}:00`,
-      rows[i][12] || '-', rows[i][13] || '-',
-      rows[i][14] || '-',
-      rows[i][15] || '-', rows[i][16] || '-',
-      rows[i][17] || '-',
-    ];
-    html += '<tr>';
-    vals.forEach((v, ci) => {
-      let cls = '';
-      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
-        const num = parseInt(v);
-        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
-      }
-      html += `<td class="${cls}">${v}</td>`;
-    });
-    html += '</tr>';
-  }
-
-  // Append total
-  if (totalRow) {
-    const vals = ['Total', totalRow[12]||'-', totalRow[13]||'-', totalRow[14]||'-',
-                  totalRow[15]||'-', totalRow[16]||'-', totalRow[17]||'-'];
-    html += '<tr class="anal-total">';
-    vals.forEach((v, ci) => {
-      let cls = '';
-      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
-        const num = parseInt(v);
-        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
-      }
-      html += `<td class="${cls}">${v}</td>`;
-    });
-    html += '</tr>';
-  }
-
-  html += '</tbody></table>';
-  return dataFound ? html : '';
-}
+let analTablesLoaded = false;
 
 async function renderAnalTables() {
+  if (analTablesLoaded) return;
   try {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair — sheet A19:H22 = rows[18..21]
-    const pairsHtml = buildAnalTable(rows, 18, 21);
-    document.getElementById('analPairsTable').innerHTML = pairsHtml;
-    document.getElementById('analPairsCard').style.display = 'block';
-
-    // By TimeZone — sheet A36:H41 = rows[35..40]
-    const tzHtml = buildAnalTable(rows, 35, 40);
-    document.getElementById('analTFTable').innerHTML = tzHtml;
-    document.getElementById('analTFCard').style.display = 'block';
-
-    // By Hour Zone — cols L-S (indices 11-17)
-    const hourHtml = buildHourTable(rows);
-    if (hourHtml) {
-      document.getElementById('analHourTable').innerHTML = hourHtml;
-      document.getElementById('analHourCard').style.display = 'block';
+    // Find "Active" section dynamically → By Trading Pair
+    let activeIdx = -1;
+    let tzIdx = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i][0] === 'Active' && activeIdx === -1) activeIdx = i + 1;
+      if (rows[i][0] === 'TimeZone' && tzIdx === -1) tzIdx = i + 1;
     }
+
+    if (activeIdx !== -1) {
+      // ETHUSDT.P, BTCUSDT.P, TOTAL → 3 rows after "Active" header
+      const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 2);
+      document.getElementById('analPairsTable').innerHTML = pairsHtml;
+      document.getElementById('analPairsCard').style.display = 'block';
+    }
+
+    if (tzIdx !== -1) {
+      // 0-14, 15-29, 30-44, 45-59, TOTAL → up to 5 rows after "TimeZone" header
+      const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 4);
+      document.getElementById('analTFTable').innerHTML = tzHtml;
+      document.getElementById('analTFCard').style.display = 'block';
+    }
+
+    analTablesLoaded = true;
   } catch(e) {
     console.log('Anal tables error:', e);
   }
@@ -385,16 +340,17 @@ async function loadL7dChart() {
     const winRates = [];
     const colors = [];
 
-    // Indicator names in col A, sheet rows 2–14 = parsed rows[1..13]
-    for (let i = 1; i <= 13 && i < rows.length; i++) {
+    for (let i = 1; i < rows.length; i++) {
+      const code    = rows[i][0];
       const totalUP = parseInt(rows[i][1]) || 0;
       const winUP   = parseInt(rows[i][2]) || 0;
       const totalDN = parseInt(rows[i][4]) || 0;
       const winDN   = parseInt(rows[i][5]) || 0;
       const total   = totalUP + totalDN;
 
+      // Skip non-code rows and codes with no trades
+      if (!code || code === 'TOTAL' || code === 'Active' || code === 'TimeFrame' || code === 'TimeZone') break;
       if (total === 0) continue;
-      const code = rows[i][0] || `v.${i}`; // col A name, fallback to index
 
       const wr = Math.round((winUP + winDN) / total * 100);
       codes.push(code);
@@ -553,6 +509,7 @@ function refreshHome() {
   btn.classList.add('spinning');
   // Reset caches so data reloads
   analL7dRows = null;
+  analTablesLoaded = false;
   pnlChartInstance?.destroy(); pnlChartInstance = null;
   l7dChartInstance?.destroy(); l7dChartInstance = null;
   Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {

@@ -250,35 +250,26 @@ async function loadPnlChart() {
 }
 
 // ===== ANAL L7D TABLES =====
-function buildAnalTable(rows, startIdx, endIdx, labelMap = {}) {
-  // Columns A-H: code, upTotal, upWin, upWR, downTotal, downWin, downWR, total
+// configs = [{label, row}] where row is the raw CSV row array
+function buildAnalTable(configs) {
   const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
 
-  for (let i = startIdx; i <= endIdx; i++) {
-    const r = rows[i];
-    if (!r) continue;
-    const code = r[0];
-    if (!code) continue;
-    const displayName = labelMap[code] || code;
-    const isTotal = displayName === 'TOTAL';
-    const isMapped = labelMap.hasOwnProperty(code);
-    // Show labeled rows always; skip unlabeled zero-trade rows
-    const total = parseInt(r[7]) || 0;
-    if (!isTotal && !isMapped && total === 0) continue;
+  for (const {label, row} of configs) {
+    if (!row) continue;
+    const isTotal = label === 'TOTAL';
     html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
-    for (let c = 0; c < 8; c++) {
-      const val = c === 0 ? displayName : (r[c] || '-');
-      // Color WR% cells
+    [label, row[1], row[2], row[3], row[4], row[5], row[6], row[7]].forEach((v, ci) => {
+      v = (v !== undefined && v !== '') ? v : (ci === 0 ? '' : '-');
       let cls = '';
-      if ((c === 3 || c === 6) && String(val).includes('%')) {
-        const num = parseInt(val);
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
         cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
       }
-      html += `<td class="${cls}">${val}</td>`;
-    }
+      html += `<td class="${cls}">${v}</td>`;
+    });
     html += '</tr>';
   }
   html += '</tbody></table>';
@@ -352,17 +343,25 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair — sheet A20:H23 = rows[19..22]
-    // Col A codes: "2"=ETHUSDT.P, "3"=BTCUSDT.P, "5"=TOTAL
-    const pairMap = { '2': 'ETHUSDT.P', '3': 'BTCUSDT.P', '5': 'TOTAL' };
-    const pairsHtml = buildAnalTable(rows, 19, 22, pairMap);
+    // By Trading Pair — CSV rows[15]=ETHUSDT.P, rows[16]=BTCUSDT.P, rows[17]=TOTAL
+    // (col A is empty in CSV export; labels are hard-coded here)
+    const pairsHtml = buildAnalTable([
+      { label: 'ETHUSDT.P', row: rows[15] },
+      { label: 'BTCUSDT.P', row: rows[16] },
+      { label: 'TOTAL',     row: rows[17] },
+    ]);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
-    // By TimeZone — sheet A36:H41 = rows[35..40]
-    // Col A has numeric codes: "7"="0-14", "8"="15-29", "9"="30-44", "10"="45-59", "11"=TOTAL
-    const tzMap = { '7': '0-14', '8': '15-29', '9': '30-44', '10': '45-59', '11': 'TOTAL' };
-    const tzHtml = buildAnalTable(rows, 35, 40, tzMap);
+    // By TimeZone — CSV rows[24]=0-14, [25]=15-29, [26]=30-44, [27]=45-59, [28]=TOTAL
+    // (col A is empty in CSV export; labels are hard-coded here)
+    const tzHtml = buildAnalTable([
+      { label: '0-14',  row: rows[24] },
+      { label: '15-29', row: rows[25] },
+      { label: '30-44', row: rows[26] },
+      { label: '45-59', row: rows[27] },
+      { label: 'TOTAL', row: rows[28] },
+    ]);
     document.getElementById('analTFTable').innerHTML = tzHtml;
     document.getElementById('analTFCard').style.display = 'block';
 
@@ -391,7 +390,13 @@ async function loadL7dChart() {
     const winRates = [];
     const colors = [];
 
-    // Indicator names in col A, sheet rows 2–14 = parsed rows[1..13]
+    // Indicator names hard-coded (col A is empty in CSV export)
+    // Order matches sheet rows 2-14 (CSV indices 1-13)
+    const indicatorNames = [
+      'v.5000','v.5','v.5','v.36','v.37','v.6000','v.7000',
+      'v.38','v.3000','v.4000','v.4','v.6','v.1'
+    ];
+
     for (let i = 1; i <= 13 && i < rows.length; i++) {
       const totalUP = parseInt(rows[i][1]) || 0;
       const winUP   = parseInt(rows[i][2]) || 0;
@@ -400,7 +405,7 @@ async function loadL7dChart() {
       const total   = totalUP + totalDN;
 
       if (total === 0) continue;
-      const code = rows[i][0] || `v.${i}`; // col A name, fallback to index
+      const code = indicatorNames[i - 1] || `#${i}`;
 
       const wr = Math.round((winUP + winDN) / total * 100);
       codes.push(code);

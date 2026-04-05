@@ -357,26 +357,15 @@ async function renderAnalTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // Find "Active" and "TimeZone" section headers in col A
-    let activeIdx = -1;
-    let tzIdx = -1;
-    for (let i = 0; i < rows.length; i++) {
-      const cell = (rows[i][0] || '').trim();
-      if (cell === 'Active' && activeIdx === -1) activeIdx = i + 1;
-      if ((cell === 'TimeZone' || cell === 'TimeFrame') && tzIdx === -1) tzIdx = i + 1;
-    }
+    // By Trading Pair — sheet A19:H22 → rows[18]..rows[21]
+    const pairsHtml = buildAnalTable(rows, 18, 21);
+    document.getElementById('analPairsTable').innerHTML = pairsHtml;
+    document.getElementById('analPairsCard').style.display = 'block';
 
-    if (activeIdx !== -1) {
-      const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 5);
-      document.getElementById('analPairsTable').innerHTML = pairsHtml;
-      document.getElementById('analPairsCard').style.display = 'block';
-    }
-
-    if (tzIdx !== -1) {
-      const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 6);
-      document.getElementById('analTFTable').innerHTML = tzHtml;
-      document.getElementById('analTFCard').style.display = 'block';
-    }
+    // By TimeZone — sheet A36:H41 → rows[35]..rows[40]
+    const tzHtml = buildAnalTable(rows, 35, 40);
+    document.getElementById('analTFTable').innerHTML = tzHtml;
+    document.getElementById('analTFCard').style.display = 'block';
 
     // By Hour Zone — cols L-S (indices 11-17)
     const hourHtml = buildHourTable(rows);
@@ -403,7 +392,8 @@ async function loadL7dChart() {
     const winRates = [];
     const colors = [];
 
-    for (let i = 1; i < rows.length; i++) {
+    // Indicator codes are in sheet rows 2–18 → parsed rows[1]..rows[17]
+    for (let i = 1; i <= 17 && i < rows.length; i++) {
       const code    = rows[i][0];
       const totalUP = parseInt(rows[i][1]) || 0;
       const winUP   = parseInt(rows[i][2]) || 0;
@@ -411,9 +401,8 @@ async function loadL7dChart() {
       const winDN   = parseInt(rows[i][5]) || 0;
       const total   = totalUP + totalDN;
 
-      // Skip section headers, TOTAL, and blank rows
-      if (!code) continue;
-      if (code === 'TOTAL' || code === 'Active' || code === 'TimeFrame' || code === 'TimeZone') continue;
+      // Skip blank and TOTAL rows
+      if (!code || code === 'TOTAL') continue;
       if (total === 0) continue;
 
       const wr = Math.round((winUP + winDN) / total * 100);

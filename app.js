@@ -290,33 +290,35 @@ function buildAnalTable(rows, startIdx, endIdx) {
   return html;
 }
 
-let analTablesLoaded = false;
 
 function buildHourTable(rows) {
-  // Hour zone data: col[12]=hour(0-23), col[13]=upTotal, col[14]=upWin, col[15]=upWR,
-  //                 col[16]=downTotal, col[17]=downWin, col[18]=downWR
+  // Hour zone data at L45:S70 (0-indexed cols 11-18):
+  // col[11]=hour(0-23), col[12]=upTotal, col[13]=upWin, col[14]=upWR,
+  // col[15]=downTotal, col[16]=downWin, col[17]=downWR, col[18]=total
   const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
 
   let totalRow = null;
+  let dataFound = false;
   for (let i = 1; i < rows.length; i++) {
-    const hour = rows[i][12];
-    if (hour === '' || hour === undefined) {
-      // TOTAL row: cols 13-18 have totals, col[12] is empty
-      if (rows[i][13] && rows[i][13] !== '') totalRow = rows[i];
+    const hour = rows[i][11]; // col L = index 11
+    if (hour === '' || hour === undefined || hour === null) {
+      // Possible TOTAL row: col[12] (M) has total data when col[11] is empty
+      if (rows[i][12] && rows[i][12] !== '') totalRow = rows[i];
       continue;
     }
     const h = parseInt(hour);
     if (isNaN(h) || h < 0 || h > 23) continue;
 
+    dataFound = true;
     const vals = [
       `${h}:00`,
-      rows[i][13] || '-', rows[i][14] || '-',
-      rows[i][15] || '-',
-      rows[i][16] || '-', rows[i][17] || '-',
-      rows[i][18] || '-',
+      rows[i][12] || '-', rows[i][13] || '-',
+      rows[i][14] || '-',
+      rows[i][15] || '-', rows[i][16] || '-',
+      rows[i][17] || '-',
     ];
     html += '<tr>';
     vals.forEach((v, ci) => {
@@ -332,8 +334,8 @@ function buildHourTable(rows) {
 
   // Append total
   if (totalRow) {
-    const vals = ['Total', totalRow[13]||'-', totalRow[14]||'-', totalRow[15]||'-',
-                  totalRow[16]||'-', totalRow[17]||'-', totalRow[18]||'-'];
+    const vals = ['Total', totalRow[12]||'-', totalRow[13]||'-', totalRow[14]||'-',
+                  totalRow[15]||'-', totalRow[16]||'-', totalRow[17]||'-'];
     html += '<tr class="anal-total">';
     vals.forEach((v, ci) => {
       let cls = '';
@@ -347,41 +349,41 @@ function buildHourTable(rows) {
   }
 
   html += '</tbody></table>';
-  return html;
+  return dataFound ? html : '';
 }
 
 async function renderAnalTables() {
-  if (analTablesLoaded) return;
   try {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // Find "Active" section dynamically → By Trading Pair
+    // Find "Active" and "TimeZone" section headers in col A
     let activeIdx = -1;
     let tzIdx = -1;
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][0] === 'Active' && activeIdx === -1) activeIdx = i + 1;
-      if (rows[i][0] === 'TimeZone' && tzIdx === -1) tzIdx = i + 1;
+      const cell = (rows[i][0] || '').trim();
+      if (cell === 'Active' && activeIdx === -1) activeIdx = i + 1;
+      if ((cell === 'TimeZone' || cell === 'TimeFrame') && tzIdx === -1) tzIdx = i + 1;
     }
 
     if (activeIdx !== -1) {
-      const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 2);
+      const pairsHtml = buildAnalTable(rows, activeIdx, activeIdx + 5);
       document.getElementById('analPairsTable').innerHTML = pairsHtml;
       document.getElementById('analPairsCard').style.display = 'block';
     }
 
     if (tzIdx !== -1) {
-      const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 4);
+      const tzHtml = buildAnalTable(rows, tzIdx, tzIdx + 6);
       document.getElementById('analTFTable').innerHTML = tzHtml;
       document.getElementById('analTFCard').style.display = 'block';
     }
 
-    // By Hour Zone — cols L-S (indices 12-18)
+    // By Hour Zone — cols L-S (indices 11-17)
     const hourHtml = buildHourTable(rows);
-    document.getElementById('analHourTable').innerHTML = hourHtml;
-    document.getElementById('analHourCard').style.display = 'block';
-
-    analTablesLoaded = true;
+    if (hourHtml) {
+      document.getElementById('analHourTable').innerHTML = hourHtml;
+      document.getElementById('analHourCard').style.display = 'block';
+    }
   } catch(e) {
     console.log('Anal tables error:', e);
   }
@@ -409,8 +411,9 @@ async function loadL7dChart() {
       const winDN   = parseInt(rows[i][5]) || 0;
       const total   = totalUP + totalDN;
 
-      // Skip non-code rows and codes with no trades
-      if (!code || code === 'TOTAL' || code === 'Active' || code === 'TimeFrame' || code === 'TimeZone') break;
+      // Skip section headers, TOTAL, and blank rows
+      if (!code) continue;
+      if (code === 'TOTAL' || code === 'Active' || code === 'TimeFrame' || code === 'TimeZone') continue;
       if (total === 0) continue;
 
       const wr = Math.round((winUP + winDN) / total * 100);
@@ -570,7 +573,6 @@ function refreshHome() {
   btn.classList.add('spinning');
   // Reset caches so data reloads
   analL7dRows = null;
-  analTablesLoaded = false;
   pnlChartInstance?.destroy(); pnlChartInstance = null;
   l7dChartInstance?.destroy(); l7dChartInstance = null;
   Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {

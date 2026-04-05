@@ -145,7 +145,12 @@ async function fetchAnalL7d() {
   const text = await res.text();
   analL7dRows = parseCSV(text);
   // DEBUG — удалить после проверки
-  console.log('ANAL L7D col A (rows 0-45):', analL7dRows.slice(0, 45).map((r, i) => `[${i}] "${r[0]}"`).join('\n'));
+  console.log('ANAL L7D rows 0-25 (cols A-J):\n' + analL7dRows.slice(0, 25).map((r, i) =>
+    `[${i}] A="${r[0]}" B="${r[1]}" C="${r[2]}" D="${r[3]}" E="${r[4]}" F="${r[5]}" G="${r[6]}" H="${r[7]}" I="${r[8]}" J="${r[9]}"`
+  ).join('\n'));
+  console.log('ANAL L7D rows 15-22 (проверка индикаторы+пары):\n' + analL7dRows.slice(15, 23).map((r, i) =>
+    `[${15+i}] A="${r[0]}" B="${r[1]}" C="${r[2]}" H="${r[7]}"`
+  ).join('\n'));
   return analL7dRows;
 }
 

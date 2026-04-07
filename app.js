@@ -71,10 +71,12 @@ function goBack() {
 function updateHeader(pageId) {
   const backBtn = document.getElementById('backBtn');
   const headerTitle = document.getElementById('headerTitle');
+  const headerLogo = document.querySelector('.header-logo');
   const spacer = document.querySelector('.header-spacer');
 
   const isHome = pageId === 'home';
   backBtn.style.display = isHome ? 'none' : 'flex';
+  headerLogo.style.visibility = isHome ? 'hidden' : 'visible';
   spacer.style.visibility = isHome ? 'hidden' : 'hidden';
   headerTitle.textContent = pageTitles[pageId] || 'Futures Prediction';
 }

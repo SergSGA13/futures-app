@@ -69,15 +69,15 @@ function goBack() {
 }
 
 function updateHeader(pageId) {
+  const header = document.querySelector('.app-header');
   const backBtn = document.getElementById('backBtn');
   const headerTitle = document.getElementById('headerTitle');
-  const headerLogo = document.querySelector('.header-logo');
-  const spacer = document.querySelector('.header-spacer');
+  const appMain = document.querySelector('.app-main');
 
   const isHome = pageId === 'home';
+  header.style.display = isHome ? 'none' : '';
+  appMain.style.top = isHome ? '0' : 'var(--header-height)';
   backBtn.style.display = isHome ? 'none' : 'flex';
-  headerLogo.style.visibility = isHome ? 'hidden' : 'visible';
-  spacer.style.visibility = isHome ? 'hidden' : 'hidden';
   headerTitle.textContent = pageTitles[pageId] || 'Futures Prediction';
 }
 

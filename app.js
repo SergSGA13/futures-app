@@ -575,6 +575,7 @@ function refreshHome() {
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
+  updateHeader('home');
   loadStatsPreview();
   loadTodaySignals();
 });

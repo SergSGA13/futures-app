@@ -25,6 +25,7 @@ const pageTitles = {
   'article-tilt': 'Статьи',
   'article-paradigm': 'Статьи',
   'article-what-is': 'Статьи',
+  'article-focus': 'Статьи',
 };
 
 let currentPage = 'home';

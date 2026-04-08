@@ -205,9 +205,9 @@ async function loadPnlChart() {
       data.push(parseInt(pnlStr));
     }
 
-    // Convert to % growth relative to first non-zero value
-    const base = data.find(v => v > 0) || 1;
-    const pctData = data.map(v => Math.round((v / base) * 100));
+    // Convert to % growth from initial investment of 5000 USDT, min 0%
+    const initialInvestment = 5000;
+    const pctData = data.map(v => Math.max(0, Math.round(((v - initialInvestment) / initialInvestment) * 100)));
 
     const ctx = document.getElementById('pnlChart').getContext('2d');
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
@@ -233,7 +233,7 @@ async function loadPnlChart() {
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: {
           callbacks: {
-            label: ctx => `+${ctx.parsed.y}%`
+            label: ctx => `Рост: +${ctx.parsed.y}% от 5 000 USDT`
           }
         }},
         scales: {
@@ -242,8 +242,9 @@ async function loadPnlChart() {
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
+            min: 0,
             ticks: { color: '#7B84B0', font: { size: 11 },
-              callback: v => `${v}%`
+              callback: v => `+${v}%`
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           }

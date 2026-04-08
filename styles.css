@@ -615,6 +615,23 @@ html, body {
   background: var(--bg3);
   border: 1px solid var(--card-border);
 }
+.insight-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.insight-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.insight-icon-purple { background: rgba(157,80,255,0.15); color: #9D50FF; }
+.insight-icon-blue   { background: rgba(102,163,255,0.15); color: #66A3FF; }
+.insight-icon-red    { background: rgba(255,82,114,0.15);  color: #FF5272; }
+.insight-icon-green  { background: rgba(78,255,160,0.15);  color: #4EFFA0; }
+.insight-row strong  { font-size: 14px; font-weight: 700; }
 .article-highlight strong { display: block; margin-bottom: 8px; font-size: 14px; }
 .article-highlight p { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
 .article-highlight ul { font-size: 13px; color: var(--text-muted); }

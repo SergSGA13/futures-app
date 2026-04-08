@@ -205,6 +205,10 @@ async function loadPnlChart() {
       data.push(parseInt(pnlStr));
     }
 
+    // Convert to % growth relative to first value
+    const base = data[0] || 1;
+    const pctData = data.map(v => Math.round((v / base) * 100));
+
     const ctx = document.getElementById('pnlChart').getContext('2d');
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
@@ -215,7 +219,7 @@ async function loadPnlChart() {
       data: {
         labels,
         datasets: [{
-          data,
+          data: pctData,
           borderColor: '#9D50FF',
           backgroundColor: gradient,
           borderWidth: 2,
@@ -229,7 +233,7 @@ async function loadPnlChart() {
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: {
           callbacks: {
-            label: ctx => `${ctx.parsed.y.toLocaleString()} USDT`
+            label: ctx => `+${ctx.parsed.y}%`
           }
         }},
         scales: {
@@ -238,9 +242,9 @@ async function loadPnlChart() {
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
-            min: 0,
-            ticks: { color: '#7B84B0', font: { size: 11 }, stepSize: 5000,
-              callback: v => `${(v/1000).toFixed(0)}k`
+            min: 100,
+            ticks: { color: '#7B84B0', font: { size: 11 },
+              callback: v => `${v}%`
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           }

@@ -505,11 +505,37 @@ html, body {
   background: var(--card);
   border: 1px solid var(--card-border);
   border-radius: var(--radius);
-  padding: 18px;
+  padding: 16px 18px;
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, background 0.2s;
 }
-.article-card:active { border-color: rgba(102,163,255,0.35); }
+.article-card:active { border-color: rgba(102,163,255,0.35); background: var(--bg3); }
+.article-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.article-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.article-icon-red   { background: rgba(255,82,114,0.12);  color: #FF5272; }
+.article-icon-blue  { background: rgba(102,163,255,0.12); color: #66A3FF; }
+.article-icon-purple{ background: rgba(157,80,255,0.12);  color: #9D50FF; }
+.article-icon-green { background: rgba(78,255,160,0.12);  color: #4EFFA0; }
+.article-tag-inline {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: rgba(102,163,255,0.1);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 .article-tag {
   display: inline-block;
   font-size: 11px;
@@ -523,6 +549,16 @@ html, body {
   letter-spacing: 0.5px;
 }
 .article-tag.standalone { margin-bottom: 12px; }
+.article-title-gradient {
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 6px;
+  line-height: 1.35;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 .article-title {
   font-size: 16px;
   font-weight: 700;

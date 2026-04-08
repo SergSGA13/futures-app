@@ -205,8 +205,8 @@ async function loadPnlChart() {
       data.push(parseInt(pnlStr));
     }
 
-    // Convert to % growth relative to first value
-    const base = data[0] || 1;
+    // Convert to % growth relative to first non-zero value
+    const base = data.find(v => v > 0) || 1;
     const pctData = data.map(v => Math.round((v / base) * 100));
 
     const ctx = document.getElementById('pnlChart').getContext('2d');
@@ -242,7 +242,6 @@ async function loadPnlChart() {
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
-            min: 100,
             ticks: { color: '#7B84B0', font: { size: 11 },
               callback: v => `${v}%`
             },

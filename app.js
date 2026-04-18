@@ -7,6 +7,35 @@ if (tg) {
   tg.setBackgroundColor('#0A0B14');
 }
 
+// ===== LANGUAGE =====
+let currentLang = localStorage.getItem('fp_lang') || 'ru';
+
+function t(key) {
+  return (i18n && i18n[currentLang] && i18n[currentLang][key]) || key;
+}
+
+function applyTranslations() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const v = t(el.getAttribute('data-i18n'));
+    el.textContent = v;
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const v = t(el.getAttribute('data-i18n-html'));
+    el.innerHTML = v;
+  });
+  document.querySelectorAll('.lang-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-lang') === currentLang);
+  });
+  const headerTitle = document.getElementById('headerTitle');
+  if (headerTitle) headerTitle.textContent = t(pageTitleKeys[currentPage] || 'title.fp');
+}
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('fp_lang', lang);
+  applyTranslations();
+}
+
 // ===== NAVIGATION =====
 const history = [];
 const navMap = {
@@ -15,17 +44,17 @@ const navMap = {
   'statistics': 'nav-statistics',
   'articles': 'nav-articles',
 };
-const pageTitles = {
-  'home': 'Futures Prediction',
-  'futures-prediction': 'Futures Prediction',
-  'futures-strategy': 'Futures Strategy',
-  'indicators': 'Индикаторы',
-  'articles': 'Статьи',
-  'statistics': 'Статистика',
-  'article-tilt': 'Статьи',
-  'article-paradigm': 'Статьи',
-  'article-what-is': 'Статьи',
-  'article-focus': 'Статьи',
+const pageTitleKeys = {
+  'home': 'title.fp',
+  'futures-prediction': 'title.fp',
+  'futures-strategy': 'title.fs',
+  'indicators': 'title.ind',
+  'articles': 'title.art',
+  'statistics': 'title.stats',
+  'article-tilt': 'title.art',
+  'article-paradigm': 'title.art',
+  'article-what-is': 'title.art',
+  'article-focus': 'title.art',
 };
 
 let currentPage = 'home';
@@ -79,7 +108,7 @@ function updateHeader(pageId) {
   header.style.display = isHome ? 'none' : '';
   appMain.style.top = isHome ? '0' : 'var(--header-height)';
   backBtn.style.display = isHome ? 'none' : 'flex';
-  headerTitle.textContent = pageTitles[pageId] || 'Futures Prediction';
+  headerTitle.textContent = t(pageTitleKeys[pageId] || 'title.fp');
 }
 
 function updateNav(pageId) {
@@ -486,9 +515,9 @@ function formatTimerAgo(timeStr) {
   const mins  = Math.floor((diff % 3600) / 60);
   const secs  = diff % 60;
 
-  if (hours > 0) return `${hours}ч ${mins}м назад`;
-  if (mins > 0)  return `${mins}м ${secs}с назад`;
-  return `${secs}с назад`;
+  if (hours > 0) return `${hours}${t('sig.ago.h')} ${mins}${t('sig.ago.m')} ${t('sig.ago.word')}`;
+  if (mins > 0)  return `${mins}${t('sig.ago.m')} ${secs}${t('sig.ago.s')} ${t('sig.ago.word')}`;
+  return `${secs}${t('sig.ago.s')} ${t('sig.ago.word')}`;
 }
 
 async function loadTodaySignals() {
@@ -506,7 +535,7 @@ async function loadTodaySignals() {
     const list = document.getElementById('signalsList');
 
     if (todayRows.length === 0) {
-      list.innerHTML = '<div class="signals-empty">Сигналов сегодня нет</div>';
+      list.innerHTML = `<div class="signals-empty">${t('sig.empty')}</div>`;
       document.getElementById('signalTimer').textContent = '—';
       return;
     }
@@ -556,12 +585,12 @@ async function loadTodaySignals() {
     const wr     = todayRows.length > 0 ? Math.round(wins / (wins + losses || 1) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
-    summary.innerHTML = `Всего: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
+    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
     list.prepend(summary);
 
   } catch(e) {
     console.log('Signals error:', e);
-    document.getElementById('signalsList').innerHTML = '<div class="signals-empty">Ошибка загрузки</div>';
+    document.getElementById('signalsList').innerHTML = `<div class="signals-empty">${t('sig.error')}</div>`;
   }
 }
 
@@ -581,6 +610,7 @@ function refreshHome() {
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
   updateHeader('home');
+  applyTranslations();
   loadStatsPreview();
   loadTodaySignals();
 });

@@ -33,7 +33,12 @@
       <div class="home-hero">
         <div class="hero-glow"></div>
         <h1 class="hero-title">Futures<br/><span class="gradient-text">Prediction</span></h1>
-        <p class="hero-sub">Торговые сигналы · Стратегии · Обучение</p>
+        <p class="hero-sub" data-i18n="home.sub">Торговые сигналы · Стратегии · Обучение</p>
+        <div class="lang-switcher">
+          <button class="lang-btn active" data-lang="ru" onclick="setLanguage('ru')">РУС</button>
+          <button class="lang-btn" data-lang="en" onclick="setLanguage('en')">ENG</button>
+          <button class="lang-btn" data-lang="uk" onclick="setLanguage('uk')">УКР</button>
+        </div>
       </div>
       <div class="menu-grid">
         <div class="menu-card" onclick="navigate('futures-prediction')">
@@ -45,7 +50,7 @@
           </div>
           <div class="card-content">
             <h3>Futures Prediction</h3>
-            <p>Сигналы · Правила · Стратегия входа</p>
+            <p data-i18n="menu.fp.sub">Сигналы · Правила · Стратегия входа</p>
           </div>
           <div class="card-arrow">›</div>
         </div>
@@ -61,7 +66,7 @@
           </div>
           <div class="card-content">
             <h3>Futures Strategy</h3>
-            <p>Торговые стратегии · Бектесты</p>
+            <p data-i18n="menu.fs.sub">Торговые стратегии · Бектесты</p>
           </div>
           <div class="card-arrow">›</div>
         </div>
@@ -74,8 +79,8 @@
             </svg>
           </div>
           <div class="card-content">
-            <h3>Индикаторы</h3>
-            <p>TradingView индикаторы</p>
+            <h3 data-i18n="menu.ind.title">Индикаторы</h3>
+            <p data-i18n="menu.ind.sub">TradingView индикаторы</p>
           </div>
           <div class="card-arrow">›</div>
         </div>
@@ -88,8 +93,8 @@
             </svg>
           </div>
           <div class="card-content">
-            <h3>Статьи</h3>
-            <p>Психология · Обучение</p>
+            <h3 data-i18n="menu.art.title">Статьи</h3>
+            <p data-i18n="menu.art.sub">Психология · Обучение</p>
           </div>
           <div class="card-arrow">›</div>
         </div>
@@ -98,8 +103,8 @@
       <!-- Stats preview -->
       <div class="stats-preview" onclick="navigate('statistics')">
         <div class="stats-header">
-          <span class="stats-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Статистика сигналов</span>
-          <span class="stats-link">Подробнее ›</span>
+          <span class="stats-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span data-i18n="stats.label">Статистика сигналов</span></span>
+          <span class="stats-link" data-i18n="stats.more">Подробнее ›</span>
         </div>
         <div class="stats-row" id="statsPreview">
           <div class="stat-item">
@@ -125,18 +130,18 @@
       <div class="links-section">
         <a href="https://t.me/+Bx9PHt1Dy743ZTgy" class="tg-link" target="_blank">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#66A3FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
-          Основной канал
+          <span data-i18n="link.main">Основной канал</span>
         </a>
         <a href="https://t.me/+qo8SRodcE-Q0NDky" class="tg-link" target="_blank">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#9D50FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
-          Чат сообщества
+          <span data-i18n="link.chat">Чат сообщества</span>
         </a>
       </div>
 
       <div style="padding: 0 16px 10px">
         <button class="refresh-btn" onclick="refreshHome()">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
-          Обновить
+          <span data-i18n="btn.refresh">Обновить</span>
         </button>
       </div>
     </div>
@@ -150,157 +155,157 @@
           <div class="signals-header">
             <div class="signals-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-3px;margin-right:6px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-              Сигналы сегодня
+              <span data-i18n="sig.today">Сигналы сегодня</span>
             </div>
             <div class="signals-timer" id="signalTimer">—</div>
           </div>
           <div id="signalsList" class="signals-list">
-            <div class="signals-loading">Загрузка...</div>
+            <div class="signals-loading" data-i18n="sig.loading">Загрузка...</div>
           </div>
           <a href="https://t.me/+Bx9PHt1Dy743ZTgy" target="_blank" class="signals-group-btn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
-            Signals Group
+            <span data-i18n="sig.group.btn">Signals Group</span>
           </a>
         </div>
 
         <div class="warning-block">
-          <div class="warning-title">🔴 Важное предупреждение</div>
-          <p>Стратегия <strong>НЕ работает</strong> на сильных трендах и импульсах без откатов!</p>
+          <div class="warning-title" data-i18n="warn.title">🔴 Важное предупреждение</div>
+          <p data-i18n-html="warn.text">Стратегия <strong>НЕ работает</strong> на сильных трендах и импульсах без откатов!</p>
           <ul class="warning-list">
-            <li>Цена движется импульсно без откатов</li>
-            <li>Происходят сильные безоткатные движения</li>
-            <li>Рынок находится в активном тренде</li>
+            <li data-i18n="warn.1">Цена движется импульсно без откатов</li>
+            <li data-i18n="warn.2">Происходят сильные безоткатные движения</li>
+            <li data-i18n="warn.3">Рынок находится в активном тренде</li>
           </ul>
         </div>
 
         <div class="content-card">
-          <h2 class="section-title">📊 Принципы работы</h2>
+          <h2 class="section-title" data-i18n="prin.title">📊 Принципы работы</h2>
           <div class="profit-loss-grid">
             <div class="profit-block">
               <div class="pl-icon">✅</div>
               <div>
-                <div class="pl-title">Где зарабатываем</div>
-                <div class="pl-text">В боковых движениях (консолидациях)- рынок большую часть времени находится именно здесь</div>
+                <div class="pl-title" data-i18n="prin.earn.title">Где зарабатываем</div>
+                <div class="pl-text" data-i18n="prin.earn.text">В боковых движениях (консолидациях)- рынок большую часть времени находится именно здесь</div>
               </div>
             </div>
             <div class="loss-block">
               <div class="pl-icon">❌</div>
               <div>
-                <div class="pl-title">Где теряем</div>
-                <div class="pl-text">На импульсах и переходах к новым ценовым диапазонам- это наша зона уязвимости</div>
+                <div class="pl-title" data-i18n="prin.lose.title">Где теряем</div>
+                <div class="pl-text" data-i18n="prin.lose.text">На импульсах и переходах к новым ценовым диапазонам- это наша зона уязвимости</div>
               </div>
             </div>
           </div>
         </div>
 
         <div class="article-img-card">
-          <p class="img-caption">Примеры отработок сигналов:</p>
+          <p class="img-caption" data-i18n="prin.img">Примеры отработок сигналов:</p>
           <img src="FP1.png" alt="" class="article-img" />
         </div>
 
         <div class="content-card">
-          <h2 class="section-title">🎯 Базовые правила</h2>
+          <h2 class="section-title" data-i18n="rules.title">🎯 Базовые правила</h2>
           <div class="rules-grid">
             <div class="rule-item">
               <span class="rule-num">1</span>
-              <span>Размер позиции: <strong>1–5%</strong> от депозита на один сигнал</span>
+              <span data-i18n-html="rule.1">Размер позиции: <strong>1–5%</strong> от депозита на один сигнал</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">2</span>
-              <span>Время входа: оптимально <strong>10 минут</strong></span>
+              <span data-i18n-html="rule.2">Время входа: оптимально <strong>10 минут</strong></span>
             </div>
             <div class="rule-item">
               <span class="rule-num">3</span>
-              <span>Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала</span>
+              <span data-i18n-html="rule.3">Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">4</span>
-              <span><strong>Не заходите</strong> на один сигнал 3–4 ставками</span>
+              <span data-i18n-html="rule.4"><strong>Не заходите</strong> на один сигнал 3–4 ставками</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">5</span>
-              <span>При получении сигнала войти по <strong>«лучшей цене»</strong> с откатом</span>
+              <span data-i18n-html="rule.5">При получении сигнала войти по <strong>«лучшей цене»</strong> с откатом</span>
             </div>
           </div>
         </div>
 
         <div class="content-card">
-          <h2 class="section-title">⚠️ Риск-менеджмент</h2>
+          <h2 class="section-title" data-i18n="risk.title">⚠️ Риск-менеджмент</h2>
           <div class="risk-list">
-            <div class="risk-item"><span class="risk-icon">🚫</span> НЕ завышайте риски</div>
-            <div class="risk-item"><span class="risk-icon">🚫</span> НЕ входите в сделку более одного раза на ускорении</div>
-            <div class="risk-item"><span class="risk-icon">🧊</span> Сохраняйте хладнокровие</div>
-            <div class="risk-item"><span class="risk-icon">📋</span> Держитесь плана</div>
-            <div class="risk-item"><span class="risk-icon">💡</span> Убытки на импульсах - нормальная часть работы</div>
+            <div class="risk-item"><span class="risk-icon">🚫</span> <span data-i18n="risk.1">НЕ завышайте риски</span></div>
+            <div class="risk-item"><span class="risk-icon">🚫</span> <span data-i18n="risk.2">НЕ входите в сделку более одного раза на ускорении</span></div>
+            <div class="risk-item"><span class="risk-icon">🧊</span> <span data-i18n="risk.3">Сохраняйте хладнокровие</span></div>
+            <div class="risk-item"><span class="risk-icon">📋</span> <span data-i18n="risk.4">Держитесь плана</span></div>
+            <div class="risk-item"><span class="risk-icon">💡</span> <span data-i18n="risk.5">Убытки на импульсах - нормальная часть работы</span></div>
           </div>
         </div>
 
         <div class="content-card">
-          <h2 class="section-title">📋 Чек-лист перед входом</h2>
+          <h2 class="section-title" data-i18n="check.title">📋 Чек-лист перед входом</h2>
           <div class="checklist">
             <label class="check-item">
               <input type="checkbox" class="check-input" />
               <span class="checkmark"></span>
-              <span>Рынок в боковом движении?</span>
+              <span data-i18n="check.1">Рынок в боковом движении?</span>
             </label>
             <label class="check-item">
               <input type="checkbox" class="check-input" />
               <span class="checkmark"></span>
-              <span>Нет сильного импульса?</span>
+              <span data-i18n="check.2">Нет сильного импульса?</span>
             </label>
             <label class="check-item">
               <input type="checkbox" class="check-input" />
               <span class="checkmark"></span>
-              <span>Размер позиции не более 5% от депозита?</span>
+              <span data-i18n="check.3">Размер позиции не более 5% от депозита?</span>
             </label>
             <label class="check-item">
               <input type="checkbox" class="check-input" />
               <span class="checkmark"></span>
-              <span>Готов принять убыток, если сигнал не сработает?</span>
+              <span data-i18n="check.4">Готов принять убыток, если сигнал не сработает?</span>
             </label>
           </div>
-          <button class="reset-btn" onclick="resetChecklist()">Сбросить</button>
+          <button class="reset-btn" onclick="resetChecklist()" data-i18n="check.reset">Сбросить</button>
         </div>
 
         <div class="content-card">
-          <h2 class="section-title">💪 Психология торговли</h2>
+          <h2 class="section-title" data-i18n="psych.title">💪 Психология торговли</h2>
           <div class="psychology-grid">
-            <div class="psych-item">🎯 Дисциплина важнее прибыли</div>
-            <div class="psych-item">🛡️ Контроль рисков- основа успеха</div>
-            <div class="psych-item">⏳ Терпение в боковых движениях окупается</div>
-            <div class="psych-item">📚 Каждый убыток- цена апгрейда стратегии</div>
+            <div class="psych-item" data-i18n="psych.1">🎯 Дисциплина важнее прибыли</div>
+            <div class="psych-item" data-i18n="psych.2">🛡️ Контроль рисков- основа успеха</div>
+            <div class="psych-item" data-i18n="psych.3">⏳ Терпение в боковых движениях окупается</div>
+            <div class="psych-item" data-i18n="psych.4">📚 Каждый убыток- цена апгрейда стратегии</div>
           </div>
-          <div class="goal-block">
+          <div class="goal-block" data-i18n="psych.goal">
             🎯 Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги
           </div>
         </div>
 
         <div class="article-img-card">
-          <p class="img-caption">Примеры успешных серий:</p>
+          <p class="img-caption" data-i18n="psych.img">Примеры успешных серий:</p>
           <img src="FP.png" alt="" class="article-img" />
           <img src="FP2.png" alt="" class="article-img" />
         </div>
        </div>
 
         <div class="content-card">
-          <h2 class="section-title">🔗 Полезные ссылки</h2>
+          <h2 class="section-title" data-i18n="ulinks.title">🔗 Полезные ссылки</h2>
           <div class="useful-links">
             <a href="https://t.me/+Bx9PHt1Dy743ZTgy" target="_blank" class="useful-link">
-              <span>📢</span> Основной канал сигналов
+              <span>📢</span> <span data-i18n="ulinks.channel">Основной канал сигналов</span>
             </a>
             <a href="https://t.me/+qo8SRodcE-Q0NDky" target="_blank" class="useful-link">
-              <span>💬</span> Чат для общения
+              <span>💬</span> <span data-i18n="ulinks.chat">Чат для общения</span>
             </a>
             <a href="https://youtube.com/shorts/1zcRLGRpLR8?si=TuMt3svf7b6xGSVW" target="_blank" class="useful-link">
-              <span>▶️</span> Видео-гайд: открытие позиций
+              <span>▶️</span> <span data-i18n="ulinks.video">Видео-гайд: открытие позиций</span>
             </a>
             <a href="https://t.me/c/2809766098/5608" target="_blank" class="useful-link">
-              <span>📌</span> Пример открытия по «лучшей цене»
+              <span>📌</span> <span data-i18n="ulinks.example">Пример открытия по «лучшей цене»</span>
             </a>
           </div>
         </div>
      </div>
-    
+
     <!-- FUTURES STRATEGY PAGE -->
     <div class="page" id="page-futures-strategy">
       <div class="page-content">
@@ -311,30 +316,30 @@
               <path d="M12 8v4l3 3" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <h2 class="wip-title">В разработке</h2>
-          <p class="wip-desc">Проводятся бектесты стратегий.<br/>Раздел будет запущен в ближайшее время.</p>
+          <h2 class="wip-title" data-i18n="wip.title">В разработке</h2>
+          <p class="wip-desc" data-i18n-html="wip.fs.desc">Проводятся бектесты стратегий.<br/>Раздел будет запущен в ближайшее время.</p>
           <div class="wip-progress">
             <div class="progress-bar">
               <div class="progress-fill"></div>
             </div>
-            <span class="progress-label">Бектестирование...</span>
+            <span class="progress-label" data-i18n="wip.fs.progress">Бектестирование...</span>
           </div>
           <div class="wip-features">
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Торговые стратегии с описаниями</span>
+              <span data-i18n="wip.fs.1">Торговые стратегии с описаниями</span>
             </div>
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Результаты бектестов</span>
+              <span data-i18n="wip.fs.2">Результаты бектестов</span>
             </div>
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Условия входа и выхода</span>
+              <span data-i18n="wip.fs.3">Условия входа и выхода</span>
             </div>
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Риск-менеджмент для каждой стратегии</span>
+              <span data-i18n="wip.fs.4">Риск-менеджмент для каждой стратегии</span>
             </div>
           </div>
         </div>
@@ -351,26 +356,26 @@
               <path d="M7 16l4-6 4 2 4-6" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 2"/>
             </svg>
           </div>
-          <h2 class="wip-title">В разработке</h2>
-          <p class="wip-desc">Индикаторы для TradingView<br/>скоро будут доступны здесь.</p>
+          <h2 class="wip-title" data-i18n="wip.title">В разработке</h2>
+          <p class="wip-desc" data-i18n-html="wip.ind.desc">Индикаторы для TradingView<br/>скоро будут доступны здесь.</p>
           <div class="wip-progress">
             <div class="progress-bar">
               <div class="progress-fill" style="width: 40%"></div>
             </div>
-            <span class="progress-label">Разработка...</span>
+            <span class="progress-label" data-i18n="wip.ind.progress">Разработка...</span>
           </div>
           <div class="wip-features">
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Индикаторы для MEXC Futures Prediction</span>
+              <span data-i18n="wip.ind.1">Индикаторы для MEXC Futures Prediction</span>
             </div>
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Инструкции по установке</span>
+              <span data-i18n="wip.ind.2">Инструкции по установке</span>
             </div>
             <div class="wip-feature">
               <span class="feature-dot"></span>
-              <span>Настройка оповещений</span>
+              <span data-i18n="wip.ind.3">Настройка оповещений</span>
             </div>
           </div>
         </div>
@@ -387,12 +392,12 @@
               <div class="article-icon article-icon-red">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               </div>
-              <span class="article-tag-inline">Психология</span>
+              <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
             </div>
-            <h3 class="article-title-gradient">Ты борешься не с тильтом</h3>
-            <p class="article-preview">Тильт— лишь вершина. Корень— страх, который управляет твоими решениями.</p>
+            <h3 class="article-title-gradient" data-i18n="art.tilt.title">Ты борешься не с тильтом</h3>
+            <p class="article-preview" data-i18n="art.tilt.preview">Тильт— лишь вершина. Корень— страх, который управляет твоими решениями.</p>
             <div class="article-footer">
-              <span class="article-read">Читать →</span>
+              <span class="article-read" data-i18n="art.read">Читать →</span>
             </div>
           </div>
 
@@ -401,12 +406,12 @@
               <div class="article-icon article-icon-blue">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
-              <span class="article-tag-inline">Мышление</span>
+              <span class="article-tag-inline" data-i18n="art.tag.mind">Мышление</span>
             </div>
-            <h3 class="article-title-gradient">Почему дисциплина всегда побеждает эмоции</h3>
-            <p class="article-preview">Стабильность приходит не из сигналов, а из системы поведения.</p>
+            <h3 class="article-title-gradient" data-i18n="art.paradigm.title">Почему дисциплина всегда побеждает эмоции</h3>
+            <p class="article-preview" data-i18n="art.paradigm.preview">Стабильность приходит не из сигналов, а из системы поведения.</p>
             <div class="article-footer">
-              <span class="article-read">Читать →</span>
+              <span class="article-read" data-i18n="art.read">Читать →</span>
             </div>
           </div>
 
@@ -415,12 +420,12 @@
               <div class="article-icon article-icon-purple">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               </div>
-              <span class="article-tag-inline">Обучение</span>
+              <span class="article-tag-inline" data-i18n="art.tag.edu">Обучение</span>
             </div>
-            <h3 class="article-title-gradient">Futures Prediction: как это работает на самом деле</h3>
-            <p class="article-preview">Механика, расчёты и то, о чём обычно не говорят.</p>
+            <h3 class="article-title-gradient" data-i18n="art.whatis.title">Futures Prediction: как это работает на самом деле</h3>
+            <p class="article-preview" data-i18n="art.whatis.preview">Механика, расчёты и то, о чём обычно не говорят.</p>
             <div class="article-footer">
-              <span class="article-read">Читать →</span>
+              <span class="article-read" data-i18n="art.read">Читать →</span>
             </div>
           </div>
 
@@ -429,12 +434,12 @@
               <div class="article-icon article-icon-green">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
               </div>
-              <span class="article-tag-inline">Психология</span>
+              <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
             </div>
-            <h3 class="article-title-gradient">Грааля не существует. Есть система</h3>
-            <p class="article-preview">Чем сильнее ты пытаешься «победить рынок», тем хуже итог.</p>
+            <h3 class="article-title-gradient" data-i18n="art.focus.title">Грааля не существует. Есть система</h3>
+            <p class="article-preview" data-i18n="art.focus.preview">Чем сильнее ты пытаешься «победить рынок», тем хуже итог.</p>
             <div class="article-footer">
-              <span class="article-read">Читать →</span>
+              <span class="article-read" data-i18n="art.read">Читать →</span>
             </div>
           </div>
 
@@ -445,10 +450,10 @@
     <!-- ARTICLE: TILT -->
     <div class="page" id="page-article-tilt">
       <div class="page-content">
-        <div class="article-tag standalone">Психология</div>
-        <h1 class="article-full-title">Тильт- не враг.<br/>Он всего лишь симптом.</h1>
+        <div class="article-tag standalone" data-i18n="art.tag.psych">Психология</div>
+        <h1 class="article-full-title" data-i18n-html="art.tilt.full">Тильт— не враг.<br/>Он всего лишь симптом.</h1>
         <img src="tilt.png" alt="" class="article-img" />
-        <div class="article-body">
+        <div class="article-body" data-i18n-html="art.tilt.body">
           <p>Все привыкли: тильт- это главный враг трейдера. Сливы, эмоции, бессмысленные сделки. Но правда глубже: <strong>тильт- это не болезнь. Это симптом страха.</strong></p>
 
           <div class="article-highlight red">
@@ -478,17 +483,17 @@
             <p>Когда страх перестаёт управлять решениями- тильт уходит сам.</p>
           </div>
         </div>
-        <a href="https://t.me/c/2809766098/1036" target="_blank" class="source-link">Читать в Telegram →</a>
+        <a href="https://t.me/c/2809766098/1036" target="_blank" class="source-link" data-i18n="art.tg">Читать в Telegram →</a>
       </div>
     </div>
 
     <!-- ARTICLE: PARADIGM -->
     <div class="page" id="page-article-paradigm">
       <div class="page-content">
-        <div class="article-tag standalone">Мышление</div>
-        <h1 class="article-full-title">Эмоции или Дисциплина</h1>
+        <div class="article-tag standalone" data-i18n="art.tag.mind">Мышление</div>
+        <h1 class="article-full-title" data-i18n-html="art.paradigm.full">Эмоции или Дисциплина</h1>
         <img src="emotions.png" alt="" class="article-img" />
-        <div class="article-body">
+        <div class="article-body" data-i18n-html="art.paradigm.body">
           <p>Каждый, кто переживал глубокую просадку, задавался вопросом: <em>«Что я делаю не так?»</em></p>
           <p>Меняют стратегии, индикаторы, читают аналитику… но снова тильт и выгорание. Ответ не в стратегии- а в парадигме, через которую вы смотрите на рынок.</p>
 
@@ -523,16 +528,16 @@
             <p>С переходом к качественной парадигме трейдинг становится работой, а не игрой в угадайку.</p>
           </div>
         </div>
-        <a href="https://t.me/c/2809766098/730" target="_blank" class="source-link">Читать в Telegram →</a>
+        <a href="https://t.me/c/2809766098/730" target="_blank" class="source-link" data-i18n="art.tg">Читать в Telegram →</a>
       </div>
     </div>
 
     <!-- ARTICLE: WHAT IS FUTURES PREDICTION -->
     <div class="page" id="page-article-what-is">
       <div class="page-content">
-        <div class="article-tag standalone">Обучение</div>
-        <h1 class="article-full-title">Что такое Futures Prediction?</h1>
-        <div class="article-body">
+        <div class="article-tag standalone" data-i18n="art.tag.edu">Обучение</div>
+        <h1 class="article-full-title" data-i18n="art.whatis.full">Что такое Futures Prediction?</h1>
+        <div class="article-body" data-i18n-html="art.whatis.body">
           <p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
 
           <div class="steps-list">
@@ -605,8 +610,8 @@
     <!-- ARTICLE: FOCUS -->
     <div class="page" id="page-article-focus">
       <div class="page-content">
-        <div class="article-tag standalone">Психология</div>
-        <h1 class="article-full-title">Грааля не существует.<br/>Есть система.</h1>
+        <div class="article-tag standalone" data-i18n="art.tag.psych">Психология</div>
+        <h1 class="article-full-title" data-i18n-html="art.focus.full">Грааля не существует.<br/>Есть система.</h1>
 
         <!-- SVG banner -->
         <svg viewBox="0 0 360 160" xmlns="http://www.w3.org/2000/svg" style="width:100%;border-radius:16px;display:block;margin-bottom:20px">
@@ -644,7 +649,7 @@
           <text x="180" y="148" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="600" fill="#7B84B0" letter-spacing="2">FOCUS · SYSTEM · DISCIPLINE</text>
         </svg>
 
-        <div class="article-body">
+        <div class="article-body" data-i18n-html="art.focus.body">
           <p>Большинство в рынке делают одно и то же: ищут Грааль, прыгают по сетапам, поглощают тонны инфы... и годами сливают депозиты.</p>
           <p>Пока не приходит неприятное осознание: <strong>проблема не в рынке. Проблема в фокусе.</strong></p>
 
@@ -709,38 +714,38 @@
     <!-- STATISTICS PAGE -->
     <div class="page" id="page-statistics">
       <div class="page-content">
-        <h2 class="section-title" style="margin-bottom: 16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Статистика сигналов</h2>
+        <h2 class="section-title" style="margin-bottom: 16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span data-i18n="stats.page.title">Статистика сигналов</span></h2>
 
         <div class="pnl-chart-card">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Total PNL - ALL Periods</div>
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="stats.pnl">Total PNL - ALL Periods</span></div>
           <div class="pnl-chart-wrap">
             <canvas id="pnlChart"></canvas>
           </div>
         </div>
 
         <div class="pnl-chart-card" id="analPairsCard" style="display:none">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>By Trading Pair - Last 7 Days</div>
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="stats.pairs">By Trading Pair - Last 7 Days</span></div>
           <div id="analPairsTable"></div>
         </div>
 
         <div class="pnl-chart-card" id="analTFCard" style="display:none">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Time Zone - Last 7 Days</div>
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="stats.tz">By Time Zone - Last 7 Days</span></div>
           <div id="analTFTable"></div>
         </div>
 
         <div class="pnl-chart-card" id="analHourCard" style="display:none">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone - ALL Periods</div>
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="stats.hour">By Hour Zone - ALL Periods</span></div>
           <div id="analHourTable"></div>
         </div>
 
         <div class="pnl-chart-card">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M18 2H6v7a6 6 0 0012 0V2z"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/></svg>By Indicator Series — Last 7 Days</div>
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M18 2H6v7a6 6 0 0012 0V2z"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/></svg><span data-i18n="stats.indicator">By Indicator Series — Last 7 Days</span></div>
           <div class="pnl-chart-wrap">
             <canvas id="l7dChart"></canvas>
           </div>
         </div>
 
-        <a href="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/edit" target="_blank" class="source-link" style="margin-top: 12px">
+        <a href="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/edit" target="_blank" class="source-link" style="margin-top: 12px" data-i18n="stats.open">
           Открыть полную таблицу →
         </a>
       </div>
@@ -754,29 +759,30 @@
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
       </svg>
-      <span>Главная</span>
+      <span data-i18n="nav.home">Главная</span>
     </button>
     <button class="nav-btn" id="nav-futures-prediction" onclick="navigate('futures-prediction')">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
       </svg>
-      <span>Сигналы</span>
+      <span data-i18n="nav.signals">Сигналы</span>
     </button>
     <button class="nav-btn" id="nav-statistics" onclick="navigate('statistics')">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/>
       </svg>
-      <span>Статистика</span>
+      <span data-i18n="nav.stats">Статистика</span>
     </button>
     <button class="nav-btn" id="nav-articles" onclick="navigate('articles')">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
       </svg>
-      <span>Статьи</span>
+      <span data-i18n="nav.articles">Статьи</span>
     </button>
   </nav>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="translations.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

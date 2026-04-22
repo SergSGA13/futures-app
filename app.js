@@ -570,16 +570,29 @@ async function loadTodaySignals() {
       const dirLabel  = isUp ? '↑ UP' : '↓ DOWN';
       const pairShort = pair.replace('USDT.P', '');
 
-      const WIN_ICON  = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 6.5L5 9.5L11 3.5" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-      const LOSE_ICON = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3 3L10 10M10 3L3 10" stroke="#FF3B6B" stroke-width="2" stroke-linecap="round"/></svg>`;
+      const WIN_ICON  = `<svg width="22" height="20" viewBox="0 0 22 20" fill="none" style="vertical-align:-4px">
+        <path d="M2 10.5L8 16.5L20 3.5" stroke="#4EFFA0" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.15"/>
+        <path d="M2.5 10.9L8.1 16.9L20.3 3.9" stroke="#4EFFA0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.65"/>
+        <path d="M1.7 10L7.7 16L19.7 3" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9"/>
+        <path d="M3 11.3L8.3 16.2L20.6 4.1" stroke="#4EFFA0" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.5"/>
+        <path d="M2.2 9.6L7.5 15.5L19.3 2.6" stroke="#4EFFA0" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.4"/>
+      </svg>`;
+      const LOSE_ICON = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="vertical-align:-4px">
+        <path d="M3 3L17 17M17 3L3 17" stroke="#FF3B6B" stroke-width="5.5" stroke-linecap="round" stroke-opacity="0.15"/>
+        <path d="M3.4 2.6L17.4 16.6M16.6 2.6L2.6 16.6" stroke="#FF3B6B" stroke-width="3" stroke-linecap="round" stroke-opacity="0.65"/>
+        <path d="M2.6 3.4L16.6 17.4M17.4 3.4L3.4 17.4" stroke="#FF3B6B" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
+        <path d="M3.8 3L17.8 17M17.8 3L3 16.8" stroke="#FF3B6B" stroke-width="1.1" stroke-linecap="round" stroke-opacity="0.5"/>
+        <path d="M2.5 3.8L16.2 17.5M17.5 3.8L3.2 17.2" stroke="#FF3B6B" stroke-width="0.8" stroke-linecap="round" stroke-opacity="0.4"/>
+      </svg>`;
       const resIcon   = isWin ? WIN_ICON : isLose ? LOSE_ICON : '';
+      const resText   = isWin ? 'WIN' : isLose ? 'LOSE' : '—';
 
       return `<div class="signal-row">
         <span class="sig-time">${time}</span>
         <span class="sig-pair">${pairShort}</span>
         <span class="sig-dir ${dirClass}">${dirLabel}</span>
         <span class="sig-price">${price}</span>
-        <span class="sig-res ${resClass}">${resIcon}${resLabel}</span>
+        <span class="sig-res ${resClass}">${resIcon}${resText}</span>
       </div>`;
     }).join('');
 

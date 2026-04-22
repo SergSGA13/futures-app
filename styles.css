@@ -864,11 +864,11 @@ html, body {
 .sig-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sig-pair { font-weight: 700; color: var(--text); }
 .sig-dir { font-weight: 700; font-size: 12px; }
-.sig-up   { color: #4EFFA0; }
-.sig-down { color: #FF5272; }
-.sig-res  { font-size: 12px; font-weight: 700; text-align: right; }
+.sig-up   { color: #66A3FF; }
+.sig-down { color: #B060FF; }
+.sig-res  { font-size: 12px; font-weight: 700; text-align: right; display: inline-flex; align-items: center; gap: 3px; }
 .sig-win     { color: #4EFFA0; }
-.sig-lose    { color: #FF5272; }
+.sig-lose    { color: #FF3B6B; }
 .sig-pending { color: var(--text-muted); }
 .sig-price { font-size: 11px; color: var(--text-muted); text-align: right; }
 .signals-group-btn {

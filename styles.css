@@ -845,7 +845,7 @@ html, body {
   padding: 12px 0;
 }
 .signals-summary {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-muted);
   padding: 8px 0 10px;
   border-bottom: 1px solid var(--card-border);

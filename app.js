@@ -570,12 +570,16 @@ async function loadTodaySignals() {
       const dirLabel  = isUp ? '↑ UP' : '↓ DOWN';
       const pairShort = pair.replace('USDT.P', '');
 
+      const WIN_ICON  = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 6.5L5 9.5L11 3.5" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const LOSE_ICON = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3 3L10 10M10 3L3 10" stroke="#FF3B6B" stroke-width="2" stroke-linecap="round"/></svg>`;
+      const resIcon   = isWin ? WIN_ICON : isLose ? LOSE_ICON : '';
+
       return `<div class="signal-row">
         <span class="sig-time">${time}</span>
         <span class="sig-pair">${pairShort}</span>
         <span class="sig-dir ${dirClass}">${dirLabel}</span>
         <span class="sig-price">${price}</span>
-        <span class="sig-res ${resClass}">${resLabel}</span>
+        <span class="sig-res ${resClass}">${resIcon}${resLabel}</span>
       </div>`;
     }).join('');
 

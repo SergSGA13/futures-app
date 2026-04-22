@@ -965,6 +965,20 @@ html, body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ===== ARTICLE BANNERS ===== */
+.article-banner {
+  margin: -16px -18px 14px;
+  border-radius: 14px 14px 0 0;
+  overflow: hidden;
+  height: 90px;
+  flex-shrink: 0;
+}
+.article-banner svg {
+  display: block;
+  width: 100%;
+  height: 90px;
+}
+
 /* ===== LANGUAGE SWITCHER ===== */
 .lang-switcher {
   display: flex;

@@ -389,201 +389,169 @@
 
           <!-- ARTICLE CARD: TILT -->
           <div class="article-card" onclick="navigate('article-tilt')">
-            <div class="article-banner">
-              <svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-                <defs>
-                  <linearGradient id="bgT" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1A0810"/><stop offset="100%" stop-color="#110508"/></linearGradient>
-                  <linearGradient id="fadeT" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#160A0E" stop-opacity="1"/><stop offset="18%" stop-color="#160A0E" stop-opacity="0"/><stop offset="82%" stop-color="#160A0E" stop-opacity="0"/><stop offset="100%" stop-color="#160A0E" stop-opacity="1"/></linearGradient>
-                  <clipPath id="clipT"><rect width="320" height="72"/></clipPath>
-                </defs>
-                <rect width="320" height="90" fill="url(#bgT)"/>
-                <line x1="0" y1="36" x2="320" y2="36" stroke="#FF5272" stroke-opacity="0.06" stroke-width="1"/>
-                <line x1="0" y1="45" x2="320" y2="45" stroke="#FF5272" stroke-opacity="0.1" stroke-width="1"/>
-                <line x1="0" y1="54" x2="320" y2="54" stroke="#FF5272" stroke-opacity="0.06" stroke-width="1"/>
-                <g clip-path="url(#clipT)">
-                  <path d="M0,45 L16,45 L22,22 L26,68 L32,28 L38,62 L50,45 L78,45 L84,24 L88,66 L94,30 L100,60 L114,45 L142,45 L148,20 L152,70 L158,26 L164,64 L178,45 L206,45 L212,24 L216,66 L222,30 L228,60 L242,45 L270,45 L276,22 L280,68 L286,28 L292,62 L304,45 L320,45"
-                    fill="none" stroke="#FF5272" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.88">
-                    <animateTransform attributeName="transform" type="translate" from="0,0" to="-320,0" dur="3.5s" repeatCount="indefinite"/>
-                  </path>
-                  <path d="M320,45 L336,45 L342,22 L346,68 L352,28 L358,62 L370,45 L398,45 L404,24 L408,66 L414,30 L420,60 L434,45 L462,45 L468,20 L472,70 L478,26 L484,64 L498,45 L526,45 L532,24 L536,66 L542,30 L548,60 L562,45 L590,45 L596,22 L600,68 L606,28 L612,62 L624,45 L640,45"
-                    fill="none" stroke="#FF5272" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.88">
-                    <animateTransform attributeName="transform" type="translate" from="0,0" to="-320,0" dur="3.5s" repeatCount="indefinite"/>
-                  </path>
-                </g>
-                <rect width="320" height="72" fill="url(#fadeT)"/>
-                <circle cx="160" cy="45" r="4" fill="#FF5272">
-                  <animate attributeName="r" values="3;6;3" dur="1.5s" repeatCount="indefinite"/>
-                  <animate attributeName="opacity" values="1;0.4;1" dur="1.5s" repeatCount="indefinite"/>
-                </circle>
-                <circle cx="160" cy="45" r="12" fill="none" stroke="#FF5272" stroke-width="1">
-                  <animate attributeName="r" values="8;20;8" dur="1.5s" repeatCount="indefinite"/>
-                  <animate attributeName="opacity" values="0.35;0;0.35" dur="1.5s" repeatCount="indefinite"/>
-                </circle>
-                <text x="160" y="82" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="9" fill="#FF5272" fill-opacity="0.35" letter-spacing="2.5" font-weight="600">ТИЛЬТ · СТРАХ · КОНТРОЛЬ</text>
-              </svg>
-            </div>
-            <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
-            <h3 class="article-title-gradient" data-i18n="art.tilt.title" style="margin-top:8px">Ты борешься не с тильтом</h3>
-            <p class="article-preview" data-i18n="art.tilt.preview">Тильт— лишь вершина. Корень— страх, который управляет твоими решениями.</p>
-            <div class="article-footer">
-              <span class="article-read" data-i18n="art.read">Читать →</span>
+            <div class="article-card-split">
+              <div class="article-split-anim">
+                <svg viewBox="0 0 88 120" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="bgTA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1A0810"/><stop offset="100%" stop-color="#110508"/></linearGradient>
+                    <linearGradient id="fadeTA" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#16090C" stop-opacity="1"/><stop offset="22%" stop-color="#16090C" stop-opacity="0"/><stop offset="78%" stop-color="#16090C" stop-opacity="0"/><stop offset="100%" stop-color="#16090C" stop-opacity="1"/></linearGradient>
+                    <clipPath id="clipTA"><rect width="88" height="120"/></clipPath>
+                  </defs>
+                  <rect width="88" height="120" fill="url(#bgTA)"/>
+                  <line x1="0" y1="40" x2="88" y2="40" stroke="#FF5272" stroke-opacity="0.07" stroke-width="1"/>
+                  <line x1="0" y1="60" x2="88" y2="60" stroke="#FF5272" stroke-opacity="0.12" stroke-width="1"/>
+                  <line x1="0" y1="80" x2="88" y2="80" stroke="#FF5272" stroke-opacity="0.07" stroke-width="1"/>
+                  <g clip-path="url(#clipTA)">
+                    <path d="M0,44 L8,44 L12,24 L16,64 L20,30 L24,56 L32,44 L50,44 L54,26 L58,62 L62,32 L66,54 L74,44 L88,44" fill="none" stroke="#FF5272" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.85">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M88,44 L96,44 L100,24 L104,64 L108,30 L112,56 L120,44 L138,44 L142,26 L146,62 L150,32 L154,54 L162,44 L176,44" fill="none" stroke="#FF5272" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.85">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M0,76 L8,76 L12,56 L16,96 L20,62 L24,88 L32,76 L50,76 L54,58 L58,94 L62,64 L66,86 L74,76 L88,76" fill="none" stroke="#FF5272" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.38">
+                      <animateTransform attributeName="transform" type="translate" from="-88,0" to="0,0" dur="3.5s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M88,76 L96,76 L100,56 L104,96 L108,62 L112,88 L120,76 L138,76 L142,58 L146,94 L150,64 L154,86 L162,76 L176,76" fill="none" stroke="#FF5272" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.38">
+                      <animateTransform attributeName="transform" type="translate" from="-88,0" to="0,0" dur="3.5s" repeatCount="indefinite"/>
+                    </path>
+                  </g>
+                  <rect width="88" height="120" fill="url(#fadeTA)"/>
+                  <circle cx="44" cy="60" r="4" fill="#FF5272"><animate attributeName="r" values="3;5.5;3" dur="1.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0.4;1" dur="1.5s" repeatCount="indefinite"/></circle>
+                  <circle cx="44" cy="60" r="10" fill="none" stroke="#FF5272" stroke-width="1"><animate attributeName="r" values="7;15;7" dur="1.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.3;0;0.3" dur="1.5s" repeatCount="indefinite"/></circle>
+                </svg>
+              </div>
+              <div class="article-split-content">
+                <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
+                <h3 class="article-title-gradient" data-i18n="art.tilt.title">Ты борешься не с тильтом</h3>
+                <p class="article-preview" data-i18n="art.tilt.preview">Тильт— лишь вершина. Корень— страх, который управляет твоими решениями.</p>
+                <div class="article-footer"><span class="article-read" data-i18n="art.read">Читать →</span></div>
+              </div>
             </div>
           </div>
 
           <!-- ARTICLE CARD: PARADIGM -->
           <div class="article-card" onclick="navigate('article-paradigm')">
-            <div class="article-banner">
-              <svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="bgP" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#080E1A"/><stop offset="100%" stop-color="#050A12"/></linearGradient>
-                  <linearGradient id="fadeP" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#070C16" stop-opacity="1"/><stop offset="18%" stop-color="#070C16" stop-opacity="0"/><stop offset="82%" stop-color="#070C16" stop-opacity="0"/><stop offset="100%" stop-color="#070C16" stop-opacity="1"/></linearGradient>
-                  <clipPath id="clipP"><rect width="320" height="72"/></clipPath>
-                </defs>
-                <rect width="320" height="90" fill="url(#bgP)"/>
-                <line x1="0" y1="45" x2="320" y2="45" stroke="#66A3FF" stroke-opacity="0.1" stroke-width="1"/>
-                <line x1="80" y1="0" x2="80" y2="72" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
-                <line x1="160" y1="0" x2="160" y2="72" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
-                <line x1="240" y1="0" x2="240" y2="72" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
-                <g clip-path="url(#clipP)">
-                  <path d="M0,45 L52,45 L62,45 L68,18 L72,45 L76,72 L82,45 L94,45 L160,45 L172,45 L178,18 L182,45 L186,72 L192,45 L204,45 L270,45 L282,45 L288,18 L292,45 L296,72 L302,45 L314,45 L320,45"
-                    fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
-                    <animateTransform attributeName="transform" type="translate" from="0,0" to="-320,0" dur="3s" repeatCount="indefinite"/>
-                  </path>
-                  <path d="M320,45 L372,45 L382,45 L388,18 L392,45 L396,72 L402,45 L414,45 L480,45 L492,45 L498,18 L502,45 L506,72 L512,45 L524,45 L590,45 L602,45 L608,18 L612,45 L616,72 L622,45 L634,45 L640,45"
-                    fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
-                    <animateTransform attributeName="transform" type="translate" from="0,0" to="-320,0" dur="3s" repeatCount="indefinite"/>
-                  </path>
-                </g>
-                <rect width="320" height="72" fill="url(#fadeP)"/>
-                <circle cx="160" cy="45" r="4" fill="#66A3FF">
-                  <animate attributeName="r" values="3;5;3" dur="3s" repeatCount="indefinite"/>
-                  <animate attributeName="opacity" values="1;0.5;1" dur="3s" repeatCount="indefinite"/>
-                </circle>
-                <text x="160" y="82" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="9" fill="#66A3FF" fill-opacity="0.35" letter-spacing="2.5" font-weight="600">ЭМОЦИИ · СИСТЕМА · ДИСЦИПЛИНА</text>
-              </svg>
-            </div>
-            <span class="article-tag-inline" data-i18n="art.tag.mind">Мышление</span>
-            <h3 class="article-title-gradient" data-i18n="art.paradigm.title" style="margin-top:8px">Почему дисциплина всегда побеждает эмоции</h3>
-            <p class="article-preview" data-i18n="art.paradigm.preview">Стабильность приходит не из сигналов, а из системы поведения.</p>
-            <div class="article-footer">
-              <span class="article-read" data-i18n="art.read">Читать →</span>
+            <div class="article-card-split">
+              <div class="article-split-anim">
+                <svg viewBox="0 0 88 120" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="bgPA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#080E1A"/><stop offset="100%" stop-color="#050A12"/></linearGradient>
+                    <linearGradient id="fadePA" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#070C16" stop-opacity="1"/><stop offset="22%" stop-color="#070C16" stop-opacity="0"/><stop offset="78%" stop-color="#070C16" stop-opacity="0"/><stop offset="100%" stop-color="#070C16" stop-opacity="1"/></linearGradient>
+                    <clipPath id="clipPA"><rect width="88" height="120"/></clipPath>
+                  </defs>
+                  <rect width="88" height="120" fill="url(#bgPA)"/>
+                  <line x1="0" y1="60" x2="88" y2="60" stroke="#66A3FF" stroke-opacity="0.12" stroke-width="1"/>
+                  <line x1="0" y1="40" x2="88" y2="40" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
+                  <line x1="0" y1="80" x2="88" y2="80" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
+                  <line x1="44" y1="0" x2="44" y2="120" stroke="#66A3FF" stroke-opacity="0.05" stroke-width="1"/>
+                  <g clip-path="url(#clipPA)">
+                    <path d="M0,60 L28,60 L36,60 L40,30 L44,60 L48,90 L52,60 L62,60 L88,60" fill="none" stroke="#66A3FF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.1">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M88,60 L116,60 L124,60 L128,30 L132,60 L136,90 L140,60 L150,60 L176,60" fill="none" stroke="#66A3FF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.1">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M0,60 L28,60 L36,60 L40,30 L44,60 L48,90 L52,60 L62,60 L88,60" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                    <path d="M88,60 L116,60 L124,60 L128,30 L132,60 L136,90 L140,60 L150,60 L176,60" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
+                      <animateTransform attributeName="transform" type="translate" from="0,0" to="-88,0" dur="3s" repeatCount="indefinite"/>
+                    </path>
+                  </g>
+                  <rect width="88" height="120" fill="url(#fadePA)"/>
+                  <circle cx="44" cy="60" r="3" fill="#66A3FF" fill-opacity="0.6"><animate attributeName="fill-opacity" values="0.6;0.2;0.6" dur="3s" repeatCount="indefinite"/></circle>
+                </svg>
+              </div>
+              <div class="article-split-content">
+                <span class="article-tag-inline" data-i18n="art.tag.mind">Мышление</span>
+                <h3 class="article-title-gradient" data-i18n="art.paradigm.title">Почему дисциплина всегда побеждает эмоции</h3>
+                <p class="article-preview" data-i18n="art.paradigm.preview">Стабильность приходит не из сигналов, а из системы поведения.</p>
+                <div class="article-footer"><span class="article-read" data-i18n="art.read">Читать →</span></div>
+              </div>
             </div>
           </div>
 
           <!-- ARTICLE CARD: WHAT-IS -->
           <div class="article-card" onclick="navigate('article-what-is')">
-            <div class="article-banner">
-              <svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="bgW" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0C081A"/><stop offset="100%" stop-color="#080614"/></linearGradient>
-                  <linearGradient id="areaW" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9D50FF" stop-opacity="0.25"/><stop offset="100%" stop-color="#9D50FF" stop-opacity="0.02"/></linearGradient>
-                </defs>
-                <rect width="320" height="90" fill="url(#bgW)"/>
-                <line x1="25" y1="22" x2="295" y2="22" stroke="#9D50FF" stroke-opacity="0.06" stroke-width="1"/>
-                <line x1="25" y1="38" x2="295" y2="38" stroke="#9D50FF" stroke-opacity="0.06" stroke-width="1"/>
-                <line x1="25" y1="54" x2="295" y2="54" stroke="#9D50FF" stroke-opacity="0.1" stroke-width="1"/>
-                <line x1="25" y1="68" x2="295" y2="68" stroke="#9D50FF" stroke-opacity="0.06" stroke-width="1"/>
-                <line x1="25" y1="18" x2="25" y2="70" stroke="#9D50FF" stroke-opacity="0.2" stroke-width="1"/>
-                <!-- Area fill under trend -->
-                <path d="M35,65 L65,58 L95,52 L125,47 L155,40 L185,34 L215,28 L245,23 L265,19 L265,70 L35,70 Z" fill="url(#areaW)"/>
-                <!-- Trend dashed line -->
-                <line x1="35" y1="65" x2="265" y2="19" stroke="#9D50FF" stroke-opacity="0.25" stroke-width="1.5" stroke-dasharray="5 3">
-                  <animate attributeName="stroke-dashoffset" values="0;-8" dur="1s" repeatCount="indefinite"/>
-                </line>
-                <!-- Candle 1 red -->
-                <line x1="55" y1="52" x2="55" y2="68" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="49" y="56" width="12" height="10" fill="#FF5272" fill-opacity="0.65" rx="1"/>
-                <!-- Candle 2 green -->
-                <line x1="85" y1="46" x2="85" y2="62" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="79" y="48" width="12" height="12" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
-                <!-- Candle 3 green tall -->
-                <line x1="115" y1="38" x2="115" y2="56" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="109" y="41" width="12" height="13" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
-                <!-- Candle 4 red small -->
-                <line x1="145" y1="34" x2="145" y2="52" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="139" y="38" width="12" height="10" fill="#FF5272" fill-opacity="0.65" rx="1"/>
-                <!-- Candle 5 purple big -->
-                <line x1="175" y1="26" x2="175" y2="46" stroke="#9D50FF" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="169" y="28" width="12" height="16" fill="#9D50FF" fill-opacity="0.75" rx="1"/>
-                <!-- Candle 6 green -->
-                <line x1="205" y1="20" x2="205" y2="40" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="199" y="22" width="12" height="16" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
-                <!-- Candle 7 purple tall -->
-                <line x1="235" y1="15" x2="235" y2="34" stroke="#9D50FF" stroke-opacity="0.5" stroke-width="1"/>
-                <rect x="229" y="16" width="12" height="16" fill="#9D50FF" fill-opacity="0.8" rx="1"/>
-                <!-- Moving highlight sweep -->
-                <rect x="0" y="0" width="28" height="70" fill="#9D50FF" fill-opacity="0.07" rx="0">
-                  <animate attributeName="x" values="-28;310;-28" dur="3.5s" repeatCount="indefinite"/>
-                </rect>
-                <text x="160" y="82" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="9" fill="#9D50FF" fill-opacity="0.35" letter-spacing="2.5" font-weight="600">МЕХАНИКА · СТРАТЕГИЯ · РАСЧЁТ</text>
-              </svg>
-            </div>
-            <span class="article-tag-inline" data-i18n="art.tag.edu">Обучение</span>
-            <h3 class="article-title-gradient" data-i18n="art.whatis.title" style="margin-top:8px">Futures Prediction: как это работает на самом деле</h3>
-            <p class="article-preview" data-i18n="art.whatis.preview">Механика, расчёты и то, о чём обычно не говорят.</p>
-            <div class="article-footer">
-              <span class="article-read" data-i18n="art.read">Читать →</span>
+            <div class="article-card-split">
+              <div class="article-split-anim">
+                <svg viewBox="0 0 88 120" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="bgWA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0C081A"/><stop offset="100%" stop-color="#080614"/></linearGradient>
+                    <linearGradient id="areaWA" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9D50FF" stop-opacity="0.22"/><stop offset="100%" stop-color="#9D50FF" stop-opacity="0"/></linearGradient>
+                  </defs>
+                  <rect width="88" height="120" fill="url(#bgWA)"/>
+                  <line x1="8" y1="30" x2="80" y2="30" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
+                  <line x1="8" y1="50" x2="80" y2="50" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
+                  <line x1="8" y1="70" x2="80" y2="70" stroke="#9D50FF" stroke-opacity="0.1" stroke-width="1"/>
+                  <line x1="8" y1="90" x2="80" y2="90" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
+                  <line x1="8" y1="25" x2="8" y2="92" stroke="#9D50FF" stroke-opacity="0.2" stroke-width="1"/>
+                  <path d="M12,88 L26,76 L40,62 L54,52 L68,40 L76,30 L76,92 L12,92 Z" fill="url(#areaWA)"/>
+                  <line x1="12" y1="88" x2="76" y2="30" stroke="#9D50FF" stroke-opacity="0.2" stroke-width="1.5" stroke-dasharray="4 3"><animate attributeName="stroke-dashoffset" values="0;-7" dur="1s" repeatCount="indefinite"/></line>
+                  <!-- Candle 1 red -->
+                  <line x1="20" y1="76" x2="20" y2="90" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
+                  <rect x="15" y="80" width="10" height="8" fill="#FF5272" fill-opacity="0.65" rx="1"/>
+                  <!-- Candle 2 green -->
+                  <line x1="34" y1="62" x2="34" y2="78" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
+                  <rect x="29" y="64" width="10" height="12" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
+                  <!-- Candle 3 red small -->
+                  <line x1="48" y1="48" x2="48" y2="64" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
+                  <rect x="43" y="52" width="10" height="8" fill="#FF5272" fill-opacity="0.65" rx="1"/>
+                  <!-- Candle 4 purple big -->
+                  <line x1="62" y1="34" x2="62" y2="54" stroke="#9D50FF" stroke-opacity="0.5" stroke-width="1"/>
+                  <rect x="57" y="36" width="10" height="16" fill="#9D50FF" fill-opacity="0.75" rx="1"/>
+                  <!-- Candle 5 green -->
+                  <line x1="76" y1="24" x2="76" y2="42" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
+                  <rect x="71" y="26" width="10" height="14" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
+                  <rect x="0" y="0" width="14" height="100" fill="#9D50FF" fill-opacity="0.07"><animate attributeName="x" values="-14;88;-14" dur="3s" repeatCount="indefinite"/></rect>
+                </svg>
+              </div>
+              <div class="article-split-content">
+                <span class="article-tag-inline" data-i18n="art.tag.edu">Обучение</span>
+                <h3 class="article-title-gradient" data-i18n="art.whatis.title">Futures Prediction: как это работает на самом деле</h3>
+                <p class="article-preview" data-i18n="art.whatis.preview">Механика, расчёты и то, о чём обычно не говорят.</p>
+                <div class="article-footer"><span class="article-read" data-i18n="art.read">Читать →</span></div>
+              </div>
             </div>
           </div>
 
           <!-- ARTICLE CARD: FOCUS -->
           <div class="article-card" onclick="navigate('article-focus')">
-            <div class="article-banner">
-              <svg viewBox="0 0 320 90" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="bgF" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#081410"/><stop offset="100%" stop-color="#060E0A"/></linearGradient>
-                  <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#4EFFA0" stop-opacity="0.14"/><stop offset="100%" stop-color="#4EFFA0" stop-opacity="0"/></radialGradient>
-                  <radialGradient id="sweepGlow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#4EFFA0" stop-opacity="0.3"/><stop offset="100%" stop-color="#4EFFA0" stop-opacity="0"/></radialGradient>
-                  <clipPath id="clipF"><rect width="320" height="72"/></clipPath>
-                </defs>
-                <rect width="320" height="90" fill="url(#bgF)"/>
-                <!-- Background glow -->
-                <ellipse cx="160" cy="38" rx="90" ry="36" fill="url(#radarGlow)"/>
-                <!-- Grid lines subtle -->
-                <line x1="0" y1="38" x2="320" y2="38" stroke="#4EFFA0" stroke-opacity="0.06" stroke-width="1"/>
-                <line x1="160" y1="0" x2="160" y2="72" stroke="#4EFFA0" stroke-opacity="0.06" stroke-width="1"/>
-                <g clip-path="url(#clipF)">
-                  <!-- Concentric circles -->
-                  <circle cx="160" cy="38" r="44" fill="none" stroke="#4EFFA0" stroke-width="1" stroke-opacity="0.1"/>
-                  <circle cx="160" cy="38" r="30" fill="none" stroke="#4EFFA0" stroke-width="1" stroke-opacity="0.16"/>
-                  <circle cx="160" cy="38" r="16" fill="none" stroke="#4EFFA0" stroke-width="1.5" stroke-opacity="0.25"/>
-                  <!-- Cross hair lines -->
-                  <line x1="116" y1="38" x2="142" y2="38" stroke="#4EFFA0" stroke-opacity="0.2" stroke-width="1"/>
-                  <line x1="178" y1="38" x2="204" y2="38" stroke="#4EFFA0" stroke-opacity="0.2" stroke-width="1"/>
-                  <line x1="160" y1="0" x2="160" y2="22" stroke="#4EFFA0" stroke-opacity="0.2" stroke-width="1"/>
-                  <line x1="160" y1="54" x2="160" y2="72" stroke="#4EFFA0" stroke-opacity="0.2" stroke-width="1"/>
-                  <!-- Rotating scan line -->
-                  <line x1="160" y1="38" x2="204" y2="38" stroke="#4EFFA0" stroke-opacity="0.65" stroke-width="1.5">
-                    <animateTransform attributeName="transform" type="rotate" from="0,160,38" to="360,160,38" dur="3s" repeatCount="indefinite"/>
-                  </line>
-                  <!-- Scan trail (wider, faded) -->
-                  <line x1="160" y1="38" x2="200" y2="38" stroke="#4EFFA0" stroke-opacity="0.18" stroke-width="10">
-                    <animateTransform attributeName="transform" type="rotate" from="-20,160,38" to="340,160,38" dur="3s" repeatCount="indefinite"/>
-                  </line>
-                  <!-- Center dot -->
-                  <circle cx="160" cy="38" r="3.5" fill="#4EFFA0" fill-opacity="0.9">
-                    <animate attributeName="r" values="2.5;4.5;2.5" dur="3s" repeatCount="indefinite"/>
-                    <animate attributeName="fill-opacity" values="0.9;0.5;0.9" dur="3s" repeatCount="indefinite"/>
-                  </circle>
-                  <!-- Blip dots rotating -->
-                  <circle cx="204" cy="38" r="2.5" fill="#4EFFA0" fill-opacity="0.7">
-                    <animateTransform attributeName="transform" type="rotate" from="0,160,38" to="360,160,38" dur="3s" repeatCount="indefinite"/>
-                    <animate attributeName="opacity" values="0.7;0.2;0.7" dur="3s" repeatCount="indefinite"/>
-                  </circle>
-                </g>
-                <!-- Corner brackets -->
-                <path d="M18,12 L18,22 L28,22" fill="none" stroke="#4EFFA0" stroke-opacity="0.25" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M302,12 L302,22 L292,22" fill="none" stroke="#4EFFA0" stroke-opacity="0.25" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M18,60 L18,50 L28,50" fill="none" stroke="#4EFFA0" stroke-opacity="0.25" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M302,60 L302,50 L292,50" fill="none" stroke="#4EFFA0" stroke-opacity="0.25" stroke-width="1.5" stroke-linecap="round"/>
-                <text x="160" y="82" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="9" fill="#4EFFA0" fill-opacity="0.35" letter-spacing="2.5" font-weight="600">ФОКУС · СИСТЕМА · ДИСЦИПЛИНА</text>
-              </svg>
-            </div>
-            <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
-            <h3 class="article-title-gradient" data-i18n="art.focus.title" style="margin-top:8px">Грааля не существует. Есть система</h3>
-            <p class="article-preview" data-i18n="art.focus.preview">Чем сильнее ты пытаешься «победить рынок», тем хуже итог.</p>
-            <div class="article-footer">
-              <span class="article-read" data-i18n="art.read">Читать →</span>
+            <div class="article-card-split">
+              <div class="article-split-anim">
+                <svg viewBox="0 0 88 120" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="bgFA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#081410"/><stop offset="100%" stop-color="#060E0A"/></linearGradient>
+                    <radialGradient id="radarGlowA" cx="50%" cy="45%" r="50%"><stop offset="0%" stop-color="#4EFFA0" stop-opacity="0.16"/><stop offset="100%" stop-color="#4EFFA0" stop-opacity="0"/></radialGradient>
+                    <clipPath id="clipFA"><rect width="88" height="120"/></clipPath>
+                  </defs>
+                  <rect width="88" height="120" fill="url(#bgFA)"/>
+                  <ellipse cx="44" cy="58" rx="44" ry="44" fill="url(#radarGlowA)"/>
+                  <g clip-path="url(#clipFA)">
+                    <circle cx="44" cy="58" r="36" fill="none" stroke="#4EFFA0" stroke-width="1" stroke-opacity="0.1"/>
+                    <circle cx="44" cy="58" r="24" fill="none" stroke="#4EFFA0" stroke-width="1" stroke-opacity="0.17"/>
+                    <circle cx="44" cy="58" r="12" fill="none" stroke="#4EFFA0" stroke-width="1.5" stroke-opacity="0.28"/>
+                    <line x1="8" y1="58" x2="30" y2="58" stroke="#4EFFA0" stroke-opacity="0.18" stroke-width="1"/>
+                    <line x1="58" y1="58" x2="80" y2="58" stroke="#4EFFA0" stroke-opacity="0.18" stroke-width="1"/>
+                    <line x1="44" y1="22" x2="44" y2="44" stroke="#4EFFA0" stroke-opacity="0.18" stroke-width="1"/>
+                    <line x1="44" y1="72" x2="44" y2="94" stroke="#4EFFA0" stroke-opacity="0.18" stroke-width="1"/>
+                    <line x1="44" y1="58" x2="80" y2="58" stroke="#4EFFA0" stroke-opacity="0.15" stroke-width="9"><animateTransform attributeName="transform" type="rotate" from="-22,44,58" to="338,44,58" dur="3s" repeatCount="indefinite"/></line>
+                    <line x1="44" y1="58" x2="80" y2="58" stroke="#4EFFA0" stroke-opacity="0.7" stroke-width="1.5"><animateTransform attributeName="transform" type="rotate" from="0,44,58" to="360,44,58" dur="3s" repeatCount="indefinite"/></line>
+                    <circle cx="80" cy="58" r="2.5" fill="#4EFFA0" fill-opacity="0.7"><animateTransform attributeName="transform" type="rotate" from="0,44,58" to="360,44,58" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.7;0.2;0.7" dur="3s" repeatCount="indefinite"/></circle>
+                    <circle cx="44" cy="58" r="3" fill="#4EFFA0" fill-opacity="0.9"><animate attributeName="r" values="2;4;2" dur="3s" repeatCount="indefinite"/><animate attributeName="fill-opacity" values="0.9;0.4;0.9" dur="3s" repeatCount="indefinite"/></circle>
+                  </g>
+                  <path d="M6,12 L6,20 L14,20" fill="none" stroke="#4EFFA0" stroke-opacity="0.22" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M82,12 L82,20 L74,20" fill="none" stroke="#4EFFA0" stroke-opacity="0.22" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M6,108 L6,100 L14,100" fill="none" stroke="#4EFFA0" stroke-opacity="0.22" stroke-width="1.5" stroke-linecap="round"/>
+                  <path d="M82,108 L82,100 L74,100" fill="none" stroke="#4EFFA0" stroke-opacity="0.22" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="article-split-content">
+                <span class="article-tag-inline" data-i18n="art.tag.psych">Психология</span>
+                <h3 class="article-title-gradient" data-i18n="art.focus.title">Грааля не существует. Есть система</h3>
+                <p class="article-preview" data-i18n="art.focus.preview">Чем сильнее ты пытаешься «победить рынок», тем хуже итог.</p>
+                <div class="article-footer"><span class="article-read" data-i18n="art.read">Читать →</span></div>
+              </div>
             </div>
           </div>
 

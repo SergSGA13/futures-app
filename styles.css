@@ -965,18 +965,42 @@ html, body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ===== ARTICLE BANNERS ===== */
-.article-banner {
-  margin: -16px -18px 14px;
-  border-radius: 14px 14px 0 0;
-  overflow: hidden;
-  height: 90px;
-  flex-shrink: 0;
+/* ===== ARTICLE CARD SPLIT LAYOUT ===== */
+.article-card-split {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
 }
-.article-banner svg {
+.article-split-anim {
+  width: 88px;
+  height: 120px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.article-split-anim svg {
   display: block;
-  width: 100%;
-  height: 90px;
+  width: 88px;
+  height: 120px;
+}
+.article-split-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.article-split-content .article-title-gradient {
+  font-size: 14px;
+  margin-bottom: 0;
+}
+.article-split-content .article-preview {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+.article-split-content .article-footer {
+  margin-top: auto;
+  padding-top: 4px;
 }
 
 /* ===== LANGUAGE SWITCHER ===== */

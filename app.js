@@ -42,6 +42,8 @@ const navMap = {
   'home': 'nav-home',
   'futures-prediction': 'nav-futures-prediction',
   'statistics': 'nav-statistics',
+  'stats-l30d': 'nav-statistics',
+  'stats-all': 'nav-statistics',
   'articles': 'nav-articles',
 };
 const pageTitleKeys = {
@@ -51,6 +53,8 @@ const pageTitleKeys = {
   'indicators': 'title.ind',
   'articles': 'title.art',
   'statistics': 'title.stats',
+  'stats-l30d': 'title.stats.l30d',
+  'stats-all': 'title.stats.all',
   'article-tilt': 'title.art',
   'article-paradigm': 'title.art',
   'article-what-is': 'title.art',
@@ -75,7 +79,9 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { loadPnlChart(); loadL7dChart(); renderAnalTables(); }
+  if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
+  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'ALLsignal', 'l30d'); renderL30dTables(); }
+  if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -202,81 +208,47 @@ async function loadStatsPreview() {
 }
 
 // ===== PNL CHART =====
-let pnlChartInstance = null;
+const pnlChartInstances = {};
 
-async function loadPnlChart() {
-  if (pnlChartInstance) return; // already loaded
+async function loadPnlChartInto(canvasId, sheetTabName, key) {
+  if (pnlChartInstances[key]) return;
   try {
     const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=PNL%20Charts`;
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetTabName)}`;
     const res = await fetch(url);
     const text = await res.text();
     const rows = parseCSV(text);
 
-    const labels = [];
-    const data = [];
+    const labels = [], data = [];
     let lastDate = null;
-
     for (let i = 1; i < rows.length; i++) {
-      const dateStr = rows[i][0];
-      const pnlStr  = rows[i][1];
+      const dateStr = rows[i][0], pnlStr = rows[i][1];
       if (!dateStr || !pnlStr) continue;
-
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
       const date = new Date(parts[2], parts[1] - 1, parts[0]);
-
-      // First series only — stop when dates restart
       if (lastDate && date < lastDate) break;
       lastDate = date;
-
       labels.push(`${parts[0]}.${parts[1]}`);
       data.push(parseInt(pnlStr));
     }
 
-    // Show % of initial investment: 5000 USDT = 100%, 10000 = 200% etc.
-    const initialInvestment = 5000;
-    const pctData = data.map(v => Math.round((v / initialInvestment) * 100));
-
-    const ctx = document.getElementById('pnlChart').getContext('2d');
+    const pctData = data.map(v => Math.round((v / 5000) * 100));
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
     gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
 
-    pnlChartInstance = new Chart(ctx, {
+    pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          data: pctData,
-          borderColor: '#9D50FF',
-          backgroundColor: gradient,
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: true,
-          tension: 0.35,
-        }]
-      },
+      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: {
-          callbacks: {
-            label: ctx => `${ctx.parsed.y}% от 5 000 USDT`
-          }
-        }},
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: {
-          x: {
-            ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } },
-            grid: { color: 'rgba(255,255,255,0.04)' },
-          },
-          y: {
-            min: 0,
-            ticks: { color: '#7B84B0', font: { size: 11 },
-              callback: v => `${v}%`
-            },
-            grid: { color: 'rgba(255,255,255,0.04)' },
-          }
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });

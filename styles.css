@@ -942,6 +942,32 @@ html, body {
 .wr-yellow { color: #FFD166 !important; font-weight: 700; }
 .wr-red { color: #FF5272 !important; font-weight: 700; }
 
+/* Stats L7D compact — smaller font so tables fit on narrow screens */
+.stats-l7d .anal-table { font-size: 10px; }
+.stats-l7d .anal-table th,
+.stats-l7d .anal-table td { padding: 4px 3px; }
+
+/* Stats sub-section nav buttons */
+.stats-subsections { margin-bottom: 4px; }
+.stats-sub-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.stats-sub-btn:active { opacity: 0.65; }
+.stats-sub-info { flex: 1; }
+.stats-sub-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 3px; }
+.stats-sub-desc { font-size: 11px; color: var(--text-muted); }
+.stats-sub-arrow { font-size: 22px; color: var(--text-muted); margin-left: 8px; line-height: 1; }
+
 /* ===== REFRESH BUTTON ===== */
 .refresh-btn {
   width: 100%;

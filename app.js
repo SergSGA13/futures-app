@@ -80,7 +80,7 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
-  if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
+  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');

@@ -943,7 +943,7 @@ html, body {
 .wr-red { color: #FF5272 !important; font-weight: 700; }
 
 /* Stats L7D compact — smaller font so tables fit on narrow screens */
-.stats-l7d .anal-table { font-size: 10px; }
+.stats-l7d .anal-table { font-size: 11px; }
 .stats-l7d .anal-table th,
 .stats-l7d .anal-table td { padding: 4px 3px; }
 

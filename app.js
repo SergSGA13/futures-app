@@ -262,8 +262,10 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     }
     if (!target.length) return;
 
+    // For L30D: normalize to start of window so chart shows change over period (not absolute)
+    const baseVal = daysFilter ? target[0].value : 0;
     const labels  = target.map(e => e.label);
-    const pctData = target.map(e => Math.round((e.value / 5000) * 100));
+    const pctData = target.map(e => parseFloat(((e.value - baseVal) / 5000 * 100).toFixed(2)));
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
@@ -278,7 +280,7 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: {
           x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+          y: { ...(daysFilter ? {} : { min: 0 }), ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });

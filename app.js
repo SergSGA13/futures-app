@@ -219,9 +219,8 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     const text = await res.text();
     const rows = parseCSV(text);
 
-    const cutoff = daysFilter ? new Date(Date.now() - daysFilter * 86400000) : null;
-    const labels = [], data = [];
-    let lastDate = null;
+    // Parse all rows into dated entries, then split into monotone series
+    const entries = [];
     for (let i = 1; i < rows.length; i++) {
       const dateStr = rows[i][0], pnlStr = rows[i][1];
       if (!dateStr || !pnlStr) continue;
@@ -229,14 +228,31 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
       if (parts.length < 3) continue;
       const date = new Date(parts[2], parts[1] - 1, parts[0]);
       if (isNaN(date.getTime())) continue;
-      if (!cutoff && lastDate && date < lastDate) break; // multi-series guard for unfiltered mode
-      if (cutoff && date < cutoff) continue;            // date-range filter for L30D
-      lastDate = date;
-      labels.push(`${parts[0]}.${parts[1]}`);
-      data.push(parseInt(pnlStr));
+      entries.push({ label: `${parts[0]}.${parts[1]}`, value: parseInt(pnlStr), date });
     }
 
-    const pctData = data.map(v => Math.round((v / 5000) * 100));
+    const series = [];
+    let cur = [], prev = null;
+    for (const e of entries) {
+      if (prev && e.date < prev) { if (cur.length) series.push(cur); cur = []; }
+      cur.push(e); prev = e.date;
+    }
+    if (cur.length) series.push(cur);
+    if (!series.length) return;
+
+    // unfiltered → first series (main / ALL Periods behavior)
+    // daysFilter → last series clipped to recent N days (L30D)
+    let target;
+    if (daysFilter) {
+      const cutoff = new Date(Date.now() - daysFilter * 86400000);
+      target = series[series.length - 1].filter(e => e.date >= cutoff);
+    } else {
+      target = series[0];
+    }
+    if (!target.length) return;
+
+    const labels  = target.map(e => e.label);
+    const pctData = target.map(e => Math.round((e.value / 5000) * 100));
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);

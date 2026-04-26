@@ -317,7 +317,7 @@ async function loadPnlL30dFromSignals(canvasId, key) {
     const pctData = [];
     for (const dk of sortedDays) {
       const { label, wins, losses } = dailyMap[dk];
-      cumPnl += wins * 8 - losses * 10;
+      cumPnl += wins * 100 - losses * 125;
       labels.push(label);
       pctData.push(Math.round((cumPnl / 5000) * 100));
     }

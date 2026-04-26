@@ -245,26 +245,28 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     }
     if (!entries.length) return;
 
-    // Sort all entries chronologically (combine all periods)
-    entries.sort((a, b) => a.date - b.date);
+    // Split into monotone series
+    const series = [];
+    let cur = [], prev = null;
+    for (const e of entries) {
+      if (prev && e.date < prev) { if (cur.length) series.push(cur); cur = []; }
+      cur.push(e); prev = e.date;
+    }
+    if (cur.length) series.push(cur);
+    if (!series.length) return;
 
     let target;
     if (daysFilter) {
-      // Take last N calendar days across ALL data (not just last series)
+      // L30D: use the last series (most recent continuous period)
+      const lastSeries = series[series.length - 1];
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - daysFilter);
       cutoff.setHours(0, 0, 0, 0);
-      target = entries.filter(e => e.date >= cutoff);
+      target = lastSeries.filter(e => e.date >= cutoff);
+      // If last series has no data in range, use all of it
+      if (!target.length) target = lastSeries;
     } else {
-      // ALL Periods: find the first monotone series (starts from scratch)
-      const series = [];
-      let cur = [], prev = null;
-      for (const e of entries) {
-        if (prev && e.date < prev) { if (cur.length) series.push(cur); cur = []; }
-        cur.push(e); prev = e.date;
-      }
-      if (cur.length) series.push(cur);
-      target = series[0] || entries;
+      target = series[0];
     }
     if (!target.length) return;
 

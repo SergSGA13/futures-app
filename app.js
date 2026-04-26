@@ -80,7 +80,7 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
-  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
+  if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -173,7 +173,18 @@ function parseCSV(text) {
   return rows;
 }
 
-let analL7dRows = null; // cache for reuse in chart
+let analL7dRows = null;
+let allSignalRows = null;
+
+async function fetchAllSignals() {
+  if (allSignalRows) return allSignalRows;
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ALLsignal`;
+  const res = await fetch(url);
+  const text = await res.text();
+  allSignalRows = parseCSV(text);
+  return allSignalRows;
+}
 
 async function fetchAnalL7d() {
   if (analL7dRows) return analL7dRows;
@@ -273,6 +284,64 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     });
   } catch(e) {
     console.log('PNL chart not available', e);
+  }
+}
+
+async function loadPnlL30dFromSignals(canvasId, key) {
+  if (pnlChartInstances[key]) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+
+    const cutoff = new Date(Date.now() - 30 * 86400000);
+    const dailyMap = {};
+    for (let i = 1; i < rows.length; i++) {
+      const dateStr = rows[i][12];
+      const result  = rows[i][9];
+      if (!dateStr) continue;
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      const date = new Date(parts[2], parts[1] - 1, parts[0]);
+      if (isNaN(date.getTime()) || date < cutoff) continue;
+      const dk = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+      if (!dailyMap[dk]) dailyMap[dk] = { label: `${parts[0]}.${parts[1]}`, wins: 0, losses: 0 };
+      if (result === 'WIN') dailyMap[dk].wins++;
+      else if (result === 'LOSE') dailyMap[dk].losses++;
+    }
+
+    const sortedDays = Object.keys(dailyMap).sort();
+    if (!sortedDays.length) return;
+
+    let cumPnl = 0;
+    const labels = [];
+    const pctData = [];
+    for (const dk of sortedDays) {
+      const { label, wins, losses } = dailyMap[dk];
+      cumPnl += wins * 8 - losses * 10;
+      labels.push(label);
+      pctData.push(Math.round((cumPnl / 5000) * 100));
+    }
+
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
+    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+    pnlChartInstances[key] = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+        scales: {
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      }
+    });
+  } catch(e) {
+    console.log('L30D PNL from signals error:', e);
   }
 }
 
@@ -499,7 +568,7 @@ function formatTimerAgo(timeStr) {
 async function loadTodaySignals() {
   try {
     const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=%D0%9B%D0%B8%D1%81%D1%821`;
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ALLsignal`;
     const res = await fetch(url);
     const text = await res.text();
     const rows = parseCSV(text);
@@ -593,6 +662,7 @@ function refreshHome() {
   btn.classList.add('spinning');
   // Reset caches so data reloads
   analL7dRows = null;
+  allSignalRows = null;
   Object.values(pnlChartInstances).forEach(c => c?.destroy());
   Object.keys(pnlChartInstances).forEach(k => delete pnlChartInstances[k]);
   Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {

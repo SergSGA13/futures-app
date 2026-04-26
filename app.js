@@ -80,7 +80,7 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
-  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'ALLsignal', 'l30d'); renderL30dTables(); }
+  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -210,7 +210,7 @@ async function loadStatsPreview() {
 // ===== PNL CHART =====
 const pnlChartInstances = {};
 
-async function loadPnlChartInto(canvasId, sheetTabName, key) {
+async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) {
   if (pnlChartInstances[key]) return;
   try {
     const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
@@ -219,6 +219,7 @@ async function loadPnlChartInto(canvasId, sheetTabName, key) {
     const text = await res.text();
     const rows = parseCSV(text);
 
+    const cutoff = daysFilter ? new Date(Date.now() - daysFilter * 86400000) : null;
     const labels = [], data = [];
     let lastDate = null;
     for (let i = 1; i < rows.length; i++) {
@@ -227,7 +228,9 @@ async function loadPnlChartInto(canvasId, sheetTabName, key) {
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
       const date = new Date(parts[2], parts[1] - 1, parts[0]);
-      if (lastDate && date < lastDate) break;
+      if (isNaN(date.getTime())) continue;
+      if (!cutoff && lastDate && date < lastDate) break; // multi-series guard for unfiltered mode
+      if (cutoff && date < cutoff) continue;            // date-range filter for L30D
       lastDate = date;
       labels.push(`${parts[0]}.${parts[1]}`);
       data.push(parseInt(pnlStr));
@@ -374,21 +377,21 @@ async function renderL30dTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair L30D — Y19:AF22 → dataColStart=25, rows[18-21]
+    // By Trading Pair L30D — Y19:AF22, row19=header → data at rows[19-21]
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[18] },
-      { label: 'BTC',   row: rows[19] },
+      { label: 'ETH',   row: rows[19] },
+      { label: 'BTC',   row: rows[20] },
       { label: 'TOTAL', row: rows[21] },
     ], 25);
     document.getElementById('l30dPairsTable').innerHTML = pairsHtml;
     document.getElementById('l30dPairsCard').style.display = 'block';
 
-    // By Time Zone L30D — Y36:AF41 → dataColStart=25, rows[35-40]
+    // By Time Zone L30D — Y36:AF41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[35] },
-      { label: '15-29', row: rows[36] },
-      { label: '30-44', row: rows[37] },
-      { label: '45-59', row: rows[38] },
+      { label: '0-14',  row: rows[36] },
+      { label: '15-29', row: rows[37] },
+      { label: '30-44', row: rows[38] },
+      { label: '45-59', row: rows[39] },
       { label: 'TOTAL', row: rows[40] },
     ], 25);
     document.getElementById('l30dTFTable').innerHTML = tzHtml;
@@ -410,21 +413,21 @@ async function renderAllTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair ALL — L19:S22 → dataColStart=12, rows[18-21]
+    // By Trading Pair ALL — L19:S22, row19=header → data at rows[19-21]
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[18] },
-      { label: 'BTC',   row: rows[19] },
+      { label: 'ETH',   row: rows[19] },
+      { label: 'BTC',   row: rows[20] },
       { label: 'TOTAL', row: rows[21] },
     ], 12);
     document.getElementById('allPairsTable').innerHTML = pairsHtml;
     document.getElementById('allPairsCard').style.display = 'block';
 
-    // By Time Zone ALL — L36:S41 → dataColStart=12, rows[35-40]
+    // By Time Zone ALL — L36:S41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[35] },
-      { label: '15-29', row: rows[36] },
-      { label: '30-44', row: rows[37] },
-      { label: '45-59', row: rows[38] },
+      { label: '0-14',  row: rows[36] },
+      { label: '15-29', row: rows[37] },
+      { label: '30-44', row: rows[38] },
+      { label: '45-59', row: rows[39] },
       { label: 'TOTAL', row: rows[40] },
     ], 12);
     document.getElementById('allTFTable').innerHTML = tzHtml;

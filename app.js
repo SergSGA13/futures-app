@@ -293,18 +293,25 @@ async function loadPnlL30dFromSignals(canvasId, key) {
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
-    const cutoff = new Date(Date.now() - 30 * 86400000);
+    // Build cutoff as YYYY-MM-DD string (avoids UTC vs local-midnight mismatch)
+    const now = new Date();
+    const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+    const cutoffKey = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth()+1).padStart(2,'0')}-${String(cutoffDate.getDate()).padStart(2,'0')}`;
+
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
-      const dateStr = rows[i][12];
+      const dateStr = (rows[i][12] || '').trim();
       const result  = rows[i][9];
       if (!dateStr) continue;
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
-      const date = new Date(parts[2], parts[1] - 1, parts[0]);
-      if (isNaN(date.getTime()) || date < cutoff) continue;
-      const dk = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
-      if (!dailyMap[dk]) dailyMap[dk] = { label: `${parts[0]}.${parts[1]}`, wins: 0, losses: 0 };
+      const d = parts[0].padStart(2,'0');
+      const m = parts[1].padStart(2,'0');
+      const y = parts[2].substring(0, 4);
+      if (y.length < 4 || isNaN(parseInt(y))) continue;
+      const dk = `${y}-${m}-${d}`;
+      if (dk < cutoffKey) continue;
+      if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
       if (result === 'WIN') dailyMap[dk].wins++;
       else if (result === 'LOSE') dailyMap[dk].losses++;
     }

@@ -239,26 +239,32 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
       if (parts.length < 3) continue;
       const date = new Date(parts[2], parts[1] - 1, parts[0]);
       if (isNaN(date.getTime())) continue;
-      entries.push({ label: `${parts[0]}.${parts[1]}`, value: parseInt(pnlStr), date });
+      const numVal = parseFloat(pnlStr.replace(/[\s]/g, '').replace(',', '.'));
+      if (isNaN(numVal)) continue;
+      entries.push({ label: `${parts[0]}.${parts[1]}`, value: numVal, date });
     }
+    if (!entries.length) return;
 
-    const series = [];
-    let cur = [], prev = null;
-    for (const e of entries) {
-      if (prev && e.date < prev) { if (cur.length) series.push(cur); cur = []; }
-      cur.push(e); prev = e.date;
-    }
-    if (cur.length) series.push(cur);
-    if (!series.length) return;
+    // Sort all entries chronologically (combine all periods)
+    entries.sort((a, b) => a.date - b.date);
 
-    // unfiltered → first series (main / ALL Periods behavior)
-    // daysFilter → last series clipped to recent N days (L30D)
     let target;
     if (daysFilter) {
-      const cutoff = new Date(Date.now() - daysFilter * 86400000);
-      target = series[series.length - 1].filter(e => e.date >= cutoff);
+      // Take last N calendar days across ALL data (not just last series)
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - daysFilter);
+      cutoff.setHours(0, 0, 0, 0);
+      target = entries.filter(e => e.date >= cutoff);
     } else {
-      target = series[0];
+      // ALL Periods: find the first monotone series (starts from scratch)
+      const series = [];
+      let cur = [], prev = null;
+      for (const e of entries) {
+        if (prev && e.date < prev) { if (cur.length) series.push(cur); cur = []; }
+        cur.push(e); prev = e.date;
+      }
+      if (cur.length) series.push(cur);
+      target = series[0] || entries;
     }
     if (!target.length) return;
 

@@ -204,10 +204,10 @@ async function loadStatsPreview() {
     // K/V stats are at sheet rows 17-18 = parsed rows[16] and rows[17]
     // rows[17]: col[10]=WinRate L7D, col[21]=WinRate Total
     // rows[16]: col[10]=Signals L7D,  col[21]=Signals Total
-    const winrate7d  = rows[17]?.[10] || '—';
-    const signals7d  = rows[16]?.[10] || '—';
-    const winrateAll = rows[17]?.[21] || '—';
-    const totalAll   = rows[16]?.[21] || '—';
+    const winrate7d  = rows[18]?.[10] || '—';
+    const signals7d  = rows[17]?.[10] || '—';
+    const winrateAll = rows[18]?.[21] || '—';
+    const totalAll   = rows[17]?.[21] || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;

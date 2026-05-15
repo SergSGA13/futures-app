@@ -461,11 +461,11 @@ async function renderAnalTables() {
 
     // By Time Zone L7D — cols B-H (dataColStart=1), rows[24-28]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[25] },
-      { label: '15-29', row: rows[26] },
-      { label: '30-44', row: rows[27] },
-      { label: '45-59', row: rows[28] },
-      { label: 'TOTAL', row: rows[29] },
+      { label: '0-14',  row: rows[27] },
+      { label: '15-29', row: rows[28] },
+      { label: '30-44', row: rows[29] },
+      { label: '45-59', row: rows[30] },
+      { label: 'TOTAL', row: rows[31] },
     ], 1);
     document.getElementById('analTFTable').innerHTML = tzHtml;
     document.getElementById('analTFCard').style.display = 'block';
@@ -490,11 +490,11 @@ async function renderL30dTables() {
 
     // By Time Zone L30D — Y36:AF41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[25] },
-      { label: '15-29', row: rows[26] },
-      { label: '30-44', row: rows[27] },
-      { label: '45-59', row: rows[28] },
-      { label: 'TOTAL', row: rows[29] },
+      { label: '0-14',  row: rows[27] },
+      { label: '15-29', row: rows[28] },
+      { label: '30-44', row: rows[29] },
+      { label: '45-59', row: rows[30] },
+      { label: 'TOTAL', row: rows[31] },
     ], 25);
     document.getElementById('l30dTFTable').innerHTML = tzHtml;
     document.getElementById('l30dTFCard').style.display = 'block';
@@ -526,11 +526,11 @@ async function renderAllTables() {
 
     // By Time Zone ALL — L36:S41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[25] },
-      { label: '15-29', row: rows[26] },
-      { label: '30-44', row: rows[27] },
-      { label: '45-59', row: rows[28] },
-      { label: 'TOTAL', row: rows[29] },
+      { label: '0-14',  row: rows[27] },
+      { label: '15-29', row: rows[28] },
+      { label: '30-44', row: rows[29] },
+      { label: '45-59', row: rows[30] },
+      { label: 'TOTAL', row: rows[31] },
     ], 12);
     document.getElementById('allTFTable').innerHTML = tzHtml;
     document.getElementById('allTFCard').style.display = 'block';

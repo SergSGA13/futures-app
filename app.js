@@ -402,17 +402,24 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
   let totalRow = null;
   let dataFound = false;
 
-  for (let i = 0; i < rows.length; i++) {  // ← i=0, не i=1
+  for (let i = 0; i < rows.length; i++) {
     const hour = rows[i][hourCol];
-    if (hour === '' || hour === undefined || hour === null) continue;
 
-    // ✅ TOTAL — отдельная обработка
+    // ✅ пустое или NaN → проверяем на TOTAL
+    if (hour === '' || hour === undefined || hour === null || String(hour).trim().toLowerCase() === 'nan') {
+      if (rows[i][dataColStart] && rows[i][dataColStart] !== '') totalRow = rows[i];
+      continue;
+    }
+
+    // явный TOTAL в ячейке
     if (String(hour).trim().toUpperCase() === 'TOTAL') {
       totalRow = rows[i];
       continue;
     }
 
-    const h = parseInt(hour);
+    const hourStr = String(hour).trim();
+    if (!/^\d+(\.\d+)?$/.test(hourStr)) continue;
+    const h = parseInt(hourStr, 10);
     if (isNaN(h) || h < 0 || h > 23) continue;
 
     dataFound = true;

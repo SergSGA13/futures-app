@@ -535,8 +535,9 @@ async function renderAllTables() {
     document.getElementById('allTFTable').innerHTML = tzHtml;
     document.getElementById('allTFCard').style.display = 'block';
 
-    // By Hour Zone ALL — L45:S70 → hourCol=11, dataColStart=12
-    const hourHtml = buildHourTableCols(rows, 11, 12);
+       // ✅ By Hour Zone ALL — L34:U58 → rows[33..57], hourCol=11, dataColStart=12
+    const hourSlice = rows.slice(33, 58); // 0..24 внутри среза
+    const hourHtml = buildHourTableCols(hourSlice, 11, 12);
     if (hourHtml) {
       document.getElementById('allHourTable').innerHTML = hourHtml;
       document.getElementById('allHourCard').style.display = 'block';

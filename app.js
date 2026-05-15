@@ -536,7 +536,7 @@ async function renderAllTables() {
     document.getElementById('allTFCard').style.display = 'block';
 
     // By Hour Zone ALL — L45:S70 → hourCol=11, dataColStart=12
-    const hourHtml = buildHourTableCols(rows, 11, 12);
+    const hourHtml = buildHourTableCols(rows, 12, 13);
     if (hourHtml) {
       document.getElementById('allHourTable').innerHTML = hourHtml;
       document.getElementById('allHourCard').style.display = 'block';

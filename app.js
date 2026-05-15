@@ -485,26 +485,26 @@ async function renderL30dTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair L30D — Y19:AF22, row19=header → data at rows[19-21]
+    // By Trading Pair L30D — dataColStart=25, JS rows = python+1
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
+      { label: 'ETH',   row: rows[17] },
+      { label: 'BTC',   row: rows[18] },
+      { label: 'TOTAL', row: rows[19] },
     ], 25);
     document.getElementById('l30dPairsTable').innerHTML = pairsHtml;
     document.getElementById('l30dPairsCard').style.display = 'block';
 
-    // By Time Zone L30D — Y36:AF41, row36=header → data at rows[36-40]
+    // By Time Zone L30D — dataColStart=25
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
+      { label: '0-14',  row: rows[28] },
+      { label: '15-29', row: rows[29] },
+      { label: '30-44', row: rows[30] },
+      { label: '45-59', row: rows[31] },
+      { label: 'TOTAL', row: rows[32] },
     ], 25);
     document.getElementById('l30dTFTable').innerHTML = tzHtml;
     document.getElementById('l30dTFCard').style.display = 'block';
-    
+
     // By 5min Zone L30D — A60:H72 → rows[60-72] в JS, dataColStart=1
     const fiveMinL30dHtml = buildAnalTableCols([
       { label: '0-4',   row: rows[60] },

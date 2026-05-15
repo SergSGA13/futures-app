@@ -520,7 +520,7 @@ async function renderL30dTables() {
       { label: '50-54', row: rows[69] },
       { label: '55-59', row: rows[70] },
       { label: 'TOTAL', row: rows[71] },
-    ], 25);
+    ], 1);
     document.getElementById('l30d5minTable').innerHTML = fiveMinL30dHtml;
     document.getElementById('l30d5minCard').style.display = 'block';
 

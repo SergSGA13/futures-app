@@ -401,14 +401,20 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
 
   let totalRow = null;
   let dataFound = false;
-  for (let i = 1; i < rows.length; i++) {
+
+  for (let i = 0; i < rows.length; i++) {  // ← i=0, не i=1
     const hour = rows[i][hourCol];
-    if (hour === '' || hour === undefined || hour === null) {
-      if (rows[i][dataColStart] && rows[i][dataColStart] !== '') totalRow = rows[i];
+    if (hour === '' || hour === undefined || hour === null) continue;
+
+    // ✅ TOTAL — отдельная обработка
+    if (String(hour).trim().toUpperCase() === 'TOTAL') {
+      totalRow = rows[i];
       continue;
     }
+
     const h = parseInt(hour);
     if (isNaN(h) || h < 0 || h > 23) continue;
+
     dataFound = true;
     const d = dataColStart;
     const vals = [`${h}:00`, rows[i][d]||'-', rows[i][d+1]||'-', rows[i][d+2]||'-',

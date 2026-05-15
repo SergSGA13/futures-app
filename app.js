@@ -541,6 +541,25 @@ async function renderAllTables() {
     document.getElementById('allTFTable').innerHTML = tzHtml;
     document.getElementById('allTFCard').style.display = 'block';
 
+    // By 5min Zone ALL — L60:S72 → rows[59-71], cols 11-17, dataColStart=12
+const fiveMinAllHtml = buildAnalTableCols([
+  { label: '0-4',   row: rows[59] },
+  { label: '5-9',   row: rows[60] },
+  { label: '10-14', row: rows[61] },
+  { label: '15-19', row: rows[62] },
+  { label: '20-24', row: rows[63] },
+  { label: '25-29', row: rows[64] },
+  { label: '30-34', row: rows[65] },
+  { label: '35-39', row: rows[66] },
+  { label: '40-44', row: rows[67] },
+  { label: '45-49', row: rows[68] },
+  { label: '50-54', row: rows[69] },
+  { label: '55-59', row: rows[70] },
+  { label: 'TOTAL', row: rows[71] },
+], 12);
+document.getElementById('all5minTable').innerHTML = fiveMinAllHtml;
+document.getElementById('all5minCard').style.display = 'block';
+
        // ✅ By Hour Zone ALL — L34:U58 → rows[33..57], hourCol=11, dataColStart=12
     const hourSlice = rows.slice(33, 58); // 0..24 внутри среза
     const hourHtml = buildHourTableCols(hourSlice, 11, 12);

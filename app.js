@@ -505,27 +505,28 @@ async function renderL30dTables() {
     document.getElementById('l30dTFTable').innerHTML = tzHtml;
     document.getElementById('l30dTFCard').style.display = 'block';
     
-    // By 5min Zone L30D — A60:H72 → rows[59-71], cols 0-6, dataColStart=1
+    // By 5min Zone L30D — A60:H72 → rows[60-72] в JS, dataColStart=1
     const fiveMinL30dHtml = buildAnalTableCols([
-       { label: '0-4',   row: rows[59] },
-       { label: '5-9',   row: rows[60] },
-       { label: '10-14', row: rows[61] },
-       { label: '15-19', row: rows[62] },
-       { label: '20-24', row: rows[63] },
-       { label: '25-29', row: rows[64] },
-       { label: '30-34', row: rows[65] },
-       { label: '35-39', row: rows[66] },
-       { label: '40-44', row: rows[67] },
-       { label: '45-49', row: rows[68] },
-       { label: '50-54', row: rows[69] },
-       { label: '55-59', row: rows[70] },
-       { label: 'TOTAL', row: rows[71] },
+      { label: '0-4',   row: rows[60] },
+      { label: '5-9',   row: rows[61] },
+      { label: '10-14', row: rows[62] },
+      { label: '15-19', row: rows[63] },
+      { label: '20-24', row: rows[64] },
+      { label: '25-29', row: rows[65] },
+      { label: '30-34', row: rows[66] },
+      { label: '35-39', row: rows[67] },
+      { label: '40-44', row: rows[68] },
+      { label: '45-49', row: rows[69] },
+      { label: '50-54', row: rows[70] },
+      { label: '55-59', row: rows[71] },
+      { label: 'TOTAL', row: rows[72] },
     ], 1);
     document.getElementById('l30d5minTable').innerHTML = fiveMinL30dHtml;
     document.getElementById('l30d5minCard').style.display = 'block';
 
-    // By Hour Zone L30D — Y45:AF70 → hourCol=24, dataColStart=25
-    const hourHtml = buildHourTableCols(rows, 24, 25);
+    // By Hour Zone L30D — hourCol=24, dataColStart=25, срез rows[33..57] в JS = rows.slice(33,58)
+    const hourSlice = rows.slice(33, 58);
+    const hourHtml = buildHourTableCols(hourSlice, 24, 25);
     if (hourHtml) {
       document.getElementById('l30dHourTable').innerHTML = hourHtml;
       document.getElementById('l30dHourCard').style.display = 'block';

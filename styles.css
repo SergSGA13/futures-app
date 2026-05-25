@@ -1058,3 +1058,263 @@ html, body {
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--card-border); border-radius: 3px; }
+
+/* ===== CALCULATOR STYLES ===== */
+.calc-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.filter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.filter-buttons {
+  display: flex;
+  gap: 8px;
+}
+.filter-btn {
+  flex: 1;
+  padding: 10px;
+  background: var(--bg3);
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+.filter-btn:active,
+.filter-btn.active {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: white;
+}
+.filter-checkboxes,
+.filter-hours {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.filter-hours {
+  grid-template-columns: repeat(4, 1fr);
+}
+.filter-checkbox,
+.hour-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+.filter-checkbox:has(input:checked),
+.hour-checkbox:has(input:checked) {
+  background: rgba(157, 80, 255, 0.2);
+  border-color: var(--purple);
+}
+.filter-checkbox input,
+.hour-checkbox input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--purple);
+}
+.filter-stake select {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg3);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.calc-apply-btn {
+  padding: 12px 16px;
+  background: var(--purple);
+  border: none;
+  color: white;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.calc-apply-btn:active {
+  background: #8A3FD9;
+}
+.hours-select-all,
+.hours-select-none {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.hours-select-all:active,
+.hours-select-none:active {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+
+.calc-card {
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+.calc-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.params-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.param-item {
+  padding: 10px;
+  background: var(--bg3);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.param-key {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.param-val {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.metric-item {
+  padding: 12px;
+  background: var(--bg3);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.metric-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.metric-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.metric-profit {
+  font-size: 18px;
+}
+
+.breakeven-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.breakeven-item {
+  padding: 12px;
+  background: var(--bg3);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.breakeven-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.breakeven-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.pnl-chart-card { margin-bottom: 16px; }
+.pnl-chart-title { 
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.pnl-chart-wrap {
+  position: relative;
+  height: 240px;
+  background: var(--bg3);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.anal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.anal-table thead {
+  background: var(--bg3);
+}
+.anal-table th {
+  padding: 10px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--card-border);
+}
+.anal-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--card-border);
+  color: var(--text);
+}
+.anal-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.anal-total {
+  background: rgba(102, 163, 255, 0.06);
+  font-weight: 600;
+}
+
+.wr-green { color: var(--green) !important; }
+.wr-red { color: var(--red) !important; }
+.wr-yellow { color: var(--yellow) !important; }

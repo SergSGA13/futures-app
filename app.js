@@ -42,6 +42,7 @@ const navMap = {
   'home': 'nav-home',
   'futures-prediction': 'nav-futures-prediction',
   'statistics': 'nav-statistics',
+  'stats-calculator': 'nav-statistics',
   'stats-l30d': 'nav-statistics',
   'stats-all': 'nav-statistics',
   'articles': 'nav-articles',
@@ -53,6 +54,7 @@ const pageTitleKeys = {
   'indicators': 'title.ind',
   'articles': 'title.art',
   'statistics': 'title.stats',
+  'stats-calculator': 'title.stats.calc',
   'stats-l30d': 'title.stats.l30d',
   'stats-all': 'title.stats.all',
   'article-tilt': 'title.art',
@@ -80,6 +82,7 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
+  if (pageId === 'stats-calculator') { calcInitialize(); }
   if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
 
@@ -204,10 +207,10 @@ async function loadStatsPreview() {
     // K/V stats are at sheet rows 17-18 = parsed rows[16] and rows[17]
     // rows[17]: col[10]=WinRate L7D, col[21]=WinRate Total
     // rows[16]: col[10]=Signals L7D,  col[21]=Signals Total
-    const winrate7d  = rows[18]?.[10] || '—';
-    const signals7d  = rows[17]?.[10] || '—';
-    const winrateAll = rows[18]?.[21] || '—';
-    const totalAll   = rows[17]?.[21] || '—';
+    const winrate7d  = rows[17]?.[10] || '—';
+    const signals7d  = rows[16]?.[10] || '—';
+    const winrateAll = rows[17]?.[21] || '—';
+    const totalAll   = rows[16]?.[21] || '—';
 
     document.getElementById('statWinrate7d').textContent  = winrate7d;
     document.getElementById('statSignals7d').textContent  = signals7d;
@@ -401,27 +404,14 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
 
   let totalRow = null;
   let dataFound = false;
-
-  for (let i = 0; i < rows.length; i++) {
+  for (let i = 1; i < rows.length; i++) {
     const hour = rows[i][hourCol];
-
-    // ✅ пустое или NaN → проверяем на TOTAL
-    if (hour === '' || hour === undefined || hour === null || String(hour).trim().toLowerCase() === 'nan') {
+    if (hour === '' || hour === undefined || hour === null) {
       if (rows[i][dataColStart] && rows[i][dataColStart] !== '') totalRow = rows[i];
       continue;
     }
-
-    // явный TOTAL в ячейке
-    if (String(hour).trim().toUpperCase() === 'TOTAL') {
-      totalRow = rows[i];
-      continue;
-    }
-
-    const hourStr = String(hour).trim();
-    if (!/^\d+(\.\d+)?$/.test(hourStr)) continue;
-    const h = parseInt(hourStr, 10);
+    const h = parseInt(hour);
     if (isNaN(h) || h < 0 || h > 23) continue;
-
     dataFound = true;
     const d = dataColStart;
     const vals = [`${h}:00`, rows[i][d]||'-', rows[i][d+1]||'-', rows[i][d+2]||'-',
@@ -465,20 +455,20 @@ async function renderAnalTables() {
 
     // By Trading Pair L7D — cols B-H (dataColStart=1), rows[15-17]
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
+      { label: 'ETH',   row: rows[15] },
+      { label: 'BTC',   row: rows[16] },
+      { label: 'TOTAL', row: rows[17] },
     ], 1);
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
     // By Time Zone L7D — cols B-H (dataColStart=1), rows[24-28]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
+      { label: '0-14',  row: rows[24] },
+      { label: '15-29', row: rows[25] },
+      { label: '30-44', row: rows[26] },
+      { label: '45-59', row: rows[27] },
+      { label: 'TOTAL', row: rows[28] },
     ], 1);
     document.getElementById('analTFTable').innerHTML = tzHtml;
     document.getElementById('analTFCard').style.display = 'block';
@@ -492,48 +482,28 @@ async function renderL30dTables() {
     const rows = await fetchAnalL7d();
     if (!rows || !rows.length) return;
 
-    // By Trading Pair L30D — dataColStart=25, JS rows = python+1
+    // By Trading Pair L30D — Y19:AF22, row19=header → data at rows[19-21]
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
+      { label: 'ETH',   row: rows[15] },
+      { label: 'BTC',   row: rows[16] },
+      { label: 'TOTAL', row: rows[17] },
     ], 25);
     document.getElementById('l30dPairsTable').innerHTML = pairsHtml;
     document.getElementById('l30dPairsCard').style.display = 'block';
 
-    // By Time Zone L30D — dataColStart=25
+    // By Time Zone L30D — Y36:AF41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
+      { label: '0-14',  row: rows[24] },
+      { label: '15-29', row: rows[25] },
+      { label: '30-44', row: rows[26] },
+      { label: '45-59', row: rows[27] },
+      { label: 'TOTAL', row: rows[28] },
     ], 25);
     document.getElementById('l30dTFTable').innerHTML = tzHtml;
     document.getElementById('l30dTFCard').style.display = 'block';
 
-    // By 5min Zone L30D — A60:H72 → rows[60-72] в JS, dataColStart=1
-    const fiveMinL30dHtml = buildAnalTableCols([
-      { label: '0-4',   row: rows[59] },
-      { label: '5-9',   row: rows[60] },
-      { label: '10-14', row: rows[61] },
-      { label: '15-19', row: rows[62] },
-      { label: '20-24', row: rows[63] },
-      { label: '25-29', row: rows[64] },
-      { label: '30-34', row: rows[65] },
-      { label: '35-39', row: rows[66] },
-      { label: '40-44', row: rows[67] },
-      { label: '45-49', row: rows[68] },
-      { label: '50-54', row: rows[69] },
-      { label: '55-59', row: rows[70] },
-      { label: 'TOTAL', row: rows[71] },
-    ], 1);
-    document.getElementById('l30d5minTable').innerHTML = fiveMinL30dHtml;
-    document.getElementById('l30d5minCard').style.display = 'block';
-
-    // By Hour Zone L30D — hourCol=24, dataColStart=25, срез rows[33..57] в JS = rows.slice(33,58)
-    const hourSlice = rows.slice(33, 58);
-    const hourHtml = buildHourTableCols(hourSlice, 24, 25);
+    // By Hour Zone L30D — Y45:AF70 → hourCol=24, dataColStart=25
+    const hourHtml = buildHourTableCols(rows, 24, 25);
     if (hourHtml) {
       document.getElementById('l30dHourTable').innerHTML = hourHtml;
       document.getElementById('l30dHourCard').style.display = 'block';
@@ -550,46 +520,26 @@ async function renderAllTables() {
 
     // By Trading Pair ALL — L19:S22, row19=header → data at rows[16-18]
     const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
+      { label: 'ETH',   row: rows[15] },
+      { label: 'BTC',   row: rows[16] },
+      { label: 'TOTAL', row: rows[17] },
     ], 12);
     document.getElementById('allPairsTable').innerHTML = pairsHtml;
     document.getElementById('allPairsCard').style.display = 'block';
 
     // By Time Zone ALL — L36:S41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
+      { label: '0-14',  row: rows[24] },
+      { label: '15-29', row: rows[25] },
+      { label: '30-44', row: rows[26] },
+      { label: '45-59', row: rows[27] },
+      { label: 'TOTAL', row: rows[28] },
     ], 12);
     document.getElementById('allTFTable').innerHTML = tzHtml;
     document.getElementById('allTFCard').style.display = 'block';
 
-    // By 5min Zone ALL — L60:S72 → rows[59-71], cols 11-17, dataColStart=12
-const fiveMinAllHtml = buildAnalTableCols([
-  { label: '0-4',   row: rows[59] },
-  { label: '5-9',   row: rows[60] },
-  { label: '10-14', row: rows[61] },
-  { label: '15-19', row: rows[62] },
-  { label: '20-24', row: rows[63] },
-  { label: '25-29', row: rows[64] },
-  { label: '30-34', row: rows[65] },
-  { label: '35-39', row: rows[66] },
-  { label: '40-44', row: rows[67] },
-  { label: '45-49', row: rows[68] },
-  { label: '50-54', row: rows[69] },
-  { label: '55-59', row: rows[70] },
-  { label: 'TOTAL', row: rows[71] },
-], 12);
-document.getElementById('all5minTable').innerHTML = fiveMinAllHtml;
-document.getElementById('all5minCard').style.display = 'block';
-
-       // ✅ By Hour Zone ALL — L34:U58 → rows[33..57], hourCol=11, dataColStart=12
-    const hourSlice = rows.slice(33, 58); // 0..24 внутри среза
-    const hourHtml = buildHourTableCols(hourSlice, 11, 12);
+    // By Hour Zone ALL — L45:S70 → hourCol=11, dataColStart=12
+    const hourHtml = buildHourTableCols(rows, 11, 12);
     if (hourHtml) {
       document.getElementById('allHourTable').innerHTML = hourHtml;
       document.getElementById('allHourCard').style.display = 'block';
@@ -740,10 +690,257 @@ function refreshHome() {
   });
 }
 
-// ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
-  updateHeader('home');
-  applyTranslations();
-  loadStatsPreview();
-  loadTodaySignals();
-});
+// ===== CALCULATOR =====
+let calcState = {
+  period: 'l30d',
+  days: [0, 1, 2, 3, 4, 5, 6],
+  hours: Array.from({length: 24}, (_, i) => i),
+  stake: 5,
+  cachedAllSignals: null,
+};
+
+let calcChartInstance = null;
+
+function calcInitialize() {
+  calcRenderHourGrid();
+  calcCalculate();
+}
+
+function calcRenderHourGrid() {
+  const grid = document.getElementById('hoursGrid');
+  grid.innerHTML = '';
+  for (let h = 0; h < 24; h++) {
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.value = h;
+    chk.checked = calcState.hours.includes(h);
+    chk.onchange = () => calcChangeFilter('hours');
+    
+    const lbl = document.createElement('label');
+    lbl.className = 'hour-checkbox';
+    lbl.appendChild(chk);
+    lbl.appendChild(document.createTextNode(h < 10 ? `0${h}` : h));
+    grid.appendChild(lbl);
+  }
+}
+
+function calcSelectAllHours() {
+  calcState.hours = Array.from({length: 24}, (_, i) => i);
+  calcRenderHourGrid();
+  calcCalculate();
+}
+
+function calcSelectNoHours() {
+  calcState.hours = [];
+  calcRenderHourGrid();
+  calcCalculate();
+}
+
+function calcChangeFilter(type, value) {
+  if (type === 'period') {
+    calcState.period = value;
+    document.querySelectorAll('[data-period]').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[data-period="${value}"]`).classList.add('active');
+  } else if (type === 'days') {
+    calcState.days = Array.from(document.querySelectorAll('.filter-checkboxes input:checked')).map(el => parseInt(el.value));
+  } else if (type === 'hours') {
+    calcState.hours = Array.from(document.querySelectorAll('.hour-checkbox input:checked')).map(el => parseInt(el.value));
+  } else if (type === 'stake') {
+    calcState.stake = parseInt(document.getElementById('calcStakeSelect').value);
+  }
+}
+
+async function calcCalculate() {
+  try {
+    if (!calcState.cachedAllSignals) {
+      calcState.cachedAllSignals = await fetchAllSignals();
+    }
+    const rows = calcState.cachedAllSignals;
+    if (!rows || rows.length < 2) return;
+
+    const now = new Date();
+    const cutoffDate = calcState.period === 'l30d' 
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30)
+      : new Date(2000, 0, 1);
+    const cutoffKey = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth()+1).padStart(2,'0')}-${String(cutoffDate.getDate()).padStart(2,'0')}`;
+
+    const dailyStats = {};
+    const pairStats = { 'ETH': {total: 0, wins: 0, losses: 0}, 'BTC': {total: 0, wins: 0, losses: 0}, 'TOTAL': {total: 0, wins: 0, losses: 0} };
+    const tzStats = { '0-14': {total: 0, wins: 0, losses: 0}, '15-29': {total: 0, wins: 0, losses: 0}, '30-44': {total: 0, wins: 0, losses: 0}, '45-59': {total: 0, wins: 0, losses: 0}, 'TOTAL': {total: 0, wins: 0, losses: 0} };
+    const hourStats = {};
+
+    for (let i = 1; i < rows.length; i++) {
+      const dateStr = (rows[i][12] || '').trim();
+      const pair = (rows[i][1] || '').replace('USDT.P', '').substring(0, 3);
+      const timeStr = (rows[i][11] || '').trim();
+      const result = rows[i][9];
+      const minOfHour = parseInt(timeStr.split(':')[1]) || 0;
+
+      if (!dateStr || !timeStr) continue;
+
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      
+      const d = parts[0].padStart(2,'0');
+      const m = parts[1].padStart(2,'0');
+      const y = parts[2].substring(0, 4);
+      if (y.length < 4 || isNaN(parseInt(y))) continue;
+
+      const dk = `${y}-${m}-${d}`;
+      const dayOfWeek = new Date(parseInt(y), parseInt(m)-1, parseInt(d)).getDay();
+
+      if (dk < cutoffKey || !calcState.days.includes(dayOfWeek)) continue;
+
+      const hour = parseInt(timeStr.split(':')[0]) || 0;
+      if (!calcState.hours.includes(hour)) continue;
+
+      const tz = minOfHour < 15 ? '0-14' : minOfHour < 30 ? '15-29' : minOfHour < 45 ? '30-44' : '45-59';
+
+      const isWin = result === 'WIN';
+      const isLoss = result === 'LOSE';
+
+      if (!dailyStats[dk]) dailyStats[dk] = { label: `${d}.${m}`, wins: 0, losses: 0, pnl: 0 };
+      if (isWin) { dailyStats[dk].wins++; dailyStats[dk].pnl += calcState.stake; }
+      else if (isLoss) { dailyStats[dk].losses++; dailyStats[dk].pnl -= 125; }
+
+      const pairKey = pair === 'ETH' ? 'ETH' : pair === 'BTC' ? 'BTC' : 'TOTAL';
+      pairStats[pairKey].total++;
+      if (isWin) pairStats[pairKey].wins++;
+      else if (isLoss) pairStats[pairKey].losses++;
+      pairStats['TOTAL'].total++;
+      if (isWin) pairStats['TOTAL'].wins++;
+      else if (isLoss) pairStats['TOTAL'].losses++;
+
+      tzStats[tz].total++;
+      if (isWin) tzStats[tz].wins++;
+      else if (isLoss) tzStats[tz].losses++;
+      tzStats['TOTAL'].total++;
+      if (isWin) tzStats['TOTAL'].wins++;
+      else if (isLoss) tzStats['TOTAL'].losses++;
+
+      const hkey = `${hour}:00`;
+      if (!hourStats[hkey]) hourStats[hkey] = { hour, total: 0, wins: 0, losses: 0 };
+      hourStats[hkey].total++;
+      if (isWin) hourStats[hkey].wins++;
+      else if (isLoss) hourStats[hkey].losses++;
+    }
+
+    const sortedDays = Object.keys(dailyStats).sort();
+    const totalSignals = sortedDays.reduce((sum, dk) => sum + dailyStats[dk].wins + dailyStats[dk].losses, 0);
+    const totalWins = sortedDays.reduce((sum, dk) => sum + dailyStats[dk].wins, 0);
+    const totalLoses = sortedDays.reduce((sum, dk) => sum + dailyStats[dk].losses, 0);
+    const wr = totalWins + totalLoses > 0 ? Math.round(totalWins / (totalWins + totalLoses) * 100) : 0;
+    const totalProfit = sortedDays.reduce((sum, dk) => sum + dailyStats[dk].pnl, 0);
+    const profitableDays = sortedDays.filter(dk => dailyStats[dk].pnl > 0).length;
+    const totalActiveDays = sortedDays.length;
+    const uptime = totalActiveDays > 0 ? Math.round(profitableDays / totalActiveDays * 100) : 0;
+
+    document.getElementById('calcTotalSignals').textContent = totalSignals;
+    document.getElementById('calcWins').textContent = totalWins;
+    document.getElementById('calcLoses').textContent = totalLoses;
+    document.getElementById('calcWR').textContent = `${wr}%`;
+    document.getElementById('calcProfit').textContent = `${totalProfit > 0 ? '+' : ''}${totalProfit} USDT`;
+    document.getElementById('calcProfit').className = `metric-value ${totalProfit >= 0 ? 'wr-green' : 'wr-red'}`;
+    document.getElementById('calcUptime').textContent = `${uptime}% (${profitableDays}/${totalActiveDays})`;
+
+    const breakeven = calcState.stake === 125 ? 55.56 : calcState.stake === 250 ? 55.56 : (125 / (calcState.stake + 125)) * 100;
+    const status = wr >= breakeven ? '✅ Прибыльно' : wr >= breakeven - 5 ? '⚠️ На грани' : '❌ Убыточно';
+    document.getElementById('calcBreakeven').textContent = `${breakeven.toFixed(2)}%`;
+    document.getElementById('calcCurrentWR').textContent = `${wr}%`;
+    document.getElementById('calcStatus').textContent = status;
+
+    calcRenderPnlChart(sortedDays, dailyStats);
+    calcRenderPairsTable(pairStats);
+    calcRenderTZTable(tzStats);
+    calcRenderHourTable(hourStats);
+  } catch(e) {
+    console.log('Calc error:', e);
+  }
+}
+
+function calcRenderPnlChart(sortedDays, dailyStats) {
+  if (calcChartInstance) calcChartInstance.destroy();
+
+  let cumPnl = 0;
+  const labels = sortedDays.map(dk => dailyStats[dk].label);
+  const pctData = sortedDays.map(dk => {
+    cumPnl += dailyStats[dk].pnl;
+    return Math.round((cumPnl / 5000) * 100);
+  });
+
+  const ctx = document.getElementById('calcPnlChart')?.getContext('2d');
+  if (!ctx) return;
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
+  gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+  calcChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+}
+
+function calcRenderPairsTable(stats) {
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  for (const pair of ['ETH', 'BTC', 'TOTAL']) {
+    const s = stats[pair];
+    const wrUp = s.wins > 0 || s.losses > 0 ? Math.round(s.wins / (s.wins + s.losses) * 100) : 0;
+    html += `<tr class="${pair === 'TOTAL' ? 'anal-total' : ''}">`;
+    html += `<td>${pair}</td><td>${s.total}</td><td>${s.wins}</td>`;
+    html += `<td class="${wrUp >= 65 ? 'wr-green' : wrUp >= 50 ? 'wr-yellow' : 'wr-red'}">${wrUp}%</td>`;
+    html += `<td>-</td><td>-</td><td>-</td><td>${s.total}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('calcPairsTable').innerHTML = html;
+  document.getElementById('calcPairsCard').style.display = 'block';
+}
+
+function calcRenderTZTable(stats) {
+  const headers = ['Zone', 'Total', 'Wins', 'WR%'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  for (const tz of ['0-14', '15-29', '30-44', '45-59', 'TOTAL']) {
+    const s = stats[tz];
+    const wr = s.total > 0 ? Math.round(s.wins / s.total * 100) : 0;
+    html += `<tr class="${tz === 'TOTAL' ? 'anal-total' : ''}">`;
+    html += `<td>${tz}</td><td>${s.total}</td><td>${s.wins}</td>`;
+    html += `<td class="${wr >= 65 ? 'wr-green' : wr >= 50 ? 'wr-yellow' : 'wr-red'}">${wr}%</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('calcTFTable').innerHTML = html;
+  document.getElementById('calcTFCard').style.display = 'block';
+}
+
+function calcRenderHourTable(stats) {
+  const headers = ['Hour', 'Total', 'Wins', 'WR%'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  for (let h = 0; h < 24; h++) {
+    const key = `${h}:00`;
+    const s = stats[key] || { total: 0, wins: 0, losses: 0 };
+    const wr = s.total > 0 ? Math.round(s.wins / s.total * 100) : 0;
+    html += '<tr>';
+    html += `<td>${h < 10 ? '0' : ''}${h}:00</td><td>${s.total}</td><td>${s.wins}</td>`;
+    html += `<td class="${wr >= 65 ? 'wr-green' : wr >= 50 ? 'wr-yellow' : 'wr-red'}">${wr}%</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('calcHourTable').innerHTML = html;
+  document.getElementById('calcHourCard').style.display = 'block';
+}

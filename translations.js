@@ -15,7 +15,7 @@ ru: {
   'link.main':'Основной канал','link.chat':'Чат сообщества','btn.refresh':'Обновить',
   'title.fp':'Futures Prediction','title.fs':'Futures Strategy',
   'title.ind':'Индикаторы','title.art':'Статьи','title.stats':'Статистика',
-  'title.stats.l30d':'Last 30 Days','title.stats.all':'ALL Periods',
+  'title.stats.calc':'Калькулятор','title.stats.l30d':'Last 30 Days','title.stats.all':'ALL Periods',
   'sig.today':'Сигналы сегодня','sig.group.btn':'Signals Group',
   'sig.empty':'Сигналов сегодня нет','sig.loading':'Загрузка...','sig.error':'Ошибка загрузки',
   'sig.sum.total':'Всего','sig.ago.h':'ч','sig.ago.m':'м','sig.ago.s':'с','sig.ago.word':'назад',

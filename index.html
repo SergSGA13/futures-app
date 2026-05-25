@@ -845,6 +845,13 @@
         </div>
 
         <div class="stats-subsections">
+          <div class="stats-sub-btn" onclick="navigate('stats-calculator')">
+            <div class="stats-sub-info">
+              <div class="stats-sub-title">📊 Калькулятор</div>
+              <div class="stats-sub-desc">Анализ с фильтрами по дням и часам</div>
+            </div>
+            <div class="stats-sub-arrow">›</div>
+          </div>
           <div class="stats-sub-btn" onclick="navigate('stats-l30d')">
             <div class="stats-sub-info">
               <div class="stats-sub-title">Last 30 Days</div>
@@ -865,11 +872,166 @@
       </div>
     </div>
 
+    <!-- STATISTICS: CALCULATOR -->
+    <div class="page" id="page-stats-calculator">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom:16px">📊 Калькулятор сигналов</h2>
+
+        <!-- FILTERS -->
+        <div class="calc-filters">
+          <div class="filter-group">
+            <label class="filter-label">Период:</label>
+            <div class="filter-buttons">
+              <button class="filter-btn active" data-period="l30d" onclick="calcChangeFilter('period', 'l30d')">Last 30 Days</button>
+              <button class="filter-btn" data-period="all" onclick="calcChangeFilter('period', 'all')">ALL Periods</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Активные дни недели:</label>
+            <div class="filter-checkboxes">
+              <label class="filter-checkbox"><input type="checkbox" value="1" onchange="calcChangeFilter('days')" checked> Пн</label>
+              <label class="filter-checkbox"><input type="checkbox" value="2" onchange="calcChangeFilter('days')" checked> Вт</label>
+              <label class="filter-checkbox"><input type="checkbox" value="3" onchange="calcChangeFilter('days')" checked> Ср</label>
+              <label class="filter-checkbox"><input type="checkbox" value="4" onchange="calcChangeFilter('days')" checked> Чт</label>
+              <label class="filter-checkbox"><input type="checkbox" value="5" onchange="calcChangeFilter('days')" checked> Пт</label>
+              <label class="filter-checkbox"><input type="checkbox" value="6" onchange="calcChangeFilter('days')" checked> Сб</label>
+              <label class="filter-checkbox"><input type="checkbox" value="0" onchange="calcChangeFilter('days')" checked> Вс</label>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Активные часы (0-23):</label>
+            <div class="filter-hours">
+              <div id="hoursGrid"></div>
+              <button class="hours-select-all" onclick="calcSelectAllHours()">Выбрать все</button>
+              <button class="hours-select-none" onclick="calcSelectNoHours()">Очистить</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Ставка (для расчета дохода):</label>
+            <div class="filter-stake">
+              <select id="calcStakeSelect" onchange="calcChangeFilter('stake')">
+                <option value="5">5 USDT</option>
+                <option value="10">10 USDT</option>
+                <option value="25">25 USDT</option>
+                <option value="50">50 USDT</option>
+                <option value="100">100 USDT</option>
+                <option value="125">125 USDT (ETH max)</option>
+                <option value="250">250 USDT (BTC max)</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="calc-apply-btn" onclick="calcCalculate()">Применить фильтры</button>
+        </div>
+
+        <!-- SYSTEM PARAMETERS -->
+        <div class="calc-card">
+          <div class="calc-card-title">⚙️ Параметры системы</div>
+          <div class="params-grid">
+            <div class="param-item">
+              <div class="param-key">Max позиций:</div>
+              <div class="param-val">5</div>
+            </div>
+            <div class="param-item">
+              <div class="param-key">ETH ставка:</div>
+              <div class="param-val">5-125 USDT</div>
+            </div>
+            <div class="param-item">
+              <div class="param-key">BTC ставка:</div>
+              <div class="param-val">5-250 USDT</div>
+            </div>
+            <div class="param-item">
+              <div class="param-key">Экспирация:</div>
+              <div class="param-val">10 минут</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PERFORMANCE METRICS -->
+        <div class="calc-card">
+          <div class="calc-card-title">📈 Производительность</div>
+          <div class="metrics-grid">
+            <div class="metric-item">
+              <div class="metric-label">Total сигналов:</div>
+              <div class="metric-value" id="calcTotalSignals">—</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">WIN:</div>
+              <div class="metric-value wr-green" id="calcWins">—</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">LOSE:</div>
+              <div class="metric-value wr-red" id="calcLoses">—</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">WR%:</div>
+              <div class="metric-value" id="calcWR">—</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">Месячный доход:</div>
+              <div class="metric-value metric-profit" id="calcProfit">—</div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">Uptime (дней):</div>
+              <div class="metric-value" id="calcUptime">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PNL CHART -->
+        <div class="pnl-chart-card">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Диаграмма дохода</div>
+          <div class="pnl-chart-wrap"><canvas id="calcPnlChart"></canvas></div>
+        </div>
+
+        <!-- BREAK-EVEN WR -->
+        <div class="calc-card">
+          <div class="calc-card-title">⚠️ Анализ WinRate</div>
+          <div class="breakeven-grid" id="calcBreakevenGrid">
+            <div class="breakeven-item">
+              <div class="breakeven-label">Break-even WR:</div>
+              <div class="breakeven-value" id="calcBreakeven">—</div>
+            </div>
+            <div class="breakeven-item">
+              <div class="breakeven-label">Текущий WR:</div>
+              <div class="breakeven-value" id="calcCurrentWR">—</div>
+            </div>
+            <div class="breakeven-item">
+              <div class="breakeven-label">Статус:</div>
+              <div class="breakeven-value" id="calcStatus">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BY PAIR -->
+        <div class="pnl-chart-card" id="calcPairsCard" style="display:none">
+          <div class="pnl-chart-title">📊 По парам</div>
+          <div id="calcPairsTable"></div>
+        </div>
+
+        <!-- BY TIME ZONE -->
+        <div class="pnl-chart-card" id="calcTFCard" style="display:none">
+          <div class="pnl-chart-title">⏱️ По таймзонам (минуты)</div>
+          <div id="calcTFTable"></div>
+        </div>
+
+        <!-- BY HOUR -->
+        <div class="pnl-chart-card" id="calcHourCard" style="display:none">
+          <div class="pnl-chart-title">🕐 По часам (0-23)</div>
+          <div id="calcHourTable"></div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- STATISTICS: LAST 30 DAYS -->
     <div class="page" id="page-stats-l30d">
       <div class="page-content">
         <h2 class="section-title" style="margin-bottom:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Last 30 Days</h2>
-        
+
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL - Last 30 Days</div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartL30d"></canvas></div>
@@ -879,18 +1041,12 @@
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>By Trading Pair - Last 30 Days</div>
           <div id="l30dPairsTable"></div>
         </div>
-        
 
         <div class="pnl-chart-card" id="l30dTFCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Time Zone - Last 30 Days</div>
           <div id="l30dTFTable"></div>
         </div>
-        
-        <div class="pnl-chart-card" id="l30d5minCard" style="display:none">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>By 5min Zone - Last 30 Days</div>
-          <div id="l30d5minTable"></div>
-        </div>
-        
+
         <div class="pnl-chart-card" id="l30dHourCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone - Last 30 Days</div>
           <div id="l30dHourTable"></div>
@@ -920,15 +1076,10 @@
           <div id="allTFTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="all5minCard" style="display:none">
-           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>By 5min Zone - ALL Periods</div>
-           <div id="all5minTable"></div>
-         </div>
-
-         <div class="pnl-chart-card" id="allHourCard" style="display:none">
-           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone - ALL Periods</div>
-           <div id="allHourTable"></div>
-         </div>
+        <div class="pnl-chart-card" id="allHourCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone - ALL Periods</div>
+          <div id="allHourTable"></div>
+        </div>
 
         <a href="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/edit" target="_blank" class="source-link" style="margin-top:12px" data-i18n="stats.open">Открыть полную таблицу →</a>
       </div>

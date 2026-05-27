@@ -778,9 +778,24 @@ function initCalculator() {
 }
 
 function calcExtractHour(val) {
-  if (!val) return NaN;
-  const m = String(val).match(/^(\d{1,2})/);
-  return m ? parseInt(m[1]) : NaN;
+  if (val === null || val === undefined || val === '') return NaN;
+  const s = String(val).trim();
+  if (!s) return NaN;
+  // "HH:MM" or "HH:MM:SS" — most common CSV export format
+  const hm = s.match(/^(\d{1,2}):/);
+  if (hm) {
+    const h = parseInt(hm[1]);
+    return h === 24 ? 0 : h <= 23 ? h : NaN;
+  }
+  // Numeric value
+  const n = parseFloat(s);
+  if (isNaN(n)) return NaN;
+  // Plain integer hour (0–23)
+  if (Number.isInteger(n) && n >= 0 && n <= 23) return n;
+  // Pure time fraction 0–1 (e.g. 0.625 = 15:00)
+  if (n >= 0 && n < 1) return Math.floor(n * 24);
+  // Datetime serial (e.g. 45678.625) — extract time part via modulo
+  return Math.floor((n % 1) * 24);
 }
 
 function calcParseDate(str) {

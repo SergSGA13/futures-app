@@ -768,7 +768,7 @@ function initCalculator() {
   hoursGrid.innerHTML = hoursHtml;
 
   const daysGrid = document.getElementById('calcDaysGrid');
-  const dayNames = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  const dayNames = [t('calc.days.mon'),t('calc.days.tue'),t('calc.days.wed'),t('calc.days.thu'),t('calc.days.fri'),t('calc.days.sat'),t('calc.days.sun')];
   let daysHtml = '';
   for (let d = 0; d < 7; d++) {
     const checked = d < 5 ? 'checked' : '';
@@ -796,7 +796,7 @@ async function runCalculator() {
   const btn = document.getElementById('calcRunBtn');
   const results = document.getElementById('calcResults');
   btn.disabled = true;
-  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="calc-spin" style="vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg> Загрузка...';
+  btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="calc-spin" style="vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg> ${t('calc.loading')}`;
   results.innerHTML = '';
 
   try {
@@ -813,7 +813,7 @@ async function runCalculator() {
     }
 
     const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) { results.innerHTML = '<div class="calc-error">Нет данных</div>'; return; }
+    if (!rows || rows.length < 2) { results.innerHTML = `<div class="calc-error">${t('calc.no.data')}</div>`; return; }
 
     const ethW = ethBet * 0.8, ethL = -ethBet;
     const btcW = btcBet * 0.8, btcL = -btcBet;
@@ -855,11 +855,11 @@ async function runCalculator() {
     renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length);
 
   } catch(e) {
-    results.innerHTML = '<div class="calc-error">Ошибка загрузки данных</div>';
+    results.innerHTML = `<div class="calc-error">${t('calc.error')}</div>`;
     console.error('Calculator error:', e);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Рассчитать';
+    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg> ${t('calc.run')}`;
   }
 }
 
@@ -891,13 +891,13 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount) {
   document.getElementById('calcResults').innerHTML = `
     <div class="calc-divider"></div>
     <div class="calc-res-grid">
-      <div class="calc-res-item"><span>Сигналов</span><b>${totSig}</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig}</b></div>
       <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
-      <div class="calc-res-item"><span>EV / сигнал</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
-      <div class="calc-res-item"><span>PnL исторический</span><b style="color:${pc(totP)}">${fmt(totP)} USDT</b></div>
-      <div class="calc-res-item"><span>PnL / месяц</span><b style="color:${pc(ppm)}">${fmt(ppm)} USDT</b></div>
-      <div class="calc-res-item"><span>PnL / год</span><b style="color:${pc(ppy)}">${fmt(ppy)} USDT</b></div>
-      <div class="calc-res-item"><span>Активных часов</span><b>${activeHCount}</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.ev')}</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.pnl.hist')}</span><b style="color:${pc(totP)}">${fmt(totP)} USDT</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.pnl.month')}</span><b style="color:${pc(ppm)}">${fmt(ppm)} USDT</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.pnl.year')}</span><b style="color:${pc(ppy)}">${fmt(ppy)} USDT</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.hours')}</span><b>${activeHCount}</b></div>
       <div class="calc-res-item"><span>Break-even WR</span><b style="color:#FFD166">55.6%</b></div>
     </div>
     <div class="calc-pair-row">

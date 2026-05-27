@@ -846,8 +846,8 @@ async function runCalculator() {
       const res   = row[9]  || '';
       if (res !== 'WIN' && res !== 'LOSE') continue;
 
-      // col L (11) first, fallback to col R (17) — same logic as loadTodaySignals
-      const hour = calcExtractHour(row[11] || row[17]);
+      // col T (19) = ready hour integer; fallback to L (11) then R (17)
+      const hour = calcExtractHour(row[19] || row[11] || row[17]);
       if (isNaN(hour)) continue;
 
       const dt = calcParseDate(row[12]);

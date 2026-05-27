@@ -740,10 +740,189 @@ function refreshHome() {
   });
 }
 
+// ===== CALCULATOR =====
+function initCalculator() {
+  const ethSel = document.getElementById('calcEthBet');
+  const btcSel = document.getElementById('calcBtcBet');
+  if (!ethSel || !btcSel) return;
+
+  for (let v = 5; v <= 125; v += 5) {
+    const o = document.createElement('option');
+    o.value = o.textContent = v;
+    if (v === 125) o.selected = true;
+    ethSel.appendChild(o);
+  }
+  for (let v = 5; v <= 250; v += 5) {
+    const o = document.createElement('option');
+    o.value = o.textContent = v;
+    if (v === 250) o.selected = true;
+    btcSel.appendChild(o);
+  }
+
+  const hoursGrid = document.getElementById('calcHoursGrid');
+  let hoursHtml = '';
+  for (let h = 0; h < 24; h++) {
+    const checked = (h >= 8 && h <= 22) ? 'checked' : '';
+    hoursHtml += `<label class="calc-hour-item"><span class="calc-hour-lbl">${String(h).padStart(2,'0')}</span><input type="checkbox" class="calc-cb" id="calcH${h}" ${checked}></label>`;
+  }
+  hoursGrid.innerHTML = hoursHtml;
+
+  const daysGrid = document.getElementById('calcDaysGrid');
+  const dayNames = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  let daysHtml = '';
+  for (let d = 0; d < 7; d++) {
+    const checked = d < 5 ? 'checked' : '';
+    daysHtml += `<label class="calc-hour-item"><span class="calc-hour-lbl">${dayNames[d]}</span><input type="checkbox" class="calc-cb" id="calcD${d+1}" ${checked}></label>`;
+  }
+  daysGrid.innerHTML = daysHtml;
+}
+
+function calcExtractHour(val) {
+  if (!val) return NaN;
+  const m = String(val).match(/^(\d{1,2})/);
+  return m ? parseInt(m[1]) : NaN;
+}
+
+function calcParseDate(str) {
+  if (!str) return null;
+  const parts = String(str).split('.');
+  if (parts.length < 3) return null;
+  const d = parseInt(parts[0]), mo = parseInt(parts[1]), y = parseInt(parts[2]);
+  if (isNaN(d) || isNaN(mo) || isNaN(y)) return null;
+  return new Date(y, mo - 1, d);
+}
+
+async function runCalculator() {
+  const btn = document.getElementById('calcRunBtn');
+  const results = document.getElementById('calcResults');
+  btn.disabled = true;
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="calc-spin" style="vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg> Загрузка...';
+  results.innerHTML = '';
+
+  try {
+    const ethBet = parseInt(document.getElementById('calcEthBet').value) || 125;
+    const btcBet = parseInt(document.getElementById('calcBtcBet').value) || 250;
+
+    const activeH = {};
+    for (let h = 0; h < 24; h++) {
+      if (document.getElementById(`calcH${h}`)?.checked) activeH[h] = true;
+    }
+    const activeD = {};
+    for (let d = 1; d <= 7; d++) {
+      if (document.getElementById(`calcD${d}`)?.checked) activeD[d] = true;
+    }
+
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) { results.innerHTML = '<div class="calc-error">Нет данных</div>'; return; }
+
+    const ethW = ethBet * 0.8, ethL = -ethBet;
+    const btcW = btcBet * 0.8, btcL = -btcBet;
+    const st = { EU:{w:0,l:0,p:0}, ED:{w:0,l:0,p:0}, BU:{w:0,l:0,p:0}, BD:{w:0,l:0,p:0} };
+    const tradeDays = {};
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const instr = (row[1] || '').toUpperCase();
+      const dir   = (row[2] || '').toUpperCase();
+      const res   = row[9]  || '';
+      if (res !== 'WIN' && res !== 'LOSE') continue;
+
+      const hour = calcExtractHour(row[11]);
+      if (isNaN(hour) || !activeH[hour]) continue;
+
+      const dt = calcParseDate(row[12]);
+      if (!dt) continue;
+
+      const dow = dt.getDay();
+      const dayNum = dow === 0 ? 7 : dow;
+      if (!activeD[dayNum]) continue;
+
+      const isETH = instr.includes('ETH');
+      const isBTC = instr.includes('BTC');
+      if (!isETH && !isBTC) continue;
+      if (dir !== 'UP' && dir !== 'DOWN') continue;
+
+      const key = (isETH ? 'E' : 'B') + (dir === 'UP' ? 'U' : 'D');
+      const wP = isETH ? ethW : btcW;
+      const lP = isETH ? ethL : btcL;
+      const win = res === 'WIN';
+      st[key].w += win ? 1 : 0;
+      st[key].l += win ? 0 : 1;
+      st[key].p += win ? wP : lP;
+      tradeDays[row[12]] = true;
+    }
+
+    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length);
+
+  } catch(e) {
+    results.innerHTML = '<div class="calc-error">Ошибка загрузки данных</div>';
+    console.error('Calculator error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Рассчитать';
+  }
+}
+
+function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount) {
+  let totW = 0, totL = 0, totP = 0;
+  ['EU','ED','BU','BD'].forEach(k => { totW += st[k].w; totL += st[k].l; totP += st[k].p; });
+  const totSig = totW + totL;
+  const totWR  = totSig > 0 ? totW / totSig * 100 : 0;
+  const nDays  = Object.keys(tradeDays).length;
+  const ppd    = nDays > 0 ? totP / nDays : 0;
+  const ppm    = ppd * 30;
+  const ppy    = ppd * 365;
+  const evSig  = totSig > 0 ? totP / totSig : 0;
+
+  const ethSig  = st.EU.w+st.EU.l+st.ED.w+st.ED.l;
+  const ethWins = st.EU.w+st.ED.w;
+  const ethPnl  = st.EU.p+st.ED.p;
+  const ethWR   = ethSig > 0 ? ethWins/ethSig*100 : 0;
+
+  const btcSig  = st.BU.w+st.BU.l+st.BD.w+st.BD.l;
+  const btcWins = st.BU.w+st.BD.w;
+  const btcPnl  = st.BU.p+st.BD.p;
+  const btcWR   = btcSig > 0 ? btcWins/btcSig*100 : 0;
+
+  const wc  = v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272';
+  const pc  = v => v >= 0 ? '#4EFFA0' : '#FF5272';
+  const fmt = v => (v >= 0 ? '+' : '') + Math.round(v);
+
+  document.getElementById('calcResults').innerHTML = `
+    <div class="calc-divider"></div>
+    <div class="calc-res-grid">
+      <div class="calc-res-item"><span>Сигналов</span><b>${totSig}</b></div>
+      <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
+      <div class="calc-res-item"><span>EV / сигнал</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
+      <div class="calc-res-item"><span>PnL исторический</span><b style="color:${pc(totP)}">${fmt(totP)} USDT</b></div>
+      <div class="calc-res-item"><span>PnL / месяц</span><b style="color:${pc(ppm)}">${fmt(ppm)} USDT</b></div>
+      <div class="calc-res-item"><span>PnL / год</span><b style="color:${pc(ppy)}">${fmt(ppy)} USDT</b></div>
+      <div class="calc-res-item"><span>Активных часов</span><b>${activeHCount}</b></div>
+      <div class="calc-res-item"><span>Break-even WR</span><b style="color:#FFD166">55.6%</b></div>
+    </div>
+    <div class="calc-pair-row">
+      <div class="calc-pair-card">
+        <div class="calc-pair-hdr">ETH <span class="calc-pair-bet">${ethBet} USDT</span></div>
+        <div class="calc-pair-stat"><span>Сигналов</span><b>${ethSig}</b></div>
+        <div class="calc-pair-stat"><span>WR%</span><b style="color:${wc(ethWR)}">${ethWR.toFixed(1)}%</b></div>
+        <div class="calc-pair-stat"><span>PnL</span><b style="color:${pc(ethPnl)}">${fmt(ethPnl)}</b></div>
+      </div>
+      <div class="calc-pair-card">
+        <div class="calc-pair-hdr">BTC <span class="calc-pair-bet">${btcBet} USDT</span></div>
+        <div class="calc-pair-stat"><span>Сигналов</span><b>${btcSig}</b></div>
+        <div class="calc-pair-stat"><span>WR%</span><b style="color:${wc(btcWR)}">${btcWR.toFixed(1)}%</b></div>
+        <div class="calc-pair-stat"><span>PnL</span><b style="color:${pc(btcPnl)}">${fmt(btcPnl)}</b></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('calcResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
   updateHeader('home');
   applyTranslations();
   loadStatsPreview();
   loadTodaySignals();
+  initCalculator();
 });

@@ -861,6 +861,33 @@
           </div>
         </div>
 
+        <!-- CALCULATOR -->
+        <div class="pnl-chart-card" id="calcCard">
+          <div class="pnl-chart-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+            Калькулятор доходности
+          </div>
+          <div class="calc-params">
+            <div class="calc-param">
+              <div class="calc-param-label">ETH ставка (USDT)</div>
+              <select id="calcEthBet" class="calc-select"></select>
+            </div>
+            <div class="calc-param">
+              <div class="calc-param-label">BTC ставка (USDT)</div>
+              <select id="calcBtcBet" class="calc-select"></select>
+            </div>
+          </div>
+          <div class="calc-section-hdr">Активные часы <span class="calc-hint">(Варшава UTC+2)</span></div>
+          <div class="calc-hours-wrap" id="calcHoursGrid"></div>
+          <div class="calc-section-hdr" style="margin-top:12px">Активные дни</div>
+          <div class="calc-days-wrap" id="calcDaysGrid"></div>
+          <button class="calc-run-btn" id="calcRunBtn" onclick="runCalculator()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Рассчитать
+          </button>
+          <div id="calcResults"></div>
+        </div>
+
         <a href="https://docs.google.com/spreadsheets/d/1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o/edit" target="_blank" class="source-link" style="margin-top:4px" data-i18n="stats.open">Открыть полную таблицу →</a>
       </div>
     </div>

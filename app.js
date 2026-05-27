@@ -785,11 +785,14 @@ function calcExtractHour(val) {
 
 function calcParseDate(str) {
   if (!str) return null;
-  const parts = String(str).split('.');
-  if (parts.length < 3) return null;
-  const d = parseInt(parts[0]), mo = parseInt(parts[1]), y = parseInt(parts[2]);
-  if (isNaN(d) || isNaN(mo) || isNaN(y)) return null;
-  return new Date(y, mo - 1, d);
+  const s = String(str).trim();
+  // DD.MM.YYYY
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  // YYYY-MM-DD (gviz ISO export)
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  return null;
 }
 
 async function runCalculator() {
@@ -819,6 +822,7 @@ async function runCalculator() {
     const btcW = btcBet * 0.8, btcL = -btcBet;
     const st = { EU:{w:0,l:0,p:0}, ED:{w:0,l:0,p:0}, BU:{w:0,l:0,p:0}, BD:{w:0,l:0,p:0} };
     const tradeDays = {};
+    let totalRaw = 0; // valid WIN/LOSE signals before hour/day filter
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
@@ -827,20 +831,24 @@ async function runCalculator() {
       const res   = row[9]  || '';
       if (res !== 'WIN' && res !== 'LOSE') continue;
 
-      const hour = calcExtractHour(row[11]);
-      if (isNaN(hour) || !activeH[hour]) continue;
+      // col L (11) first, fallback to col R (17) — same logic as loadTodaySignals
+      const hour = calcExtractHour(row[11] || row[17]);
+      if (isNaN(hour)) continue;
 
       const dt = calcParseDate(row[12]);
       if (!dt) continue;
-
-      const dow = dt.getDay();
-      const dayNum = dow === 0 ? 7 : dow;
-      if (!activeD[dayNum]) continue;
 
       const isETH = instr.includes('ETH');
       const isBTC = instr.includes('BTC');
       if (!isETH && !isBTC) continue;
       if (dir !== 'UP' && dir !== 'DOWN') continue;
+
+      totalRaw++; // valid signal, before hour/day filter
+
+      if (!activeH[hour]) continue;
+      const dow = dt.getDay();
+      const dayNum = dow === 0 ? 7 : dow;
+      if (!activeD[dayNum]) continue;
 
       const key = (isETH ? 'E' : 'B') + (dir === 'UP' ? 'U' : 'D');
       const wP = isETH ? ethW : btcW;
@@ -852,7 +860,7 @@ async function runCalculator() {
       tradeDays[row[12]] = true;
     }
 
-    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length);
+    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw);
 
   } catch(e) {
     results.innerHTML = `<div class="calc-error">${t('calc.error')}</div>`;
@@ -863,7 +871,7 @@ async function runCalculator() {
   }
 }
 
-function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount) {
+function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw) {
   let totW = 0, totL = 0, totP = 0;
   ['EU','ED','BU','BD'].forEach(k => { totW += st[k].w; totL += st[k].l; totP += st[k].p; });
   const totSig = totW + totL;
@@ -891,7 +899,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount) {
   document.getElementById('calcResults').innerHTML = `
     <div class="calc-divider"></div>
     <div class="calc-res-grid">
-      <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig}</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig} <span style="color:#7B84B0;font-size:11px;font-weight:400">/ ${totalRaw}</span></b></div>
       <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
       <div class="calc-res-item"><span>${t('calc.res.ev')}</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
       <div class="calc-res-item"><span>${t('calc.res.pnl.hist')}</span><b style="color:${pc(totP)}">${fmt(totP)} USDT</b></div>

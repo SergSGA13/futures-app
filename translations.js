@@ -81,6 +81,15 @@ ru: {
   'art.whatis.full':'Что такое Futures Prediction?',
   'art.focus.full':'Грааля не существует.<br/>Есть система.',
   'art.tg':'Читать в Telegram →',
+  'calc.title':'Калькулятор доходности',
+  'calc.eth.bet':'ETH ставка (USDT)','calc.btc.bet':'BTC ставка (USDT)',
+  'calc.hours':'Активные часы','calc.tz':'(Варшава UTC+2)','calc.days':'Активные дни',
+  'calc.run':'Рассчитать','calc.loading':'Загрузка...','calc.error':'Ошибка загрузки','calc.no.data':'Нет данных',
+  'calc.res.signals':'Сигналов','calc.res.ev':'EV / сигнал',
+  'calc.res.pnl.hist':'PnL исторический','calc.res.pnl.month':'PnL / месяц','calc.res.pnl.year':'PnL / год',
+  'calc.res.hours':'Активных часов',
+  'calc.days.mon':'Пн','calc.days.tue':'Вт','calc.days.wed':'Ср','calc.days.thu':'Чт',
+  'calc.days.fri':'Пт','calc.days.sat':'Сб','calc.days.sun':'Вс',
 
   'art.tilt.body': `<p>Все привыкли: тильт- это главный враг трейдера. Сливы, эмоции, бессмысленные сделки. Но правда глубже: <strong>тильт- это не болезнь. Это симптом страха.</strong></p>
 <div class="article-highlight red"><strong>🔴 Страх Потерять</strong><p>Закрываешь прибыль слишком рано. Боишься заходить в сделку. Или пересиживаешь минус, лишь бы не фиксить убыток. Потому что «страшно признать свою ошибку».</p></div>
@@ -187,6 +196,15 @@ en: {
   'art.whatis.full':'What is Futures Prediction?',
   'art.focus.full':'There is no Holy Grail.<br/>There is a system.',
   'art.tg':'Read on Telegram →',
+  'calc.title':'Profit Calculator',
+  'calc.eth.bet':'ETH Bet (USDT)','calc.btc.bet':'BTC Bet (USDT)',
+  'calc.hours':'Active Hours','calc.tz':'(Warsaw UTC+2)','calc.days':'Active Days',
+  'calc.run':'Calculate','calc.loading':'Loading...','calc.error':'Load error','calc.no.data':'No data',
+  'calc.res.signals':'Signals','calc.res.ev':'EV / signal',
+  'calc.res.pnl.hist':'Historical PnL','calc.res.pnl.month':'PnL / month','calc.res.pnl.year':'PnL / year',
+  'calc.res.hours':'Active hours',
+  'calc.days.mon':'Mon','calc.days.tue':'Tue','calc.days.wed':'Wed','calc.days.thu':'Thu',
+  'calc.days.fri':'Fri','calc.days.sat':'Sat','calc.days.sun':'Sun',
 
   'art.tilt.body': `<p>Everyone says it: tilt is a trader's worst enemy. Losses, emotions, pointless trades. But the truth goes deeper: <strong>tilt is not a disease. It's a symptom of fear.</strong></p>
 <div class="article-highlight red"><strong>🔴 Fear of Losing</strong><p>You close profits too early. You're afraid to enter trades. Or you hold a losing position to avoid admitting the mistake. Because "being wrong is scary".</p></div>
@@ -293,6 +311,15 @@ uk: {
   'art.whatis.full':'Що таке Futures Prediction?',
   'art.focus.full':'Грааля не існує.<br/>Є система.',
   'art.tg':'Читати в Telegram →',
+  'calc.title':'Калькулятор дохідності',
+  'calc.eth.bet':'ETH ставка (USDT)','calc.btc.bet':'BTC ставка (USDT)',
+  'calc.hours':'Активні години','calc.tz':'(Варшава UTC+2)','calc.days':'Активні дні',
+  'calc.run':'Розрахувати','calc.loading':'Завантаження...','calc.error':'Помилка завантаження','calc.no.data':'Немає даних',
+  'calc.res.signals':'Сигналів','calc.res.ev':'EV / сигнал',
+  'calc.res.pnl.hist':'PnL історичний','calc.res.pnl.month':'PnL / місяць','calc.res.pnl.year':'PnL / рік',
+  'calc.res.hours':'Активних годин',
+  'calc.days.mon':'Пн','calc.days.tue':'Вт','calc.days.wed':'Ср','calc.days.thu':'Чт',
+  'calc.days.fri':'Пт','calc.days.sat':'Сб','calc.days.sun':'Нд',
 
   'art.tilt.body': `<p>Всі звикли: тільт- це головний ворог трейдера. Зливи, емоції, безглузді угоди. Але правда глибша: <strong>тільт- це не хвороба. Це симптом страху.</strong></p>
 <div class="article-highlight red"><strong>🔴 Страх Втратити</strong><p>Закриваєш прибуток надто рано. Боїшся входити в угоду. Або пересиджуєш мінус, аби не фіксити збиток. Бо «страшно визнати свою помилку».</p></div>

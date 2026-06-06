@@ -168,22 +168,52 @@
           </a>
         </div>
 
-        <div class="content-card">
-          <h2 class="section-title" data-i18n="prin.title">📊 Принципы работы</h2>
-          <div class="profit-loss-grid">
-            <div class="profit-block">
-              <div class="pl-icon">✅</div>
-              <div>
-                <div class="pl-title" data-i18n="prin.earn.title">Где зарабатываем</div>
-                <div class="pl-text" data-i18n="prin.earn.text">В боковых движениях (консолидациях)- рынок большую часть времени находится именно здесь</div>
-              </div>
+        <h2 class="section-title" style="margin: 20px 0 10px" data-i18n="art.whatis.full">Что такое Futures Prediction?</h2>
+        <div class="article-body" data-i18n-html="art.whatis.body">
+          <p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
+          <div class="steps-list">
+            <div class="step-item">
+              <div class="step-num">1</div>
+              <div class="step-content"><strong>Выберите базовый актив</strong><p>BTC или ETH на MEXC или Binance</p></div>
             </div>
-            <div class="loss-block">
-              <div class="pl-icon">❌</div>
-              <div>
-                <div class="pl-title" data-i18n="prin.lose.title">Где теряем</div>
-                <div class="pl-text" data-i18n="prin.lose.text">На импульсах и переходах к новым ценовым диапазонам- это наша зона уязвимости</div>
-              </div>
+            <div class="step-item">
+              <div class="step-num">2</div>
+              <div class="step-content"><strong>Выберите время истечения (экспирации)</strong><p>10м, 30м, 1ч или 1д- в зависимости от ваших предпочтений</p></div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">3</div>
+              <div class="step-content"><strong>Введите сумму</strong><p>Минимум: 5 USDT · Максимум: 250 USDT на сделку</p></div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">4</div>
+              <div class="step-content"><strong>Выберите направление</strong><p><span class="dir-up">↑ Рост</span>- если ожидаете рост · <span class="dir-down">↓ Падение</span>- если ожидаете снижение</p></div>
+            </div>
+            <div class="step-item">
+              <div class="step-num">5</div>
+              <div class="step-content"><strong>Подтвердите и ждите</strong><p>Позицию нельзя закрыть досрочно- расчёт автоматически по истечении</p></div>
+            </div>
+          </div>
+          <div class="content-card">
+            <h3 class="section-title">💰 Расчёт выплат</h3>
+            <div class="formula-block">
+              <div class="formula">Сумма расчёта = Основная сумма + Прибыль</div>
+              <div class="formula">Прибыль = Сумма × Коэффициент выплат</div>
+            </div>
+            <div class="example-block">
+              <div class="example-title">Пример (выплата 80%, вход 10 USDT):</div>
+              <div class="example-row win">✅ Верный прогноз: получаете 18 USDT (+8 USDT)</div>
+              <div class="example-row loss">❌ Неверный прогноз: теряете 10 USDT</div>
+              <div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div>
+            </div>
+          </div>
+          <div class="content-card">
+            <h3 class="section-title">📊 Основные лимиты</h3>
+            <div class="limits-list">
+              <div class="limit-item"><span>🚫</span> Дневные убытки: максимум 10 000 USDT</div>
+              <div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div>
+              <div class="limit-item"><span>🔢</span> Сделок в день: до 100</div>
+              <div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div>
+              <div class="limit-item"><span>🤖</span> API-торговля недоступна</div>
             </div>
           </div>
         </div>
@@ -202,15 +232,15 @@
             </div>
             <div class="rule-item">
               <span class="rule-num">2</span>
-              <span data-i18n-html="rule.2">Время входа: исключительно <strong>10 минут</strong></span>
+              <span data-i18n-html="rule.2">Время входа: оптимально <strong>10 минут</strong></span>
             </div>
             <div class="rule-item">
               <span class="rule-num">3</span>
-              <span data-i18n-html="rule.3">Если после сигнала цена резко вернулась против ставки за считанные секунды - вход пропускаем:<strong>преимущество сигнала</strong> уже потеряно.</span>
+              <span data-i18n-html="rule.3">Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">4</span>
-              <span data-i18n-html="rule.4"><strong>Строго одна ставка на каждый сигнал</strong> Не удваивать, не усреднять.</span>
+              <span data-i18n-html="rule.4"><strong>Не заходите</strong> на один сигнал 3–4 ставками</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">5</span>
@@ -231,11 +261,39 @@
         </div>
 
         <div class="content-card">
+          <h2 class="section-title" data-i18n="check.title">📋 Чек-лист перед входом</h2>
+          <div class="checklist">
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span data-i18n="check.1">Рынок в боковом движении?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span data-i18n="check.2">Нет сильного импульса?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span data-i18n="check.3">Размер позиции не более 5% от депозита?</span>
+            </label>
+            <label class="check-item">
+              <input type="checkbox" class="check-input" />
+              <span class="checkmark"></span>
+              <span data-i18n="check.4">Готов принять убыток, если сигнал не сработает?</span>
+            </label>
+          </div>
+          <button class="reset-btn" onclick="resetChecklist()" data-i18n="check.reset">Сбросить</button>
+        </div>
+
+        <div class="content-card">
           <h2 class="section-title" data-i18n="psych.title">💪 Психология торговли</h2>
           <div class="psychology-grid">
             <div class="psych-item" data-i18n="psych.1">🎯 Дисциплина важнее прибыли</div>
             <div class="psych-item" data-i18n="psych.2">🛡️ Контроль рисков- основа успеха</div>
-            <div class="psych-item" data-i18n="psych.3">⏳ Терпение окупается на дистанции</div>
+            <div class="psych-item" data-i18n="psych.3">⏳ Терпение в боковых движениях окупается</div>
+            <div class="psych-item" data-i18n="psych.4">📚 Каждый убыток- цена апгрейда стратегии</div>
           </div>
           <div class="goal-block" data-i18n="psych.goal">
             🎯 Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги
@@ -433,50 +491,6 @@
             </div>
           </div>
 
-          <!-- ARTICLE CARD: WHAT-IS -->
-          <div class="article-card" onclick="navigate('article-what-is')">
-            <div class="article-card-split">
-              <div class="article-split-anim">
-                <svg viewBox="0 0 88 120" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="bgWA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0C081A"/><stop offset="100%" stop-color="#080614"/></linearGradient>
-                    <linearGradient id="areaWA" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#9D50FF" stop-opacity="0.22"/><stop offset="100%" stop-color="#9D50FF" stop-opacity="0"/></linearGradient>
-                  </defs>
-                  <rect width="88" height="120" fill="url(#bgWA)"/>
-                  <line x1="8" y1="30" x2="80" y2="30" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
-                  <line x1="8" y1="50" x2="80" y2="50" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
-                  <line x1="8" y1="70" x2="80" y2="70" stroke="#9D50FF" stroke-opacity="0.1" stroke-width="1"/>
-                  <line x1="8" y1="90" x2="80" y2="90" stroke="#9D50FF" stroke-opacity="0.07" stroke-width="1"/>
-                  <line x1="8" y1="25" x2="8" y2="92" stroke="#9D50FF" stroke-opacity="0.2" stroke-width="1"/>
-                  <path d="M12,88 L26,76 L40,62 L54,52 L68,40 L76,30 L76,92 L12,92 Z" fill="url(#areaWA)"/>
-                  <line x1="12" y1="88" x2="76" y2="30" stroke="#9D50FF" stroke-opacity="0.2" stroke-width="1.5" stroke-dasharray="4 3"><animate attributeName="stroke-dashoffset" values="0;-7" dur="1s" repeatCount="indefinite"/></line>
-                  <!-- Candle 1 red -->
-                  <line x1="20" y1="76" x2="20" y2="90" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
-                  <rect x="15" y="80" width="10" height="8" fill="#FF5272" fill-opacity="0.65" rx="1"/>
-                  <!-- Candle 2 green -->
-                  <line x1="34" y1="62" x2="34" y2="78" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
-                  <rect x="29" y="64" width="10" height="12" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
-                  <!-- Candle 3 red small -->
-                  <line x1="48" y1="48" x2="48" y2="64" stroke="#FF5272" stroke-opacity="0.5" stroke-width="1"/>
-                  <rect x="43" y="52" width="10" height="8" fill="#FF5272" fill-opacity="0.65" rx="1"/>
-                  <!-- Candle 4 purple big -->
-                  <line x1="62" y1="34" x2="62" y2="54" stroke="#9D50FF" stroke-opacity="0.5" stroke-width="1"/>
-                  <rect x="57" y="36" width="10" height="16" fill="#9D50FF" fill-opacity="0.75" rx="1"/>
-                  <!-- Candle 5 green -->
-                  <line x1="76" y1="24" x2="76" y2="42" stroke="#4EFFA0" stroke-opacity="0.5" stroke-width="1"/>
-                  <rect x="71" y="26" width="10" height="14" fill="#4EFFA0" fill-opacity="0.65" rx="1"/>
-                  <rect x="0" y="0" width="14" height="100" fill="#9D50FF" fill-opacity="0.07"><animate attributeName="x" values="-14;88;-14" dur="3s" repeatCount="indefinite"/></rect>
-                </svg>
-              </div>
-              <div class="article-split-content">
-                <span class="article-tag-inline" data-i18n="art.tag.edu">Обучение</span>
-                <h3 class="article-title-gradient" data-i18n="art.whatis.title">Futures Prediction: как это работает на самом деле</h3>
-                <p class="article-preview" data-i18n="art.whatis.preview">Механика, расчёты и то, о чём обычно не говорят.</p>
-                <div class="article-footer"><span class="article-read" data-i18n="art.read">Читать →</span></div>
-              </div>
-            </div>
-          </div>
-
           <!-- ARTICLE CARD: FOCUS -->
           <div class="article-card" onclick="navigate('article-focus')">
             <div class="article-card-split">
@@ -603,81 +617,6 @@
           </div>
         </div>
         <a href="https://t.me/c/2809766098/730" target="_blank" class="source-link" data-i18n="art.tg">Читать в Telegram →</a>
-      </div>
-    </div>
-
-    <!-- ARTICLE: WHAT IS FUTURES PREDICTION -->
-    <div class="page" id="page-article-what-is">
-      <div class="page-content">
-        <div class="article-tag standalone" data-i18n="art.tag.edu">Обучение</div>
-        <h1 class="article-full-title" data-i18n="art.whatis.full">Что такое Futures Prediction?</h1>
-        <div class="article-body" data-i18n-html="art.whatis.body">
-          <p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
-
-          <div class="steps-list">
-            <div class="step-item">
-              <div class="step-num">1</div>
-              <div class="step-content">
-                <strong>Выберите базовый актив</strong>
-                <p>BTC или ETH на MEXC или Binance</p>
-              </div>
-            </div>
-            <div class="step-item">
-              <div class="step-num">2</div>
-              <div class="step-content">
-                <strong>Выберите время истечения (экспирации)</strong>
-                <p>10м, 30м, 1ч или 1д- в зависимости от ваших предпочтений</p>
-              </div>
-            </div>
-            <div class="step-item">
-              <div class="step-num">3</div>
-              <div class="step-content">
-                <strong>Введите сумму</strong>
-                <p>Минимум: 5 USDT · Максимум: 250 USDT на сделку</p>
-              </div>
-            </div>
-            <div class="step-item">
-              <div class="step-num">4</div>
-              <div class="step-content">
-                <strong>Выберите направление</strong>
-                <p><span class="dir-up">↑ Рост</span> - если ожидаете рост · <span class="dir-down">↓ Падение</span> - если ожидаете снижение</p>
-              </div>
-            </div>
-            <div class="step-item">
-              <div class="step-num">5</div>
-              <div class="step-content">
-                <strong>Подтвердите и ждите</strong>
-                <p>Позицию нельзя закрыть досрочно- расчёт автоматически по истечении</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="content-card">
-            <h3 class="section-title">💰 Расчёт выплат</h3>
-            <div class="formula-block">
-              <div class="formula">Сумма расчёта = Основная сумма + Прибыль</div>
-              <div class="formula">Прибыль = Сумма × Коэффициент выплат</div>
-            </div>
-            <div class="example-block">
-              <div class="example-title">Пример (выплата 80%, вход 10 USDT):</div>
-              <div class="example-row win">✅ Верный прогноз: получаете 18 USDT (+8 USDT)</div>
-              <div class="example-row loss">❌ Неверный прогноз: теряете 10 USDT</div>
-              <div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div>
-            </div>
-          </div>
-
-          <div class="content-card">
-            <h3 class="section-title">📊 Основные лимиты</h3>
-            <div class="limits-list">
-              <div class="limit-item"><span>🚫</span> Дневные убытки: максимум 10 000 USDT</div>
-              <div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div>
-              <div class="limit-item"><span>🔢</span> Сделок в день: до 100</div>
-              <div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div>
-              <div class="limit-item"><span>🤖</span> API-торговля недоступна</div>
-            </div>
-          </div>
-
-        </div>
       </div>
     </div>
 

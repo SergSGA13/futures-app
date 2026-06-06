@@ -92,8 +92,8 @@ ru: {
   'calc.days.fri':'Пт','calc.days.sat':'Сб','calc.days.sun':'Вс',
 
   'art.tilt.body': `<p>Все привыкли, что тильт- это главный враг трейдера: сливы, эмоции, бессмысленные сделки. На самом деле <strong>тильт- это симптом страха.</strong></p>
-<div class="article-highlight red"><strong>💸 Страх Потерять Средства</strong><p><strong>Закрываешь прибыль слишком рано.</strong> Боишься заходить в сделку. Пересиживаешь минус, лишь бы не фиксить убыток. Потому что «<strong>страшно признать свою ошибку</strong>».</p></div>
-<div class="article-highlight red"><strong>⚡ Страх Упустить Возможность</strong><p>Влетаешь без сигнала. Гонишься за движением. Покупаешь на хаях. Потому что «<strong>вдруг всё уйдёт без меня</strong>».</p></div>
+<div class="article-highlight red"><strong>💸 Страх Потерять Средства</strong><p><strong>Закрываешь прибыль слишком рано.</strong> Боишься заходить в сделку. Пересиживаешь минус, лишь бы не фиксить убыток. Потому что <strong>«страшно признать свою ошибку»</strong></p></div>
+<div class="article-highlight red"><strong>⚡ Страх Упустить Возможность</strong><p>Влетаешь без сигнала. Гонишься за движением. Покупаешь на хаях. Потому что <strong>«вдруг всё уйдёт без меня»</strong></p></div>
 <p>Эти два страха- как клещи, что сдавливают голову. Именно они ломают систему. А тильт- уже последствие.</p>
 <div class="article-highlight dark"><strong>❌ Тильт начинается не со слива, а с отклонения от правил</strong><ul><li>Испугался- <strong>закрыл рано</strong></li><li>Упустил движение- <strong>начал злиться</strong></li><li>Захотел «исправить»- <strong>начал мстить рынку</strong></li></ul></div>
 <div class="article-highlight blue"><strong>✅ Лекарство от тильта</strong><p>Не «отходи от компьютера» и не «делай перерыв». <strong>Обуздай страх. Признай его.</strong> Научись действовать по системе, несмотря на него.</p><p>Когда страх перестаёт управлять решениями- <strong>тильт уходит сам.</strong></p></div>`,
@@ -207,8 +207,8 @@ en: {
   'calc.days.fri':'Fri','calc.days.sat':'Sat','calc.days.sun':'Sun',
 
   'art.tilt.body': `<p>Everyone knows it: tilt is the trader's main enemy — losses, emotions, pointless trades. But the truth is deeper: <strong>tilt is just a symptom of fear.</strong></p>
-<div class="article-highlight red"><strong>💸 Fear of Losing Capital</strong><p><strong>You close profits too early.</strong> You're afraid to enter trades. You hold a losing position to avoid admitting a mistake. Because "<strong>being wrong is scary</strong>".</p></div>
-<div class="article-highlight red"><strong>⚡ Fear of Missing the Opportunity</strong><p>You jump in without a signal. You chase price moves. You buy at the top. Because "<strong>what if it all goes without me</strong>".</p></div>
+<div class="article-highlight red"><strong>💸 Fear of Losing Capital</strong><p><strong>You close profits too early.</strong> You're afraid to enter trades. You hold a losing position to avoid admitting a mistake. Because <strong>"being wrong is scary"</strong></p></div>
+<div class="article-highlight red"><strong>⚡ Fear of Missing the Opportunity</strong><p>You jump in without a signal. You chase price moves. You buy at the top. Because <strong>"what if it all goes without me"</strong></p></div>
 <p>These two fears grip your mind like a vice. They break your system. Tilt is just the consequence.</p>
 <div class="article-highlight dark"><strong>❌ Tilt starts not with a loss, but with breaking the rules</strong><ul><li>Got scared- <strong>closed too early</strong></li><li>Missed a move- <strong>started getting angry</strong></li><li>Wanted to "fix it"- <strong>started revenge trading</strong></li></ul></div>
 <div class="article-highlight blue"><strong>✅ The cure for tilt</strong><p>Not "step away from the computer" or "take a break". <strong>Tame your fear. Acknowledge it.</strong> Learn to act on your system despite it.</p><p>When fear stops controlling your decisions- <strong>tilt disappears on its own.</strong></p></div>`,
@@ -322,8 +322,8 @@ uk: {
   'calc.days.fri':'Пт','calc.days.sat':'Сб','calc.days.sun':'Нд',
 
   'art.tilt.body': `<p>Всі звикли, що тільт- це головний ворог трейдера: зливи, емоції, безглузді угоди. Насправді <strong>тільт- це симптом страху.</strong></p>
-<div class="article-highlight red"><strong>💸 Страх Втратити Кошти</strong><p><strong>Закриваєш прибуток надто рано.</strong> Боїшся входити в угоду. Пересиджуєш мінус, аби не фіксити збиток. Бо «<strong>страшно визнати свою помилку</strong>».</p></div>
-<div class="article-highlight red"><strong>⚡ Страх Пропустити Можливість</strong><p>Влітаєш без сигналу. Женешся за рухом. Купуєш на хаях. Бо «<strong>раптом все піде без мене</strong>».</p></div>
+<div class="article-highlight red"><strong>💸 Страх Втратити Кошти</strong><p><strong>Закриваєш прибуток надто рано.</strong> Боїшся входити в угоду. Пересиджуєш мінус, аби не фіксити збиток. Бо <strong>«страшно визнати свою помилку»</strong></p></div>
+<div class="article-highlight red"><strong>⚡ Страх Пропустити Можливість</strong><p>Влітаєш без сигналу. Женешся за рухом. Купуєш на хаях. Бо <strong>«раптом все піде без мене»</strong></p></div>
 <p>Ці два страхи- як лещата, що стискають голову. Саме вони ламають систему. А тільт- вже наслідок.</p>
 <div class="article-highlight dark"><strong>❌ Тільт починається не зі зливу, а з відхилення від правил</strong><ul><li>Злякався- <strong>закрив рано</strong></li><li>Пропустив рух- <strong>почав злитися</strong></li><li>Захотів «виправити»- <strong>почав мститися ринку</strong></li></ul></div>
 <div class="article-highlight blue"><strong>✅ Ліки від тільту</strong><p>Не «відходь від комп'ютера» і не «роби перерву». <strong>Приборкай страх. Визнай його.</strong> Навчися діяти за системою, попри нього.</p><p>Коли страх перестає керувати рішеннями- <strong>тільт іде сам.</strong></p></div>`,

@@ -194,10 +194,21 @@
             </div>
           </div>
           <div class="content-card">
+              <h3 class="section-title">📊 Основные лимиты</h3>
+              <div class="limits-list">
+                <div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div>
+                <div class="limit-item"><span>🔢</span> Сделок в день: до 100</div>
+                <div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div>
+                <div class="limit-item"><span>🤖</span> API-торговля недоступна</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="content-card">
             <h3 class="section-title">💰 Расчёт выплат</h3>
             <div class="formula-block">
-              <div class="formula">Сумма расчёта = Основная сумма + Прибыль</div>
-              <div class="formula">Прибыль = Сумма × Коэффициент выплат</div>
+              <div class="formula">Сумма расчёта = основная сумма + прибыль</div>
+              <div class="formula">Прибыль = сумма × коэффициент выплат</div>
             </div>
             <div class="example-block">
               <div class="example-title">Пример (выплата 80%, вход 10 USDT):</div>
@@ -206,17 +217,6 @@
               <div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div>
             </div>
           </div>
-          <div class="content-card">
-            <h3 class="section-title">📊 Основные лимиты</h3>
-            <div class="limits-list">
-              <div class="limit-item"><span>🚫</span> Дневные убытки: максимум 10 000 USDT</div>
-              <div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div>
-              <div class="limit-item"><span>🔢</span> Сделок в день: до 100</div>
-              <div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div>
-              <div class="limit-item"><span>🤖</span> API-торговля недоступна</div>
-            </div>
-          </div>
-        </div>
 
         <div class="article-img-card">
           <p class="img-caption" data-i18n="prin.img">Примеры отработок сигналов:</p>
@@ -224,7 +224,7 @@
         </div>
 
         <div class="content-card">
-          <h2 class="section-title" data-i18n="rules.title">🎯 Базовые правила</h2>
+          <h2 class="section-title" data-i18n="rules.title">🎯 Базовые правила работы с сигналами</h2>
           <div class="rules-grid">
             <div class="rule-item">
               <span class="rule-num">1</span>
@@ -232,19 +232,19 @@
             </div>
             <div class="rule-item">
               <span class="rule-num">2</span>
-              <span data-i18n-html="rule.2">Время входа: оптимально <strong>10 минут</strong></span>
+              <span data-i18n-html="rule.2">Время входа: исключительно <strong>10 минут</strong> Открывать ставку сразу после сигнала.</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">3</span>
-              <span data-i18n-html="rule.3">Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала</span>
+              <span data-i18n-html="rule.3">Пропускайте вход, если <strong>цена ушла импульсом</strong> без откатов после сигнала</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">4</span>
-              <span data-i18n-html="rule.4"><strong>Не заходите</strong> на один сигнал 3–4 ставками</span>
+              <span data-i18n-html="rule.4"><strong>Строго одна ставка на каждый сигнал.</strong> Не удваивать, не усреднять</span>
             </div>
             <div class="rule-item">
               <span class="rule-num">5</span>
-              <span data-i18n-html="rule.5">При получении сигнала войти по <strong>«лучшей цене»</strong> с откатом</span>
+              <span data-i18n-html="rule.5">Если после сигнала <strong>цена резко вернулась против ставки за считанные секунды- вход пропускаем: </strong>преимущество сигнала уже потеряно</span>
             </div>
           </div>
         </div>
@@ -260,40 +260,14 @@
           </div>
         </div>
 
-        <div class="content-card">
-          <h2 class="section-title" data-i18n="check.title">📋 Чек-лист перед входом</h2>
-          <div class="checklist">
-            <label class="check-item">
-              <input type="checkbox" class="check-input" />
-              <span class="checkmark"></span>
-              <span data-i18n="check.1">Рынок в боковом движении?</span>
-            </label>
-            <label class="check-item">
-              <input type="checkbox" class="check-input" />
-              <span class="checkmark"></span>
-              <span data-i18n="check.2">Нет сильного импульса?</span>
-            </label>
-            <label class="check-item">
-              <input type="checkbox" class="check-input" />
-              <span class="checkmark"></span>
-              <span data-i18n="check.3">Размер позиции не более 5% от депозита?</span>
-            </label>
-            <label class="check-item">
-              <input type="checkbox" class="check-input" />
-              <span class="checkmark"></span>
-              <span data-i18n="check.4">Готов принять убыток, если сигнал не сработает?</span>
-            </label>
-          </div>
-          <button class="reset-btn" onclick="resetChecklist()" data-i18n="check.reset">Сбросить</button>
-        </div>
 
         <div class="content-card">
           <h2 class="section-title" data-i18n="psych.title">💪 Психология торговли</h2>
           <div class="psychology-grid">
             <div class="psych-item" data-i18n="psych.1">🎯 Дисциплина важнее прибыли</div>
             <div class="psych-item" data-i18n="psych.2">🛡️ Контроль рисков- основа успеха</div>
-            <div class="psych-item" data-i18n="psych.3">⏳ Терпение в боковых движениях окупается</div>
-            <div class="psych-item" data-i18n="psych.4">📚 Каждый убыток- цена апгрейда стратегии</div>
+            <div class="psych-item" data-i18n="psych.3">⏳ Терпение на дистанции окупается</div>
+            <div class="psych-item" data-i18n="psych.4">📚 Убыток- не поражение, а рабочий элемент процесса</div>
           </div>
           <div class="goal-block" data-i18n="psych.goal">
             🎯 Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги

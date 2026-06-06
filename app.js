@@ -209,9 +209,10 @@ async function loadStatsPreview() {
     const winrateAll = rows[18]?.[21] || '—';
     const totalAll   = rows[17]?.[21] || '—';
 
-    document.getElementById('statWinrate7d').textContent  = winrate7d;
+    const fmtWR = v => { const n = parseFloat(String(v).replace('%','')); return isNaN(n) ? '—' : n.toFixed(1) + '%'; };
+    document.getElementById('statWinrate7d').textContent  = fmtWR(winrate7d);
     document.getElementById('statSignals7d').textContent  = signals7d;
-    document.getElementById('statWinrate').textContent    = winrateAll;
+    document.getElementById('statWinrate').textContent    = fmtWR(winrateAll);
     document.getElementById('statTotal').textContent      = totalAll;
   } catch(e) {
     console.log('Stats not available', e);

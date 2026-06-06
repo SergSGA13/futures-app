@@ -30,12 +30,12 @@ ru: {
   'prin.lose.title':'Где теряем',
   'prin.lose.text':'На импульсах и переходах к новым ценовым диапазонам- это наша зона уязвимости',
   'prin.img':'Примеры отработок сигналов:',
-  'rules.title':'🎯 Базовые правила',
+  'rules.title':'🎯 Базовые правила работы с сигналами',
   'rule.1':'Размер позиции: <strong>1–5%</strong> от депозита на один сигнал',
-  'rule.2':'Время входа: оптимально <strong>10 минут</strong>',
-  'rule.3':'Пропускайте вход, если цена ушла импульсом <strong>без откатов</strong> после сигнала',
-  'rule.4':'<strong>Не заходите</strong> на один сигнал 3–4 ставками',
-  'rule.5':'При получении сигнала войти по <strong>«лучшей цене»</strong> с откатом',
+  'rule.2':'Время входа: исключительно <strong>10 минут</strong>. Открывать ставку сразу после сигнала.',
+  'rule.3':'Пропускайте вход, если <strong>цена ушла импульсом</strong> без откатов после сигнала',
+  'rule.4':'<strong>Строго одна ставка на каждый сигнал.</strong> Не удваивать, не усреднять',
+  'rule.5':'Если после сигнала <strong>цена резко вернулась против ставки за считанные секунды- вход пропускаем:</strong> преимущество сигнала уже потеряно',
   'risk.title':'⚠️ Риск-менеджмент',
   'risk.1':'НЕ завышайте риски','risk.2':'НЕ входите в сделку более одного раза на ускорении',
   'risk.3':'Сохраняйте хладнокровие','risk.4':'Держитесь плана',
@@ -46,8 +46,8 @@ ru: {
   'check.4':'Готов принять убыток, если сигнал не сработает?','check.reset':'Сбросить',
   'psych.title':'💪 Психология торговли',
   'psych.1':'🎯 Дисциплина важнее прибыли','psych.2':'🛡️ Контроль рисков- основа успеха',
-  'psych.3':'⏳ Терпение в боковых движениях окупается',
-  'psych.4':'📚 Каждый убыток- цена апгрейда стратегии',
+  'psych.3':'⏳ Терпение на дистанции окупается',
+  'psych.4':'📚 Убыток- не поражение, а рабочий элемент процесса',
   'psych.goal':'🎯 Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги',
   'psych.img':'Примеры успешных серий:',
   'ulinks.title':'🔗 Полезные ссылки','ulinks.channel':'Основной канал сигналов',
@@ -105,8 +105,8 @@ ru: {
 
   'art.whatis.body': `<p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
 <div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Выберите базовый актив</strong><p>BTC или ETH на MEXC или Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Выберите время истечения (экспирации)</strong><p>10м, 30м, 1ч или 1д- в зависимости от ваших предпочтений</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Введите сумму</strong><p>Минимум: 5 USDT · Максимум: 250 USDT на сделку</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Выберите направление</strong><p><span class="dir-up">↑ Рост</span>- если ожидаете рост · <span class="dir-down">↓ Падение</span>- если ожидаете снижение</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Подтвердите и ждите</strong><p>Позицию нельзя закрыть досрочно- расчёт автоматически по истечении</p></div></div></div>
-<div class="content-card"><h3 class="section-title">💰 Расчёт выплат</h3><div class="formula-block"><div class="formula">Сумма расчёта = Основная сумма + Прибыль</div><div class="formula">Прибыль = Сумма × Коэффициент выплат</div></div><div class="example-block"><div class="example-title">Пример (выплата 80%, вход 10 USDT):</div><div class="example-row win">✅ Верный прогноз: получаете 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Неверный прогноз: теряете 10 USDT</div><div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div></div></div>
-<div class="content-card"><h3 class="section-title">📊 Основные лимиты</h3><div class="limits-list"><div class="limit-item"><span>🚫</span> Дневные убытки: максимум 10 000 USDT</div><div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div><div class="limit-item"><span>🔢</span> Сделок в день: до 100</div><div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div><div class="limit-item"><span>🤖</span> API-торговля недоступна</div></div></div>`,
+<div class="content-card"><h3 class="section-title">📊 Основные лимиты</h3><div class="limits-list"><div class="limit-item"><span>📊</span> Открытые позиции: не более 5 одновременно</div><div class="limit-item"><span>🔢</span> Сделок в день: до 100</div><div class="limit-item"><span>🔒</span> Нельзя закрыть позицию досрочно</div><div class="limit-item"><span>🤖</span> API-торговля недоступна</div></div></div>
+<div class="content-card"><h3 class="section-title">💰 Расчёт выплат</h3><div class="formula-block"><div class="formula">Сумма расчёта = основная сумма + прибыль</div><div class="formula">Прибыль = сумма × коэффициент выплат</div></div><div class="example-block"><div class="example-title">Пример (выплата 80%, вход 10 USDT):</div><div class="example-row win">✅ Верный прогноз: получаете 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Неверный прогноз: теряете 10 USDT</div><div class="example-row draw">➖ Ничья (цена не изменилась): возврат 10 USDT</div></div></div>`,
 
   'art.focus.body': `<p>Большинство в рынке делают одно и то же: ищут Грааль, прыгают по сетапам, поглощают тонны инфы... и годами сливают депозиты.</p>
 <p>Пока не приходит неприятное осознание: <strong>проблема не в рынке. Проблема в фокусе.</strong></p>
@@ -146,12 +146,12 @@ en: {
   'prin.lose.title':'Where we lose',
   'prin.lose.text':'On impulses and transitions to new price ranges- this is our vulnerability zone',
   'prin.img':'Signal execution examples:',
-  'rules.title':'🎯 Basic Rules',
+  'rules.title':'🎯 Basic Rules for Working with Signals',
   'rule.1':'Position size: <strong>1–5%</strong> of deposit per signal',
-  'rule.2':'Entry time: optimally <strong>10 minutes</strong>',
-  'rule.3':'Skip entry if price moved impulsively <strong>without pullbacks</strong> after the signal',
-  'rule.4':'<strong>Do not enter</strong> one signal with 3–4 bets',
-  'rule.5':'On signal, enter at the <strong>"best price"</strong> with a pullback',
+  'rule.2':'Entry time: exclusively <strong>10 minutes</strong>. Place the bet immediately after the signal.',
+  'rule.3':'Skip entry if <strong>price moved impulsively</strong> without pullbacks after the signal',
+  'rule.4':'<strong>Strictly one bet per signal.</strong> Do not double, do not average',
+  'rule.5':'If after the signal <strong>price sharply reversed against the bet within seconds — skip the entry:</strong> the signal\'s edge is already lost',
   'risk.title':'⚠️ Risk Management',
   'risk.1':'Do NOT oversize risks','risk.2':'Do NOT enter a trade more than once on acceleration',
   'risk.3':'Stay calm','risk.4':'Stick to the plan',
@@ -162,8 +162,8 @@ en: {
   'check.4':'Ready to accept a loss if the signal fails?','check.reset':'Reset',
   'psych.title':'💪 Trading Psychology',
   'psych.1':'🎯 Discipline over profit','psych.2':'🛡️ Risk control is the foundation',
-  'psych.3':'⏳ Patience in sideways markets pays off',
-  'psych.4':'📚 Every loss is the price of upgrading your strategy',
+  'psych.3':'⏳ Patience over the long run pays off',
+  'psych.4':'📚 A loss is not a defeat — it\'s a working element of the process',
   'psych.goal':'🎯 Goal: consistent long-term profit, not quick money',
   'psych.img':'Successful streak examples:',
   'ulinks.title':'🔗 Useful Links','ulinks.channel':'Main signals channel',
@@ -220,8 +220,8 @@ en: {
 
   'art.whatis.body': `<p>Futures Prediction is an opportunity to profit by predicting cryptocurrency prices. You place a bet: will the price go up or down within a set time period.</p>
 <div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Choose the base asset</strong><p>BTC or ETH on MEXC or Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Choose expiration time</strong><p>10m, 30m, 1h or 1d- depending on your preference</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Enter the amount</strong><p>Minimum: 5 USDT · Maximum: 250 USDT per trade</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Choose the direction</strong><p><span class="dir-up">↑ Up</span>- if you expect growth · <span class="dir-down">↓ Down</span>- if you expect a decline</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Confirm and wait</strong><p>Positions cannot be closed early- settlement is automatic at expiration</p></div></div></div>
-<div class="content-card"><h3 class="section-title">💰 Payout Calculation</h3><div class="formula-block"><div class="formula">Settlement = Principal + Profit</div><div class="formula">Profit = Amount × Payout Coefficient</div></div><div class="example-block"><div class="example-title">Example (80% payout, 10 USDT entry):</div><div class="example-row win">✅ Correct prediction: receive 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Wrong prediction: lose 10 USDT</div><div class="example-row draw">➖ Draw (price unchanged): 10 USDT returned</div></div></div>
-<div class="content-card"><h3 class="section-title">📊 Key Limits</h3><div class="limits-list"><div class="limit-item"><span>🚫</span> Daily losses: max 10,000 USDT</div><div class="limit-item"><span>📊</span> Open positions: max 5 simultaneously</div><div class="limit-item"><span>🔢</span> Trades per day: up to 100</div><div class="limit-item"><span>🔒</span> Positions cannot be closed early</div><div class="limit-item"><span>🤖</span> API trading not available</div></div></div>`,
+<div class="content-card"><h3 class="section-title">📊 Key Limits</h3><div class="limits-list"><div class="limit-item"><span>📊</span> Open positions: max 5 simultaneously</div><div class="limit-item"><span>🔢</span> Trades per day: up to 100</div><div class="limit-item"><span>🔒</span> Positions cannot be closed early</div><div class="limit-item"><span>🤖</span> API trading not available</div></div></div>
+<div class="content-card"><h3 class="section-title">💰 Payout Calculation</h3><div class="formula-block"><div class="formula">settlement = principal + profit</div><div class="formula">profit = amount × payout coefficient</div></div><div class="example-block"><div class="example-title">Example (80% payout, 10 USDT entry):</div><div class="example-row win">✅ Correct prediction: receive 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Wrong prediction: lose 10 USDT</div><div class="example-row draw">➖ Draw (price unchanged): 10 USDT returned</div></div></div>`,
 
   'art.focus.body': `<p>Most people in the market do the same thing: search for the Holy Grail, jump between setups, consume information... and blow their accounts for years.</p>
 <p>Until the uncomfortable realization hits: <strong>the problem isn't the market. The problem is focus.</strong></p>
@@ -261,12 +261,12 @@ uk: {
   'prin.lose.title':'Де втрачаємо',
   'prin.lose.text':'На імпульсах та переходах до нових цінових діапазонів- це наша зона вразливості',
   'prin.img':'Приклади відпрацювань сигналів:',
-  'rules.title':'🎯 Базові правила',
+  'rules.title':'🎯 Базові правила роботи з сигналами',
   'rule.1':'Розмір позиції: <strong>1–5%</strong> від депозиту на один сигнал',
-  'rule.2':'Час входу: оптимально <strong>10 хвилин</strong>',
-  'rule.3':'Пропускайте вхід, якщо ціна пішла імпульсом <strong>без відкатів</strong> після сигналу',
-  'rule.4':'<strong>Не заходьте</strong> на один сигнал 3–4 ставками',
-  'rule.5':'При отриманні сигналу увійти по <strong>«кращій ціні»</strong> з відкатом',
+  'rule.2':'Час входу: виключно <strong>10 хвилин</strong>. Відкривати ставку одразу після сигналу.',
+  'rule.3':'Пропускайте вхід, якщо <strong>ціна пішла імпульсом</strong> без відкатів після сигналу',
+  'rule.4':'<strong>Строго одна ставка на кожен сигнал.</strong> Не подвоювати, не усереднювати',
+  'rule.5':'Якщо після сигналу <strong>ціна різко повернулась проти ставки за лічені секунди- вхід пропускаємо:</strong> перевага сигналу вже втрачена',
   'risk.title':'⚠️ Ризик-менеджмент',
   'risk.1':'НЕ завищуйте ризики','risk.2':'НЕ входьте в угоду більше одного разу на прискоренні',
   'risk.3':'Зберігайте холоднокровність','risk.4':'Тримайтеся плану',
@@ -277,8 +277,8 @@ uk: {
   'check.4':'Готовий прийняти збиток, якщо сигнал не спрацює?','check.reset':'Скинути',
   'psych.title':'💪 Психологія торгівлі',
   'psych.1':'🎯 Дисципліна важливіша за прибуток','psych.2':'🛡️ Контроль ризиків- основа успіху',
-  'psych.3':'⏳ Терпіння в бокових рухах окупається',
-  'psych.4':'📚 Кожен збиток- ціна апгрейду стратегії',
+  'psych.3':'⏳ Терпіння на дистанції окупається',
+  'psych.4':'📚 Збиток- не поразка, а робочий елемент процесу',
   'psych.goal':'🎯 Мета: стабільний прибуток у довгостроковій перспективі, а не швидкі гроші',
   'psych.img':'Приклади успішних серій:',
   'ulinks.title':'🔗 Корисні посилання','ulinks.channel':'Основний канал сигналів',
@@ -335,8 +335,8 @@ uk: {
 
   'art.whatis.body': `<p>Ф'ючерсні прогнози- це можливість заробити на прогнозуванні ціни криптовалют. Ти ставиш ставку: зросте ціна чи впаде за певний час.</p>
 <div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Обери базовий актив</strong><p>BTC або ETH на MEXC або Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Обери час експірації</strong><p>10хв, 30хв, 1год або 1д- залежно від твоїх вподобань</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Введи суму</strong><p>Мінімум: 5 USDT · Максимум: 250 USDT на угоду</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Обери напрямок</strong><p><span class="dir-up">↑ Зріст</span>- якщо очікуєш зріст · <span class="dir-down">↓ Падіння</span>- якщо очікуєш зниження</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Підтверди і чекай</strong><p>Позицію не можна закрити достроково- розрахунок відбувається автоматично після закінчення</p></div></div></div>
-<div class="content-card"><h3 class="section-title">💰 Розрахунок виплат</h3><div class="formula-block"><div class="formula">Сума розрахунку = Основна сума + Прибуток</div><div class="formula">Прибуток = Сума × Коефіцієнт виплат</div></div><div class="example-block"><div class="example-title">Приклад (виплата 80%, вхід 10 USDT):</div><div class="example-row win">✅ Правильний прогноз: отримуєш 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Неправильний прогноз: втрачаєш 10 USDT</div><div class="example-row draw">➖ Нічия (ціна не змінилась): повернення 10 USDT</div></div></div>
-<div class="content-card"><h3 class="section-title">📊 Основні ліміти</h3><div class="limits-list"><div class="limit-item"><span>🚫</span> Денні збитки: максимум 10 000 USDT</div><div class="limit-item"><span>📊</span> Відкриті позиції: не більше 5 одночасно</div><div class="limit-item"><span>🔢</span> Угод на день: до 100</div><div class="limit-item"><span>🔒</span> Не можна закрити позицію достроково</div><div class="limit-item"><span>🤖</span> API-торгівля недоступна</div></div></div>`,
+<div class="content-card"><h3 class="section-title">📊 Основні ліміти</h3><div class="limits-list"><div class="limit-item"><span>📊</span> Відкриті позиції: не більше 5 одночасно</div><div class="limit-item"><span>🔢</span> Угод на день: до 100</div><div class="limit-item"><span>🔒</span> Не можна закрити позицію достроково</div><div class="limit-item"><span>🤖</span> API-торгівля недоступна</div></div></div>
+<div class="content-card"><h3 class="section-title">💰 Розрахунок виплат</h3><div class="formula-block"><div class="formula">сума розрахунку = основна сума + прибуток</div><div class="formula">прибуток = сума × коефіцієнт виплат</div></div><div class="example-block"><div class="example-title">Приклад (виплата 80%, вхід 10 USDT):</div><div class="example-row win">✅ Правильний прогноз: отримуєш 18 USDT (+8 USDT)</div><div class="example-row loss">❌ Неправильний прогноз: втрачаєш 10 USDT</div><div class="example-row draw">➖ Нічия (ціна не змінилась): повернення 10 USDT</div></div></div>`,
 
   'art.focus.body': `<p>Більшість на ринку роблять одне й те саме: шукають Грааль, стрибають по сетапах, поглинають тонни інфи... і роками зливають депозити.</p>
 <p>Поки не приходить неприємне усвідомлення: <strong>проблема не в ринку. Проблема у фокусі.</strong></p>

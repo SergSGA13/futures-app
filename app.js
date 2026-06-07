@@ -474,16 +474,6 @@ async function renderAnalTables() {
     document.getElementById('analPairsTable').innerHTML = pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
-    // By Time Zone L7D — cols B-H (dataColStart=1), rows[24-28]
-    const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
-    ], 1);
-    document.getElementById('analTFTable').innerHTML = tzHtml;
-    document.getElementById('analTFCard').style.display = 'block';
   } catch(e) {
     console.log('Anal tables error:', e);
   }

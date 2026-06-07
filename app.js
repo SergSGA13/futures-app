@@ -81,7 +81,7 @@ function navigate(pageId) {
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
-  if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); }
+  if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -175,6 +175,7 @@ function parseCSV(text) {
 
 let analL7dRows = null;
 let allSignalRows = null;
+let monthlyWrChartInstance = null;
 
 async function fetchAllSignals() {
   if (allSignalRows) return allSignalRows;
@@ -600,6 +601,105 @@ document.getElementById('all5minCard').style.display = 'block';
   }
 }
 
+// ===== MONTHLY WINRATE CHART (ALL Periods) =====
+async function renderMonthlyWrChart() {
+  if (monthlyWrChartInstance) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const monthMap = {};
+    let totalWins = 0, totalLosses = 0;
+
+    for (let i = 1; i < rows.length; i++) {
+      const result = rows[i][9];
+      if (result !== 'WIN' && result !== 'LOSE') continue;
+      const dateStr = (rows[i][12] || '').trim();
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      const m = parseInt(parts[1], 10);
+      const y = parseInt(parts[2].substring(0, 4), 10);
+      if (isNaN(m) || isNaN(y) || m < 1 || m > 12) continue;
+      const mk = `${y}-${String(m).padStart(2, '0')}`;
+      if (!monthMap[mk]) monthMap[mk] = { label: [monthNames[m - 1], `'${String(y).slice(2)}`], wins: 0, losses: 0 };
+      if (result === 'WIN') { monthMap[mk].wins++; totalWins++; }
+      else { monthMap[mk].losses++; totalLosses++; }
+    }
+
+    const sortedKeys = Object.keys(monthMap).sort();
+    if (!sortedKeys.length) return;
+
+    const labels = [], wrData = [], counts = [], colors = [];
+    for (const mk of sortedKeys) {
+      const { label, wins, losses } = monthMap[mk];
+      const total = wins + losses;
+      const wr = total ? (wins / total * 100) : 0;
+      labels.push(label);
+      wrData.push(parseFloat(wr.toFixed(1)));
+      counts.push(total);
+      colors.push(wr >= 65 ? '#4EFFA0' : wr >= 50 ? '#FFD166' : '#FF5272');
+    }
+
+    const avgWr = (totalWins + totalLosses) ? parseFloat((totalWins / (totalWins + totalLosses) * 100).toFixed(1)) : 0;
+    const minWr = Math.min(...wrData, avgWr);
+    const maxWr = Math.max(...wrData, avgWr);
+    const yMin = Math.max(0, Math.floor((minWr - 8) / 10) * 10);
+    const yMax = Math.min(100, Math.ceil((maxWr + 8) / 10) * 10);
+
+    const ctx = document.getElementById('monthlyWrChart')?.getContext('2d');
+    if (!ctx) return;
+
+    const barLabelsPlugin = {
+      id: 'monthlyWrBarLabels',
+      afterDatasetsDraw(chart) {
+        const meta = chart.getDatasetMeta(0);
+        const c = chart.ctx;
+        c.save();
+        c.textAlign = 'center';
+        meta.data.forEach((bar, i) => {
+          c.fillStyle = '#E8EAFF';
+          c.font = '600 11px sans-serif';
+          c.fillText(`${wrData[i]}%`, bar.x, bar.y - 20);
+          c.fillStyle = '#7B84B0';
+          c.font = '500 9px sans-serif';
+          c.fillText(`(${counts[i]}s)`, bar.x, bar.y - 8);
+        });
+        c.restore();
+      }
+    };
+
+    monthlyWrChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { data: wrData, backgroundColor: colors, borderRadius: 4, barPercentage: 0.6, order: 2 },
+          { type: 'line', data: labels.map(() => avgWr), borderColor: 'rgba(232,234,255,0.35)', borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, fill: false, order: 1 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 30 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            filter: item => item.datasetIndex === 0,
+            callbacks: { label: c => `WR ${c.parsed.y}% · ${counts[c.dataIndex]} signals` }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#7B84B0', font: { size: 10 } }, grid: { display: false } },
+          y: { min: yMin, max: yMax, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      },
+      plugins: [barLabelsPlugin]
+    });
+  } catch(e) {
+    console.log('Monthly WR chart error:', e);
+  }
+}
+
 
 // ===== TODAY'S SIGNALS =====
 let signalTimerInterval = null;
@@ -736,6 +836,8 @@ function refreshHome() {
   allSignalRows = null;
   Object.values(pnlChartInstances).forEach(c => c?.destroy());
   Object.keys(pnlChartInstances).forEach(k => delete pnlChartInstances[k]);
+  monthlyWrChartInstance?.destroy();
+  monthlyWrChartInstance = null;
   Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {
     btn.classList.remove('spinning');
   });

@@ -635,6 +635,7 @@ html, body {
 .article-highlight strong { display: block; margin-bottom: 8px; font-size: 14px; }
 .article-highlight p { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
 .article-highlight ul { font-size: 13px; color: var(--text-muted); }
+.article-highlight ul li strong { display: inline; margin-bottom: 0; }
 
 /* Paradigm */
 .paradigm-grid { display: flex; flex-direction: column; gap: 10px; }

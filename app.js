@@ -638,14 +638,11 @@ async function renderMonthlyWrChart() {
       labels.push(label);
       wrData.push(parseFloat(wr.toFixed(1)));
       counts.push(total);
-      colors.push(wr >= 65 ? '#4EFFA0' : wr >= 50 ? '#FFD166' : '#FF5272');
+      colors.push(wr > 58 ? '#4EFFA0' : wr < 55 ? '#FF5272' : '#FFD166');
     }
 
     const avgWr = (totalWins + totalLosses) ? parseFloat((totalWins / (totalWins + totalLosses) * 100).toFixed(1)) : 0;
-    const minWr = Math.min(...wrData, avgWr);
-    const maxWr = Math.max(...wrData, avgWr);
-    const yMin = Math.max(0, Math.floor((minWr - 8) / 10) * 10);
-    const yMax = Math.min(100, Math.ceil((maxWr + 8) / 10) * 10);
+    const yMin = 50, yMax = 90;
 
     const ctx = document.getElementById('monthlyWrChart')?.getContext('2d');
     if (!ctx) return;

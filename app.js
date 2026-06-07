@@ -395,7 +395,7 @@ function buildAnalTableCols(configs, dataColStart) {
 
 // hourCol=11 for ALL (col L), =24 for L30D (col Y); dataColStart = hourCol+1
 function buildHourTableCols(rows, hourCol, dataColStart) {
-  const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%'];
+  const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -426,7 +426,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
     dataFound = true;
     const d = dataColStart;
     const vals = [`${h}:00`, rows[i][d]||'-', rows[i][d+1]||'-', rows[i][d+2]||'-',
-                  rows[i][d+3]||'-', rows[i][d+4]||'-', rows[i][d+5]||'-'];
+                  rows[i][d+3]||'-', rows[i][d+4]||'-', rows[i][d+5]||'-', rows[i][d+6]||'-'];
     html += '<tr>';
     vals.forEach((v, ci) => {
       let cls = '';
@@ -442,7 +442,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
   if (totalRow) {
     const d = dataColStart;
     const vals = ['Total', totalRow[d]||'-', totalRow[d+1]||'-', totalRow[d+2]||'-',
-                  totalRow[d+3]||'-', totalRow[d+4]||'-', totalRow[d+5]||'-'];
+                  totalRow[d+3]||'-', totalRow[d+4]||'-', totalRow[d+5]||'-', totalRow[d+6]||'-'];
     html += '<tr class="anal-total">';
     vals.forEach((v, ci) => {
       let cls = '';

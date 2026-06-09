@@ -854,15 +854,15 @@ html, body {
 }
 .signal-row {
   display: grid;
-  grid-template-columns: 44px 44px 58px 1fr 44px;
+  grid-template-columns: 68px 36px 60px 1fr 58px;
   align-items: center;
-  gap: 6px;
-  padding: 7px 0;
+  gap: 8px;
+  padding: 8px 0;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   font-size: 13px;
 }
 .signal-row:last-child { border-bottom: none; }
-.sig-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sig-time { color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sig-pair { font-weight: 700; color: var(--text); }
 .sig-dir { font-weight: 700; font-size: 12px; }
 .sig-up   { color: #66A3FF; }

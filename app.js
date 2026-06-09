@@ -803,9 +803,13 @@ async function loadTodaySignals() {
     const wins   = todayRows.filter(r => r[9] === 'WIN').length;
     const losses = todayRows.filter(r => r[9] === 'LOSE').length;
     const wr     = todayRows.length > 0 ? Math.round(wins / (wins + losses || 1) * 100) : 0;
+    const is5050 = wins === losses;
+    const winCls = is5050 ? 'sig-pending' : 'wr-green';
+    const loseCls = is5050 ? 'sig-pending' : 'wr-red';
+    const wrCls  = is5050 ? 'sig-pending' : wins > losses ? 'wr-green' : 'wr-red';
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
-    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
+    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="${winCls}">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="${loseCls}">${losses}</b> &nbsp;·&nbsp; WR: <b class="${wrCls}">${wr}%</b>`;
     list.prepend(summary);
 
   } catch(e) {

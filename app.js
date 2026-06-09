@@ -762,7 +762,7 @@ async function loadTodaySignals() {
       const dir    = r[2]  || '—';
       const price  = r[3]  || '';
       const result = r[9]  || '';
-      const time   = (r[11] || '').substring(0, 5) || '—'; // HH:MM col L
+      const time   = (r[11] || '').substring(0, 8) || '—'; // HH:MM:SS col L
 
       const isUp   = dir === 'UP';
       const isWin  = result === 'WIN';

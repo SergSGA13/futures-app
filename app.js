@@ -743,9 +743,9 @@ async function loadTodaySignals() {
       return;
     }
 
-    // Time is at index 17 (col R = HH:MM) for current sheet format
+    // Time is at index 11 (col L = HH:MM)
     const lastRow = todayRows[todayRows.length - 1];
-    const lastTime = lastRow[17] || lastRow[11];
+    const lastTime = lastRow[11];
 
     // Start live timer
     if (signalTimerInterval) clearInterval(signalTimerInterval);
@@ -762,7 +762,7 @@ async function loadTodaySignals() {
       const dir    = r[2]  || '—';
       const price  = r[3]  || '';
       const result = r[9]  || '';
-      const time   = (r[17] || r[11] || '').substring(0, 5) || '—'; // HH:MM
+      const time   = (r[11] || '').substring(0, 5) || '—'; // HH:MM col L
 
       const isUp   = dir === 'UP';
       const isWin  = result === 'WIN';

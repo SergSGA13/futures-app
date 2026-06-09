@@ -764,12 +764,12 @@ async function loadTodaySignals() {
       const result = r[9]  || '';
       const time   = (r[11] || '').substring(0, 8) || '—'; // HH:MM:SS col L
 
-      const isUp   = dir === 'UP';
-      const isWin  = result === 'WIN';
-      const isLose = result === 'LOSE';
+      const isUp    = dir === 'UP';
+      const isWin   = result === 'WIN';
+      const isLose  = result === 'LOSE';
+      const isHalf  = result === 'WIN & LOSE';
       const dirClass  = isUp ? 'sig-up' : 'sig-down';
       const resClass  = isWin ? 'sig-win' : isLose ? 'sig-lose' : 'sig-pending';
-      const resLabel  = isWin ? 'WIN' : isLose ? 'LOSE' : '—';
       const dirLabel  = isUp ? '↑ UP' : '↓ DOWN';
       const pairShort = pair.replace('USDT.P', '');
 
@@ -788,7 +788,7 @@ async function loadTodaySignals() {
         <path d="M2.5 3.8L16.2 17.5M17.5 3.8L3.2 17.2" stroke="#FF3B6B" stroke-width="0.8" stroke-linecap="round" stroke-opacity="0.4"/>
       </svg>`;
       const resIcon   = isWin ? WIN_ICON : isLose ? LOSE_ICON : '';
-      const resText   = isWin ? 'WIN' : isLose ? 'LOSE' : '—';
+      const resText   = isWin ? 'WIN' : isLose ? 'LOSE' : isHalf ? '50/50' : '—';
 
       return `<div class="signal-row">
         <span class="sig-time">${time}</span>
@@ -799,17 +799,13 @@ async function loadTodaySignals() {
       </div>`;
     }).join('');
 
-    // Summary line
+    // Summary line (WIN & LOSE excluded from WR calculation)
     const wins   = todayRows.filter(r => r[9] === 'WIN').length;
     const losses = todayRows.filter(r => r[9] === 'LOSE').length;
-    const wr     = todayRows.length > 0 ? Math.round(wins / (wins + losses || 1) * 100) : 0;
-    const is5050 = wins === losses;
-    const winCls = is5050 ? 'sig-pending' : 'wr-green';
-    const loseCls = is5050 ? 'sig-pending' : 'wr-red';
-    const wrCls  = is5050 ? 'sig-pending' : wins > losses ? 'wr-green' : 'wr-red';
+    const wr     = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
-    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="${winCls}">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="${loseCls}">${losses}</b> &nbsp;·&nbsp; WR: <b class="${wrCls}">${wr}%</b>`;
+    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
     list.prepend(summary);
 
   } catch(e) {

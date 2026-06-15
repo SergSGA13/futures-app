@@ -958,6 +958,8 @@ async function runCalculator() {
     const tradeDays = {};
     // Monthly stats: key = "YYYY-MM", value = {w, l, signals: {date->true}}
     const monthlyStats = {};
+    // Hourly stats: key = hour (0-23), value = {w, l}
+    const hourlyStats  = {};
     let totalRaw = 0;
 
     for (let i = 1; i < rows.length; i++) {
@@ -1006,9 +1008,14 @@ async function runCalculator() {
       if (!monthlyStats[monthKey]) monthlyStats[monthKey] = { w:0, l:0 };
       if (win) monthlyStats[monthKey].w++;
       else     monthlyStats[monthKey].l++;
+
+      // === NEW: Hourly accumulation ===
+      if (!hourlyStats[hour]) hourlyStats[hour] = { w:0, l:0 };
+      if (win) hourlyStats[hour].w++;
+      else     hourlyStats[hour].l++;
     }
 
-    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw, monthlyStats);
+    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw, monthlyStats, hourlyStats);
 
   } catch(e) {
     results.innerHTML = `<div class="calc-error">${t('calc.error')}</div>`;
@@ -1019,7 +1026,7 @@ async function runCalculator() {
   }
 }
 
-function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats) {
+function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats, hourlyStats) {
   let totW = 0, totL = 0, totP = 0;
   ['EU','ED','BU','BD'].forEach(k => { totW += st[k].w; totL += st[k].l; totP += st[k].p; });
   const totSig = totW + totL;
@@ -1029,6 +1036,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
   const ppm    = ppd * 30;
   const ppy    = ppd * 365;
   const evSig  = totSig > 0 ? totP / totSig : 0;
+  const sigPerDay = nDays > 0 ? (totSig / nDays) : 0;
 
   const ethSig  = st.EU.w+st.EU.l+st.ED.w+st.ED.l;
   const ethWins = st.EU.w+st.ED.w;
@@ -1044,13 +1052,21 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
   const pc  = v => v >= 0 ? '#4EFFA0' : '#FF5272';
   const fmt = v => (v >= 0 ? '+' : '') + Math.round(v);
 
+  // Build monthly chart HTML (only if >1 month)
+  const hasMonthly = monthlyStats && Object.keys(monthlyStats).length > 1;
+  // Build hourly chart HTML (only if data exists)
+  const hourKeys = hourlyStats ? Object.keys(hourlyStats).filter(h => {
+    const d = hourlyStats[h]; return (d.w + d.l) >= 3; // min 3 signals per hour
+  }) : [];
+  const hasHourly = hourKeys.length > 0;
+
   document.getElementById('calcResults').innerHTML = `
     <div class="calc-divider"></div>
     <div class="calc-res-grid">
       <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig} <span style="color:#7B84B0;font-size:11px;font-weight:400">/ ${totalRaw}</span></b></div>
       <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
       <div class="calc-res-item"><span>${t('calc.res.ev')}</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
-      <div class="calc-res-item"><span>${t('calc.res.pnl.hist')}</span><b style="color:${pc(totP)}">${fmt(totP)} USDT</b></div>
+      <div class="calc-res-item"><span>${t('calc.res.sig.day')}</span><b>${sigPerDay.toFixed(1)}</b></div>
       <div class="calc-res-item"><span>${t('calc.res.pnl.month')}</span><b style="color:${pc(ppm)}">${fmt(ppm)} USDT</b></div>
       <div class="calc-res-item"><span>${t('calc.res.pnl.year')}</span><b style="color:${pc(ppy)}">${fmt(ppy)} USDT</b></div>
       <div class="calc-res-item"><span>${t('calc.res.hours')}</span><b>${activeHCount}</b></div>
@@ -1070,74 +1086,41 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
         <div class="calc-pair-stat"><span>PnL</span><b style="color:${pc(btcPnl)}">${fmt(btcPnl)}</b></div>
       </div>
     </div>
-    ${monthlyStats && Object.keys(monthlyStats).length > 1 ? `
-    <div class="calc-monthly-charts">
-      <div class="calc-monthly-chart-block">
-        <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          Сигналов по месяцам
-        </div>
-        <div class="pnl-chart-wrap" style="height:140px"><canvas id="calcMonthlySignalsChart"></canvas></div>
+    ${hasMonthly ? `
+    <div class="calc-monthly-chart-block" style="margin-top:12px">
+      <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        ${t('calc.chart.monthly.wr')}
       </div>
-      <div class="calc-monthly-chart-block">
-        <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-          WinRate по месяцам
-        </div>
-        <div class="pnl-chart-wrap" style="height:140px"><canvas id="calcMonthlyWrChart"></canvas></div>
+      <div class="pnl-chart-wrap" style="height:160px"><canvas id="calcMonthlyWrChart"></canvas></div>
+    </div>` : ''}
+    ${hasHourly ? `
+    <div class="calc-monthly-chart-block" style="margin-top:10px">
+      <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        ${t('calc.chart.hourly.wr')}
       </div>
+      <div class="pnl-chart-wrap" style="height:160px"><canvas id="calcHourlyWrChart"></canvas></div>
     </div>` : ''}
   `;
 
-  // Render monthly charts after DOM update
-  if (monthlyStats && Object.keys(monthlyStats).length > 1) {
+  // ── Monthly WinRate chart (bars = winrate, data label = signal count) ──
+  if (hasMonthly) {
     const sortedMonths = Object.keys(monthlyStats).sort();
-    const monthLabels  = sortedMonths.map(m => {
+    const monthLabels = sortedMonths.map(m => {
       const [y, mo] = m.split('-');
       const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return names[parseInt(mo)-1] + ' ' + y.slice(2);
+      return names[parseInt(mo)-1] + '\'' + y.slice(2);
     });
-    const signalCounts = sortedMonths.map(m => monthlyStats[m].w + monthlyStats[m].l);
     const winRates     = sortedMonths.map(m => {
       const tot = monthlyStats[m].w + monthlyStats[m].l;
       return tot > 0 ? parseFloat((monthlyStats[m].w / tot * 100).toFixed(1)) : 0;
     });
-    const wrColors = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.7)' : v >= 55.56 ? 'rgba(255,209,102,0.7)' : 'rgba(255,82,114,0.7)');
+    const signalCounts = sortedMonths.map(m => monthlyStats[m].w + monthlyStats[m].l);
+    const wrColors       = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
     const wrBorderColors = winRates.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+    const sigLabel = t('calc.chart.monthly.sig');
 
-    const chartDefaults = {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#7B84B0', maxRotation: 45, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: { ticks: { color: '#7B84B0', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } }
-      }
-    };
-
-    // Signals per month chart
-    const ctxS = document.getElementById('calcMonthlySignalsChart')?.getContext('2d');
-    if (ctxS) {
-      new Chart(ctxS, {
-        type: 'bar',
-        data: {
-          labels: monthLabels,
-          datasets: [{
-            data: signalCounts,
-            backgroundColor: 'rgba(102,163,255,0.55)',
-            borderColor: '#66A3FF',
-            borderWidth: 1,
-            borderRadius: 4,
-          }]
-        },
-        options: {
-          ...chartDefaults,
-          plugins: { ...chartDefaults.plugins, tooltip: { callbacks: { label: c => `${c.parsed.y} сигналов` } } },
-          scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: true, ticks: { ...chartDefaults.scales.y.ticks, stepSize: 1 } } }
-        }
-      });
-    }
-
-    // WinRate per month chart
     const ctxW = document.getElementById('calcMonthlyWrChart')?.getContext('2d');
     if (ctxW) {
       new Chart(ctxW, {
@@ -1145,6 +1128,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
         data: {
           labels: monthLabels,
           datasets: [{
+            label: 'WinRate %',
             data: winRates,
             backgroundColor: wrColors,
             borderColor: wrBorderColors,
@@ -1153,17 +1137,117 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
           }]
         },
         options: {
-          ...chartDefaults,
-          plugins: { ...chartDefaults.plugins, tooltip: { callbacks: { label: c => `${c.parsed.y}%` } } },
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: c => `WR: ${c.parsed.y}%`,
+                afterLabel: c => `${sigLabel} ${signalCounts[c.dataIndex]}`
+              }
+            },
+            // Inline signal count labels on bars
+            datalabels: false,
+          },
           scales: {
-            ...chartDefaults.scales,
+            x: { ticks: { color: '#7B84B0', maxRotation: 45, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
             y: {
-              ...chartDefaults.scales.y,
               min: 0, max: 100,
-              ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' }
+              ticks: { color: '#7B84B0', font: { size: 9 }, callback: v => v + '%' },
+              grid: { color: 'rgba(255,255,255,0.04)' }
             }
           }
-        }
+        },
+        plugins: [{
+          // Custom: draw signal count above each bar
+          id: 'sigCountLabels',
+          afterDatasetsDraw(chart) {
+            const { ctx, data } = chart;
+            chart.getDatasetMeta(0).data.forEach((bar, i) => {
+              const count = signalCounts[i];
+              const wr = winRates[i];
+              const color = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+              ctx.save();
+              ctx.fillStyle = color;
+              ctx.font = 'bold 9px -apple-system, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(count, bar.x, bar.y - 2);
+              ctx.restore();
+            });
+          }
+        }]
+      });
+    }
+  }
+
+  // ── Hourly WinRate chart ──
+  if (hasHourly) {
+    const sortedHours = hourKeys.map(Number).sort((a,b) => a-b);
+    const hourLabels = sortedHours.map(h => String(h).padStart(2,'0') + ':00');
+    const hourWR = sortedHours.map(h => {
+      const d = hourlyStats[h];
+      const tot = d.w + d.l;
+      return tot > 0 ? parseFloat((d.w / tot * 100).toFixed(1)) : 0;
+    });
+    const hourSig = sortedHours.map(h => hourlyStats[h].w + hourlyStats[h].l);
+    const hColors       = hourWR.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
+    const hBorderColors = hourWR.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+    const sigLabel = t('calc.chart.monthly.sig');
+
+    const ctxH = document.getElementById('calcHourlyWrChart')?.getContext('2d');
+    if (ctxH) {
+      new Chart(ctxH, {
+        type: 'bar',
+        data: {
+          labels: hourLabels,
+          datasets: [{
+            label: 'WinRate %',
+            data: hourWR,
+            backgroundColor: hColors,
+            borderColor: hBorderColors,
+            borderWidth: 1,
+            borderRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: c => `WR: ${c.parsed.y}%`,
+                afterLabel: c => `${sigLabel} ${hourSig[c.dataIndex]}`
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: '#7B84B0', maxRotation: 45, font: { size: 8 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+            y: {
+              min: 0, max: 100,
+              ticks: { color: '#7B84B0', font: { size: 9 }, callback: v => v + '%' },
+              grid: { color: 'rgba(255,255,255,0.04)' }
+            }
+          }
+        },
+        plugins: [{
+          id: 'hourSigLabels',
+          afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            chart.getDatasetMeta(0).data.forEach((bar, i) => {
+              const count = hourSig[i];
+              const wr = hourWR[i];
+              const color = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+              ctx.save();
+              ctx.fillStyle = color;
+              ctx.font = 'bold 8px -apple-system, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(count, bar.x, bar.y - 2);
+              ctx.restore();
+            });
+          }
+        }]
       });
     }
   }

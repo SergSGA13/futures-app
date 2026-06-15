@@ -865,6 +865,26 @@ function initCalculator() {
     daysHtml += `<label class="calc-hour-item"><span class="calc-hour-lbl">${dayNames[d]}</span><input type="checkbox" class="calc-cb" id="calcD${d+1}" ${checked}></label>`;
   }
   daysGrid.innerHTML = daysHtml;
+
+  // Init date pickers — default: empty (all periods)
+  const dateFrom = document.getElementById('calcDateFrom');
+  const dateTo   = document.getElementById('calcDateTo');
+  if (dateFrom && dateTo) {
+    // Set max to today
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    dateFrom.max = todayStr;
+    dateTo.max   = todayStr;
+    dateTo.value = todayStr;
+  }
+
+  // Direction toggle buttons — default ALL
+  document.querySelectorAll('.calc-dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.calc-dir-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
 }
 
 function calcExtractHour(val) {
@@ -920,6 +940,15 @@ async function runCalculator() {
       if (document.getElementById(`calcD${d}`)?.checked) activeD[d] = true;
     }
 
+    // === NEW: Period filter ===
+    const dateFromVal = document.getElementById('calcDateFrom')?.value || '';
+    const dateToVal   = document.getElementById('calcDateTo')?.value   || '';
+    const dateFrom = dateFromVal ? new Date(dateFromVal + 'T00:00:00') : null;
+    const dateTo   = dateToVal   ? new Date(dateToVal   + 'T23:59:59') : null;
+
+    // === NEW: Direction filter ===
+    const activeDir = document.querySelector('.calc-dir-btn.active')?.dataset?.dir || 'ALL';
+
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) { results.innerHTML = `<div class="calc-error">${t('calc.no.data')}</div>`; return; }
 
@@ -927,7 +956,9 @@ async function runCalculator() {
     const btcW = btcBet * 0.8, btcL = -btcBet;
     const st = { EU:{w:0,l:0,p:0}, ED:{w:0,l:0,p:0}, BU:{w:0,l:0,p:0}, BD:{w:0,l:0,p:0} };
     const tradeDays = {};
-    let totalRaw = 0; // valid WIN/LOSE signals before hour/day filter
+    // Monthly stats: key = "YYYY-MM", value = {w, l, signals: {date->true}}
+    const monthlyStats = {};
+    let totalRaw = 0;
 
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
@@ -936,7 +967,6 @@ async function runCalculator() {
       const res   = row[9]  || '';
       if (res !== 'WIN' && res !== 'LOSE') continue;
 
-      // col T (19) = ready hour integer; fallback to L (11) then R (17)
       const hour = calcExtractHour(row[19] || row[11] || row[17]);
       if (isNaN(hour)) continue;
 
@@ -948,7 +978,14 @@ async function runCalculator() {
       if (!isETH && !isBTC) continue;
       if (dir !== 'UP' && dir !== 'DOWN') continue;
 
-      totalRaw++; // valid signal, before hour/day filter
+      // === NEW: Date range filter ===
+      if (dateFrom && dt < dateFrom) continue;
+      if (dateTo   && dt > dateTo)   continue;
+
+      // === NEW: Direction filter ===
+      if (activeDir !== 'ALL' && dir !== activeDir) continue;
+
+      totalRaw++;
 
       if (!activeH[hour]) continue;
       const dow = dt.getDay();
@@ -963,9 +1000,15 @@ async function runCalculator() {
       st[key].l += win ? 0 : 1;
       st[key].p += win ? wP : lP;
       tradeDays[row[12]] = true;
+
+      // === NEW: Monthly accumulation ===
+      const monthKey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+      if (!monthlyStats[monthKey]) monthlyStats[monthKey] = { w:0, l:0 };
+      if (win) monthlyStats[monthKey].w++;
+      else     monthlyStats[monthKey].l++;
     }
 
-    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw);
+    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw, monthlyStats);
 
   } catch(e) {
     results.innerHTML = `<div class="calc-error">${t('calc.error')}</div>`;
@@ -976,7 +1019,7 @@ async function runCalculator() {
   }
 }
 
-function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw) {
+function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats) {
   let totW = 0, totL = 0, totP = 0;
   ['EU','ED','BU','BD'].forEach(k => { totW += st[k].w; totL += st[k].l; totP += st[k].p; });
   const totSig = totW + totL;
@@ -1027,7 +1070,104 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
         <div class="calc-pair-stat"><span>PnL</span><b style="color:${pc(btcPnl)}">${fmt(btcPnl)}</b></div>
       </div>
     </div>
+    ${monthlyStats && Object.keys(monthlyStats).length > 1 ? `
+    <div class="calc-monthly-charts">
+      <div class="calc-monthly-chart-block">
+        <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Сигналов по месяцам
+        </div>
+        <div class="pnl-chart-wrap" style="height:140px"><canvas id="calcMonthlySignalsChart"></canvas></div>
+      </div>
+      <div class="calc-monthly-chart-block">
+        <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          WinRate по месяцам
+        </div>
+        <div class="pnl-chart-wrap" style="height:140px"><canvas id="calcMonthlyWrChart"></canvas></div>
+      </div>
+    </div>` : ''}
   `;
+
+  // Render monthly charts after DOM update
+  if (monthlyStats && Object.keys(monthlyStats).length > 1) {
+    const sortedMonths = Object.keys(monthlyStats).sort();
+    const monthLabels  = sortedMonths.map(m => {
+      const [y, mo] = m.split('-');
+      const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return names[parseInt(mo)-1] + ' ' + y.slice(2);
+    });
+    const signalCounts = sortedMonths.map(m => monthlyStats[m].w + monthlyStats[m].l);
+    const winRates     = sortedMonths.map(m => {
+      const tot = monthlyStats[m].w + monthlyStats[m].l;
+      return tot > 0 ? parseFloat((monthlyStats[m].w / tot * 100).toFixed(1)) : 0;
+    });
+    const wrColors = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.7)' : v >= 55.56 ? 'rgba(255,209,102,0.7)' : 'rgba(255,82,114,0.7)');
+    const wrBorderColors = winRates.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+
+    const chartDefaults = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxRotation: 45, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    };
+
+    // Signals per month chart
+    const ctxS = document.getElementById('calcMonthlySignalsChart')?.getContext('2d');
+    if (ctxS) {
+      new Chart(ctxS, {
+        type: 'bar',
+        data: {
+          labels: monthLabels,
+          datasets: [{
+            data: signalCounts,
+            backgroundColor: 'rgba(102,163,255,0.55)',
+            borderColor: '#66A3FF',
+            borderWidth: 1,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          plugins: { ...chartDefaults.plugins, tooltip: { callbacks: { label: c => `${c.parsed.y} сигналов` } } },
+          scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, beginAtZero: true, ticks: { ...chartDefaults.scales.y.ticks, stepSize: 1 } } }
+        }
+      });
+    }
+
+    // WinRate per month chart
+    const ctxW = document.getElementById('calcMonthlyWrChart')?.getContext('2d');
+    if (ctxW) {
+      new Chart(ctxW, {
+        type: 'bar',
+        data: {
+          labels: monthLabels,
+          datasets: [{
+            data: winRates,
+            backgroundColor: wrColors,
+            borderColor: wrBorderColors,
+            borderWidth: 1,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          plugins: { ...chartDefaults.plugins, tooltip: { callbacks: { label: c => `${c.parsed.y}%` } } },
+          scales: {
+            ...chartDefaults.scales,
+            y: {
+              ...chartDefaults.scales.y,
+              min: 0, max: 100,
+              ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' }
+            }
+          }
+        }
+      });
+    }
+  }
+
   document.getElementById('calcResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 

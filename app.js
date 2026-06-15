@@ -493,6 +493,9 @@ async function renderL30dTables() {
     document.getElementById('l30dPairsTable').innerHTML = pairsHtml;
     document.getElementById('l30dPairsCard').style.display = 'block';
 
+    // WinRate by Day of Week — L30D
+    renderDowChart('l30dDowChart', 30);
+
     // By Time Zone L30D — dataColStart=25
     const tzHtml = buildAnalTableCols([
       { label: '0-14',  row: rows[27] },
@@ -549,6 +552,9 @@ async function renderAllTables() {
     document.getElementById('allPairsTable').innerHTML = pairsHtml;
     document.getElementById('allPairsCard').style.display = 'block';
 
+    // WinRate by Day of Week — ALL Periods
+    renderDowChart('allDowChart', null);
+
     // By Time Zone ALL — L36:S41, row36=header → data at rows[36-40]
     const tzHtml = buildAnalTableCols([
       { label: '0-14',  row: rows[27] },
@@ -588,6 +594,161 @@ document.getElementById('all5minCard').style.display = 'block';
     }
   } catch(e) {
     console.log('ALL tables error:', e);
+  }
+}
+
+// ===== DOW CHART (WinRate by Day of Week) =====
+// daysFilter: число дней назад (30 для L30D), null = все периоды
+const dowChartInstances = {};
+
+async function renderDowChart(canvasId, daysFilter) {
+  if (dowChartInstances[canvasId]) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+
+    // Day names Mon–Sun (index 0=Mon…6=Sun)
+    const dayLabels = [
+      t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'),
+      t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')
+    ];
+
+    // Build cutoff if needed
+    let cutoffKey = null;
+    if (daysFilter) {
+      const now = new Date();
+      const cd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFilter);
+      cutoffKey = `${cd.getFullYear()}-${String(cd.getMonth()+1).padStart(2,'0')}-${String(cd.getDate()).padStart(2,'0')}`;
+    }
+
+    // dow map: 0=Mon … 6=Sun
+    const dowMap = [0,1,2,3,4,5,6].map(() => ({ w: 0, l: 0 }));
+
+    for (let i = 1; i < rows.length; i++) {
+      const res = rows[i][9];
+      if (res !== 'WIN' && res !== 'LOSE') continue;
+      const dateStr = (rows[i][12] || '').trim();
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      const d = parts[0].padStart(2,'0');
+      const m = parts[1].padStart(2,'0');
+      const y = parts[2].substring(0,4);
+      if (y.length < 4) continue;
+
+      if (cutoffKey) {
+        const dk = `${y}-${m}-${d}`;
+        if (dk < cutoffKey) continue;
+      }
+
+      const dt = new Date(+y, +m - 1, +d);
+      if (isNaN(dt.getTime())) continue;
+      // getDay(): 0=Sun,1=Mon…6=Sat → convert to Mon-based 0-6
+      const raw = dt.getDay(); // 0=Sun
+      const idx = raw === 0 ? 6 : raw - 1; // Mon=0…Sun=6
+      if (res === 'WIN') dowMap[idx].w++;
+      else               dowMap[idx].l++;
+    }
+
+    const totals = dowMap.map(d => d.w + d.l);
+    const winRates = dowMap.map(d => {
+      const tot = d.w + d.l;
+      return tot > 0 ? parseFloat((d.w / tot * 100).toFixed(1)) : 0;
+    });
+    const avgWr = (() => {
+      const tw = dowMap.reduce((s,d) => s + d.w, 0);
+      const tl = dowMap.reduce((s,d) => s + d.l, 0);
+      return (tw + tl) > 0 ? parseFloat((tw / (tw + tl) * 100).toFixed(1)) : 0;
+    })();
+
+    const barColors = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
+    const borderColors = winRates.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+
+    const container = document.getElementById(canvasId)?.parentElement;
+    if (!document.getElementById(canvasId)) return;
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (!ctx) return;
+
+    const labelsPlugin = {
+      id: 'dowBarLabels_' + canvasId,
+      afterDatasetsDraw(chart) {
+        const meta = chart.getDatasetMeta(0);
+        const c = chart.ctx;
+        c.save();
+        c.textAlign = 'center';
+        meta.data.forEach((bar, i) => {
+          const wr = winRates[i];
+          const col = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+          c.fillStyle = '#E8EAFF';
+          c.font = '600 10px -apple-system, sans-serif';
+          c.fillText(`${wr}%`, bar.x, bar.y - 18);
+          c.fillStyle = '#7B84B0';
+          c.font = '500 9px -apple-system, sans-serif';
+          c.fillText(`(${totals[i]})`, bar.x, bar.y - 6);
+        });
+        c.restore();
+      }
+    };
+
+    dowChartInstances[canvasId] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: dayLabels,
+        datasets: [
+          {
+            data: winRates,
+            backgroundColor: barColors,
+            borderColor: borderColors,
+            borderWidth: 1,
+            borderRadius: 4,
+            barPercentage: 0.65,
+            order: 2
+          },
+          {
+            type: 'line',
+            data: dayLabels.map(() => avgWr),
+            borderColor: 'rgba(232,234,255,0.35)',
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            fill: false,
+            order: 1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 28 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: c => c.datasetIndex === 0
+                ? `WR: ${c.parsed.y}%`
+                : `Avg: ${c.parsed.y}%`,
+              afterLabel: c => c.datasetIndex === 0
+                ? `Сигналов: ${totals[c.dataIndex]}`
+                : ''
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#7B84B0', font: { size: 11 } },
+            grid: { color: 'rgba(255,255,255,0.04)' }
+          },
+          y: {
+            min: Math.max(0, Math.min(...winRates.filter(v => v > 0)) - 10),
+            max: Math.min(100, Math.max(...winRates) + 5),
+            ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => v + '%' },
+            grid: { color: 'rgba(255,255,255,0.04)' }
+          }
+        }
+      },
+      plugins: [labelsPlugin]
+    });
+  } catch(e) {
+    console.log('DOW chart error:', e);
   }
 }
 

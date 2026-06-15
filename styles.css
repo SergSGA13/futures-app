@@ -1204,3 +1204,121 @@ html, body {
   padding: 14px 0;
   text-align: center;
 }
+/* ===== CALCULATOR NEW ELEMENTS — добавить в конец styles.css ===== */
+
+/* Period selector */
+.calc-period-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.calc-period-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+.calc-period-label {
+  font-size: 11px;
+  color: #7B84B0;
+  white-space: nowrap;
+}
+.calc-date-input {
+  flex: 1;
+  background: #0D0F1E;
+  border: 1px solid rgba(102,163,255,0.18);
+  border-radius: 8px;
+  color: #E8EAFF;
+  font-size: 12px;
+  padding: 7px 9px;
+  outline: none;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.calc-date-input:focus {
+  border-color: rgba(102,163,255,0.45);
+}
+.calc-date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.7) sepia(0.3) saturate(1.5) hue-rotate(180deg);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.calc-period-sep {
+  font-size: 13px;
+  color: #7B84B0;
+  flex-shrink: 0;
+}
+.calc-period-reset {
+  background: rgba(102,163,255,0.08);
+  border: 1px solid rgba(102,163,255,0.15);
+  border-radius: 7px;
+  color: #7B84B0;
+  padding: 7px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.calc-period-reset:hover, .calc-period-reset:active {
+  background: rgba(102,163,255,0.18);
+  color: #E8EAFF;
+}
+/* Direction toggle */
+.calc-dir-wrap {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.calc-dir-btn {
+  flex: 1;
+  background: #0D0F1E;
+  border: 1px solid rgba(102,163,255,0.15);
+  border-radius: 9px;
+  color: #7B84B0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.18s;
+  letter-spacing: 0.3px;
+}
+.calc-dir-btn.active[data-dir="ALL"] {
+  background: rgba(102,163,255,0.12);
+  border-color: #66A3FF;
+  color: #66A3FF;
+}
+.calc-dir-btn.active[data-dir="UP"] {
+  background: rgba(78,255,160,0.10);
+  border-color: #4EFFA0;
+  color: #4EFFA0;
+}
+.calc-dir-btn.active[data-dir="DOWN"] {
+  background: rgba(255,82,114,0.10);
+  border-color: #FF5272;
+  color: #FF5272;
+}
+.calc-dir-btn:not(.active):hover {
+  background: rgba(102,163,255,0.06);
+  border-color: rgba(102,163,255,0.3);
+  color: #B8BFDE;
+}
+
+/* Monthly charts block */
+.calc-monthly-charts {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.calc-monthly-chart-block {
+  background: #0D0F1E;
+  border-radius: 12px;
+  overflow: hidden;
+}

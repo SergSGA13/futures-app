@@ -364,6 +364,27 @@ async function loadPnlL30dFromSignals(canvasId, key) {
   }
 }
 
+// ===== ЕДИНОЕ ПРАВИЛО ЦВЕТА ВИНРЕЙТА (для всех данных в приложении) =====
+// Точка безубытка при выплате +100 / −125 = 125/225 ≈ 55.6%.
+//   < 55.6%        → красный  (убыточно)
+//   55.6% – 61.9%  → жёлтый   (безубыток / тонкий плюс)
+//   ≥ 62%          → зелёный  (уверенный плюс)
+const WR_BREAKEVEN = 55.6;
+const WR_GREEN = 62;
+function wrClass(pct) {
+  const n = parseFloat(String(pct).replace('%', ''));
+  if (isNaN(n)) return '';
+  return n >= WR_GREEN ? 'wr-green' : n >= WR_BREAKEVEN ? 'wr-yellow' : 'wr-red';
+}
+function wrHex(pct) {
+  const n = parseFloat(pct);
+  return n >= WR_GREEN ? '#4EFFA0' : n >= WR_BREAKEVEN ? '#FFD166' : '#FF5272';
+}
+function wrRgba(pct) {
+  const n = parseFloat(pct);
+  return n >= WR_GREEN ? 'rgba(78,255,160,0.65)' : n >= WR_BREAKEVEN ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)';
+}
+
 // ===== ANAL TABLES (generalized) =====
 // dataColStart=1 for L7D (cols B-H), =12 for ALL (cols M-S), =25 for L30D (cols Z-AF)
 function buildAnalTableCols(configs, dataColStart) {
@@ -384,7 +405,7 @@ function buildAnalTableCols(configs, dataColStart) {
       let cls = '';
       if ((ci === 3 || ci === 6) && String(v).includes('%')) {
         const num = parseInt(v);
-        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+        cls = wrClass(num);
       }
       html += `<td class="${cls}">${v}</td>`;
     });
@@ -433,7 +454,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
       let cls = '';
       if ((ci === 3 || ci === 6) && String(v).includes('%')) {
         const num = parseInt(v);
-        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+        cls = wrClass(num);
       }
       html += `<td class="${cls}">${v}</td>`;
     });
@@ -449,7 +470,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
       let cls = '';
       if ((ci === 3 || ci === 6) && String(v).includes('%')) {
         const num = parseInt(v);
-        cls = num >= 65 ? 'wr-green' : num >= 50 ? 'wr-yellow' : 'wr-red';
+        cls = wrClass(num);
       }
       html += `<td class="${cls}">${v}</td>`;
     });
@@ -458,6 +479,103 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
 
   html += '</tbody></table>';
   return dataFound ? html : '';
+}
+
+// ===== CROSS TABLE (Indicator × Timeframe) =====
+// Минимальная выборка для доверия к винрейту (решённых сигналов WIN+LOSE)
+const MIN_SAMPLE = 5;
+
+// Колонки ALLsignal: C(2)=направление, J(9)=результат, M(12)=дата,
+// S(18)=таймфрейм, V(21)=код индикатора
+function aggregateCross(rows, indCol, tfCol, daysFilter) {
+  let cutoff = null;
+  if (daysFilter) {
+    const n = new Date();
+    const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - daysFilter);
+    cutoff = `${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,'0')}-${String(c.getDate()).padStart(2,'0')}`;
+  }
+  const g = {};
+  for (let i = 1; i < rows.length; i++) {
+    const ind = (rows[i][indCol] || '').trim();
+    const tf  = (rows[i][tfCol]  || '').trim();
+    if (!ind || !tf) continue;
+    const res = rows[i][9], dir = rows[i][2];
+    const p = (rows[i][12] || '').split('.');
+    if (p.length < 3) continue;
+    if (cutoff) {
+      const dk = `${p[2].substring(0,4)}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+      if (dk < cutoff) continue;
+    }
+    const key = ind + '|||' + tf;
+    if (!g[key]) g[key] = { ind, tf, upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
+    const o = g[key], up = dir === 'UP';
+    if (up) o.upT++; else o.dnT++;
+    if (res === 'WIN')  { up ? o.upW++ : o.dnW++; }
+    if (res === 'LOSE') { up ? o.upL++ : o.dnL++; }
+  }
+  return Object.values(g);
+}
+
+// Винрейт-ячейка с учётом порога малой выборки
+function wrCell(w, l, minSample) {
+  const decided = w + l;
+  if (decided === 0) return { v: '–', cls: '' };
+  const pct = Math.round(w / decided * 100);
+  if (decided < minSample) return { v: `~${pct}%`, cls: 'wr-low' };
+  const cls = wrClass(pct);
+  return { v: `${pct}%`, cls };
+}
+
+function buildCrossTable(combos, minSample) {
+  if (!combos.length) return '';
+  const tfNum = s => { const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 9999; };
+  combos.sort((a, b) => {
+    const ta = a.upT + a.dnT, tb = b.upT + b.dnT;
+    if (tb !== ta) return tb - ta;                       // по объёму вниз
+    if (a.ind !== b.ind) return a.ind < b.ind ? -1 : 1;  // затем по индикатору
+    return tfNum(a.tf) - tfNum(b.tf);                    // затем по таймфрейму
+  });
+
+  const headers = ['Ind', 'TF', '↑T', '↑W', '↑WR', '↓T', '↓W', '↓WR', 'Total'];
+  let html = '<table class="anal-table cross-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  const tot = { upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
+  for (const o of combos) {
+    tot.upW += o.upW; tot.upL += o.upL; tot.upT += o.upT;
+    tot.dnW += o.dnW; tot.dnL += o.dnL; tot.dnT += o.dnT;
+    const up = wrCell(o.upW, o.upL, minSample);
+    const dn = wrCell(o.dnW, o.dnL, minSample);
+    html += `<tr>
+      <td>${o.ind}</td><td>${o.tf}</td>
+      <td>${o.upT}</td><td>${o.upW}</td><td class="${up.cls}">${up.v}</td>
+      <td>${o.dnT}</td><td>${o.dnW}</td><td class="${dn.cls}">${dn.v}</td>
+      <td>${o.upT + o.dnT}</td></tr>`;
+  }
+
+  const upT = wrCell(tot.upW, tot.upL, minSample);
+  const dnT = wrCell(tot.dnW, tot.dnL, minSample);
+  html += `<tr class="anal-total">
+    <td>TOTAL</td><td></td>
+    <td>${tot.upT}</td><td>${tot.upW}</td><td class="${upT.cls}">${upT.v}</td>
+    <td>${tot.dnT}</td><td>${tot.dnW}</td><td class="${dnT.cls}">${dnT.v}</td>
+    <td>${tot.upT + tot.dnT}</td></tr>`;
+  html += '</tbody></table>';
+  return html;
+}
+
+async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+    const html = buildCrossTable(aggregateCross(rows, 21, 18, daysFilter), MIN_SAMPLE);
+    if (!html) return;
+    document.getElementById(targetTableId).innerHTML = html;
+    document.getElementById(targetCardId).style.display = 'block';
+  } catch (e) {
+    console.log('Cross table error:', e);
+  }
 }
 
 async function renderAnalTables() {
@@ -533,6 +651,8 @@ async function renderL30dTables() {
       document.getElementById('l30dHourTable').innerHTML = hourHtml;
       document.getElementById('l30dHourCard').style.display = 'block';
     }
+    // Indicator × Timeframe cross-cut — L30D
+    await renderCrossTable('l30dCrossTable', 'l30dCrossCard', 30);
   } catch(e) {
     console.log('L30D tables error:', e);
   }
@@ -592,6 +712,8 @@ document.getElementById('all5minCard').style.display = 'block';
       document.getElementById('allHourTable').innerHTML = hourHtml;
       document.getElementById('allHourCard').style.display = 'block';
     }
+    // Indicator × Timeframe cross-cut — ALL Periods
+    await renderCrossTable('allCrossTable', 'allCrossCard', null);
   } catch(e) {
     console.log('ALL tables error:', e);
   }
@@ -660,8 +782,8 @@ async function renderDowChart(canvasId, daysFilter) {
       return (tw + tl) > 0 ? parseFloat((tw / (tw + tl) * 100).toFixed(1)) : 0;
     })();
 
-    const barColors = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
-    const borderColors = winRates.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+    const barColors = winRates.map(v => wrRgba(v));
+    const borderColors = winRates.map(v => wrHex(v));
 
     const container = document.getElementById(canvasId)?.parentElement;
     if (!document.getElementById(canvasId)) return;
@@ -677,7 +799,7 @@ async function renderDowChart(canvasId, daysFilter) {
         c.textAlign = 'center';
         meta.data.forEach((bar, i) => {
           const wr = winRates[i];
-          const col = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+          const col = wrHex(wr);
           c.fillStyle = '#E8EAFF';
           c.font = '600 10px -apple-system, sans-serif';
           c.fillText(`${wr}%`, bar.x, bar.y - 18);
@@ -789,7 +911,7 @@ async function renderMonthlyWrChart() {
       labels.push(label);
       wrData.push(parseFloat(wr.toFixed(1)));
       counts.push(total);
-      colors.push(wr > 58 ? '#4EFFA0' : wr < 55 ? '#FF5272' : '#FFD166');
+      colors.push(wrHex(wr));
     }
 
     const avgWr = (totalWins + totalLosses) ? parseFloat((totalWins / (totalWins + totalLosses) * 100).toFixed(1)) : 0;
@@ -1209,7 +1331,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
   const btcPnl  = st.BU.p+st.BD.p;
   const btcWR   = btcSig > 0 ? btcWins/btcSig*100 : 0;
 
-  const wc  = v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272';
+  const wc  = v => wrHex(v);
   const pc  = v => v >= 0 ? '#4EFFA0' : '#FF5272';
   const fmt = v => (v >= 0 ? '+' : '') + Math.round(v);
 
@@ -1278,8 +1400,8 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       return tot > 0 ? parseFloat((monthlyStats[m].w / tot * 100).toFixed(1)) : 0;
     });
     const signalCounts = sortedMonths.map(m => monthlyStats[m].w + monthlyStats[m].l);
-    const wrColors       = winRates.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
-    const wrBorderColors = winRates.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+    const wrColors       = winRates.map(v => wrRgba(v));
+    const wrBorderColors = winRates.map(v => wrHex(v));
     const sigLabel = t('calc.chart.monthly.sig');
 
     const ctxW = document.getElementById('calcMonthlyWrChart')?.getContext('2d');
@@ -1327,7 +1449,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
             chart.getDatasetMeta(0).data.forEach((bar, i) => {
               const count = signalCounts[i];
               const wr = winRates[i];
-              const color = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+              const color = wrHex(wr);
               ctx.save();
               ctx.fillStyle = color;
               ctx.font = 'bold 9px -apple-system, sans-serif';
@@ -1352,8 +1474,8 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       return tot > 0 ? parseFloat((d.w / tot * 100).toFixed(1)) : 0;
     });
     const hourSig = sortedHours.map(h => hourlyStats[h].w + hourlyStats[h].l);
-    const hColors       = hourWR.map(v => v >= 65 ? 'rgba(78,255,160,0.65)' : v >= 55.56 ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)');
-    const hBorderColors = hourWR.map(v => v >= 65 ? '#4EFFA0' : v >= 55.56 ? '#FFD166' : '#FF5272');
+    const hColors       = hourWR.map(v => wrRgba(v));
+    const hBorderColors = hourWR.map(v => wrHex(v));
     const sigLabel = t('calc.chart.monthly.sig');
 
     const ctxH = document.getElementById('calcHourlyWrChart')?.getContext('2d');
@@ -1398,7 +1520,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
             chart.getDatasetMeta(0).data.forEach((bar, i) => {
               const count = hourSig[i];
               const wr = hourWR[i];
-              const color = wr >= 65 ? '#4EFFA0' : wr >= 55.56 ? '#FFD166' : '#FF5272';
+              const color = wrHex(wr);
               ctx.save();
               ctx.fillStyle = color;
               ctx.font = 'bold 8px -apple-system, sans-serif';

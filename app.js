@@ -79,7 +79,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
+  if (pageId === 'statistics') { loadPnlAllFromSignals('pnlChart', 'main'); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
 
@@ -415,7 +415,7 @@ async function loadPnlAllFromSignals(canvasId, key) {
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: {
           x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+          y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });
@@ -592,7 +592,7 @@ function buildIndicatorTable(combos, minSample) {
   if (!combos.length) return '';
   combos.sort((a, b) => (b.upT + b.dnT) - (a.upT + a.dnT)); // по объёму вниз
 
-  const headers = ['Indicators', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table cross-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -916,9 +916,9 @@ async function renderDowChart(canvasId, daysFilter) {
             grid: { color: 'rgba(255,255,255,0.04)' }
           },
           y: {
-            min: Math.max(0, Math.min(...winRates.filter(v => v > 0)) - 10),
-            max: Math.min(100, Math.max(...winRates) + 5),
-            ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => v + '%' },
+            min: Math.floor(Math.max(0, Math.min(...winRates.filter(v => v > 0)) - 10)),
+            max: Math.ceil(Math.min(100, Math.max(...winRates) + 5)),
+            ticks: { color: '#7B84B0', font: { size: 10 }, precision: 0, stepSize: 5, callback: v => Math.round(v) + '%' },
             grid: { color: 'rgba(255,255,255,0.04)' }
           }
         }

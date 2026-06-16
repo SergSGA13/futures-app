@@ -80,8 +80,8 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { loadPnlChartInto('pnlChart', 'PNL Charts', 'main'); renderAnalTables(); }
-  if (pageId === 'stats-l30d') { loadPnlChartInto('pnlChartL30d', 'PNL Charts', 'l30d', 30); renderL30dTables(); }
-  if (pageId === 'stats-all')  { loadPnlChartInto('pnlChartAll',  'PNL Charts', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
+  if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
+  if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -364,6 +364,66 @@ async function loadPnlL30dFromSignals(canvasId, key) {
   }
 }
 
+// Total PNL за всё время — кумулятивная кривая из ALLsignal (модель +100 / −125)
+async function loadPnlAllFromSignals(canvasId, key) {
+  if (pnlChartInstances[key]) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+
+    const dailyMap = {};
+    for (let i = 1; i < rows.length; i++) {
+      const dateStr = (rows[i][12] || '').trim();
+      const result  = rows[i][9];
+      if (!dateStr) continue;
+      const parts = dateStr.split('.');
+      if (parts.length < 3) continue;
+      const d = parts[0].padStart(2,'0');
+      const m = parts[1].padStart(2,'0');
+      const y = parts[2].substring(0, 4);
+      if (y.length < 4 || isNaN(parseInt(y))) continue;
+      const dk = `${y}-${m}-${d}`;
+      if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
+      if (result === 'WIN') dailyMap[dk].wins++;
+      else if (result === 'LOSE') dailyMap[dk].losses++;
+    }
+
+    const sortedDays = Object.keys(dailyMap).sort();
+    if (!sortedDays.length) return;
+
+    let cumPnl = 0;
+    const labels = [];
+    const pctData = [];
+    for (const dk of sortedDays) {
+      const { label, wins, losses } = dailyMap[dk];
+      cumPnl += wins * 100 - losses * 125;
+      labels.push(label);
+      pctData.push(Math.round((cumPnl / 5000) * 100));
+    }
+
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
+    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+    pnlChartInstances[key] = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+        scales: {
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      }
+    });
+  } catch(e) {
+    console.log('ALL PNL from signals error:', e);
+  }
+}
+
 // ===== ЕДИНОЕ ПРАВИЛО ЦВЕТА ВИНРЕЙТА (для всех данных в приложении) =====
 // Точка безубытка при выплате +100 / −125 = 125/225 ≈ 55.6%.
 //   < 55.6%        → красный  (убыточно)
@@ -485,9 +545,9 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
 // Минимальная выборка для доверия к винрейту (решённых сигналов WIN+LOSE)
 const MIN_SAMPLE = 5;
 
-// Колонки ALLsignal: C(2)=направление, J(9)=результат, M(12)=дата,
-// S(18)=таймфрейм, V(21)=код индикатора
-function aggregateCross(rows, indCol, tfCol, daysFilter) {
+// Колонки ALLsignal: C(2)=направление, J(9)=результат, M(12)=дата, V(21)=код индикатора
+// Группировка только по коду индикатора (таймфрейм в данных почти везде пуст).
+function aggregateByIndicator(rows, indCol, daysFilter) {
   let cutoff = null;
   if (daysFilter) {
     const n = new Date();
@@ -507,12 +567,10 @@ function aggregateCross(rows, indCol, tfCol, daysFilter) {
       const dk = `${p[2].substring(0,4)}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
       if (dk < cutoff) continue;
     }
-    // Пустой код индикатора / таймфрейм не выкидываем, а собираем в строку «—»
+    // Пустой код индикатора не выкидываем, а собираем в строку «—»
     const ind = (rows[i][indCol] || '').trim() || '—';
-    const tf  = (rows[i][tfCol]  || '').trim() || '—';
-    const key = ind + '|||' + tf;
-    if (!g[key]) g[key] = { ind, tf, upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
-    const o = g[key], up = dir === 'UP';
+    if (!g[ind]) g[ind] = { ind, upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
+    const o = g[ind], up = dir === 'UP';
     if (up) o.upT++; else o.dnT++;
     if (res === 'WIN')  { up ? o.upW++ : o.dnW++; }
     if (res === 'LOSE') { up ? o.upL++ : o.dnL++; }
@@ -530,17 +588,11 @@ function wrCell(w, l, minSample) {
   return { v: `${pct}%`, cls };
 }
 
-function buildCrossTable(combos, minSample) {
+function buildIndicatorTable(combos, minSample) {
   if (!combos.length) return '';
-  const tfNum = s => { const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 9999; };
-  combos.sort((a, b) => {
-    const ta = a.upT + a.dnT, tb = b.upT + b.dnT;
-    if (tb !== ta) return tb - ta;                       // по объёму вниз
-    if (a.ind !== b.ind) return a.ind < b.ind ? -1 : 1;  // затем по индикатору
-    return tfNum(a.tf) - tfNum(b.tf);                    // затем по таймфрейму
-  });
+  combos.sort((a, b) => (b.upT + b.dnT) - (a.upT + a.dnT)); // по объёму вниз
 
-  const headers = ['Ind', 'TF', '↑T', '↑W', '↑WR', '↓T', '↓W', '↓WR', 'Total'];
+  const headers = ['Ind', '↑T', '↑W', '↑WR', '↓T', '↓W', '↓WR', 'Total'];
   let html = '<table class="anal-table cross-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -552,7 +604,7 @@ function buildCrossTable(combos, minSample) {
     const up = wrCell(o.upW, o.upL, minSample);
     const dn = wrCell(o.dnW, o.dnL, minSample);
     html += `<tr>
-      <td>${o.ind}</td><td>${o.tf}</td>
+      <td>${o.ind}</td>
       <td>${o.upT}</td><td>${o.upW}</td><td class="${up.cls}">${up.v}</td>
       <td>${o.dnT}</td><td>${o.dnW}</td><td class="${dn.cls}">${dn.v}</td>
       <td>${o.upT + o.dnT}</td></tr>`;
@@ -561,7 +613,7 @@ function buildCrossTable(combos, minSample) {
   const upT = wrCell(tot.upW, tot.upL, minSample);
   const dnT = wrCell(tot.dnW, tot.dnL, minSample);
   html += `<tr class="anal-total">
-    <td>TOTAL</td><td></td>
+    <td>TOTAL</td>
     <td>${tot.upT}</td><td>${tot.upW}</td><td class="${upT.cls}">${upT.v}</td>
     <td>${tot.dnT}</td><td>${tot.dnW}</td><td class="${dnT.cls}">${dnT.v}</td>
     <td>${tot.upT + tot.dnT}</td></tr>`;
@@ -573,12 +625,12 @@ async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
   try {
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) return;
-    const html = buildCrossTable(aggregateCross(rows, 21, 18, daysFilter), MIN_SAMPLE);
+    const html = buildIndicatorTable(aggregateByIndicator(rows, 21, daysFilter), MIN_SAMPLE);
     if (!html) return;
     document.getElementById(targetTableId).innerHTML = html;
     document.getElementById(targetCardId).style.display = 'block';
   } catch (e) {
-    console.log('Cross table error:', e);
+    console.log('Indicator table error:', e);
   }
 }
 

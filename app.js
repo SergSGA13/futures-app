@@ -592,7 +592,7 @@ function buildIndicatorTable(combos, minSample) {
   if (!combos.length) return '';
   combos.sort((a, b) => (b.upT + b.dnT) - (a.upT + a.dnT)); // по объёму вниз
 
-  const headers = ['Ind', '↑T', '↑W', '↑WR', '↓T', '↓W', '↓WR', 'Total'];
+  const headers = ['Indicators', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table cross-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';

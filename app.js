@@ -496,16 +496,20 @@ function aggregateCross(rows, indCol, tfCol, daysFilter) {
   }
   const g = {};
   for (let i = 1; i < rows.length; i++) {
-    const ind = (rows[i][indCol] || '').trim();
-    const tf  = (rows[i][tfCol]  || '').trim();
-    if (!ind || !tf) continue;
-    const res = rows[i][9], dir = rows[i][2];
-    const p = (rows[i][12] || '').split('.');
-    if (p.length < 3) continue;
+    const res = (rows[i][9] || '').trim();
+    const dir = (rows[i][2] || '').trim();
+    // WIN & LOSE не учитываем в подсчёте — чтобы Total совпадал с 5293
+    if (res === 'WIN & LOSE') continue;
+    // Фильтр окна только для L30D; в ALL дату не трогаем, чтобы не терять сигналы
     if (cutoff) {
+      const p = (rows[i][12] || '').split('.');
+      if (p.length < 3) continue; // без корректной даты нельзя отнести к окну 30 дней
       const dk = `${p[2].substring(0,4)}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
       if (dk < cutoff) continue;
     }
+    // Пустой код индикатора / таймфрейм не выкидываем, а собираем в строку «—»
+    const ind = (rows[i][indCol] || '').trim() || '—';
+    const tf  = (rows[i][tfCol]  || '').trim() || '—';
     const key = ind + '|||' + tf;
     if (!g[key]) g[key] = { ind, tf, upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
     const o = g[key], up = dir === 'UP';

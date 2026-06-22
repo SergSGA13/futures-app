@@ -2,12 +2,9 @@
    live-charts.js  —  живые графики BTC/ETH с биржи (Binance + фолбэк Bybit)
    Рендер: TradingView Lightweight Charts v5.
 
-   ИНДИКАТОРЫ (порт из Pine):
-   • Главная панель: гауссов канал v.29.1 (mid/upper/lower) + сигналы BUY/SELL
-     (crossunder/crossover канала, фильтры Impulse + Liquidity Sweep + cooldown)
-   • Нижняя панель: Market Oscillator  osc = 100*(close-ma)/rangeATR, границы +/-100
-
-   Заменить параметры/логику индикаторов можно ниже: блок IND + computeIndicators().
+   На графике: свечи (бирюза/фиолет) + сигналы BUY/SELL индикатора v.29.1.
+   Канал Гаусса считается ВНУТРИ (нужен для сигналов), но НЕ рисуется.
+   Market Oscillator отключён.
    ========================================================================= */
 (function () {
   'use strict';
@@ -22,25 +19,25 @@
     { key: '1h',  binance: '1h',  bybit: '60',  label: '1H',  min: 60  },
     { key: '15m', binance: '15m', bybit: '15',  label: '15m', min: 15  },
   ];
-  const LIMIT = 1000; // максимум Binance/Bybit за один запрос — нужен прогрев индикаторов
+  const LIMIT = 1000;   // свечей за запрос (максимум Binance/Bybit)
+  const VIEW  = 350;    // сколько свечей показываем по умолчанию (история; крутится скроллом)
 
-  // ---- Параметры индикаторов (дефолты Pine: v.29.1 + Market Oscillator) ----
+  // ---- Параметры сигналов (дефолты Pine v.29.1) ---------------------------
   const IND = {
-    len: 200, h: 8.0, multBuy: 3.0, multSell: 3.0,   // гауссов канал
-    impulseOn: true, impulseThr: 1.0, impulseLb: 5,  // Impulse Filter
-    sweepOn: true, sweepBars: 20,                    // Liquidity Sweep
-    checkMin: 10,                                    // экспирация (cooldown)
-    oscLen: 50, oscMult: 2.0,                        // Market Oscillator
+    len: 200, h: 8.0, multBuy: 3.0, multSell: 3.0,
+    impulseOn: true, impulseThr: 1.0, impulseLb: 5,
+    sweepOn: true, sweepBars: 20,
+    checkMin: 10,
   };
 
-  // ---- Палитра (из styles.css) --------------------------------------------
+  // ---- Палитра ------------------------------------------------------------
+  // Цвета свечей — как на скрине. Меняются здесь:
   const C = {
     bg: 'transparent', text: '#7B84B0', grid: 'rgba(102,163,255,0.06)',
-    up: '#4EFFA0', down: '#FF5272',
-    mid: '#9D50FF',
-    upperCh: 'rgba(255,82,114,0.45)', lowerCh: 'rgba(78,255,160,0.45)',
-    buy: '#4EFFA0', sell: '#9D50FF',
-    osc: '#0E9D91', oscLevel: 'rgba(123,132,176,0.4)',
+    up: '#15C2A0',     // бычья свеча — бирюзовый
+    down: '#8B5CF6',   // медвежья свеча — фиолетовый
+    buy: '#4EFFA0', sell: '#FF5272',   // треугольники сигналов
+    lastLine: 'rgba(123,132,176,0.5)',
   };
 
   const instances = {};
@@ -74,23 +71,6 @@
     }
     return out;
   }
-  function atr(candles, period) {
-    const n = candles.length;
-    const out = new Array(n).fill(null);
-    if (n < period + 1) return out;
-    const tr = new Array(n);
-    for (let i = 0; i < n; i++) {
-      if (i === 0) { tr[i] = candles[i].high - candles[i].low; continue; }
-      const h = candles[i].high, l = candles[i].low, pc = candles[i - 1].close;
-      tr[i] = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
-    }
-    let prev = 0;
-    for (let i = 1; i <= period; i++) prev += tr[i];
-    prev /= period;
-    out[period] = prev;
-    for (let i = period + 1; i < n; i++) { prev = (prev * (period - 1) + tr[i]) / period; out[i] = prev; }
-    return out;
-  }
   function rollLowest(vals, period) {
     const out = new Array(vals.length);
     for (let i = 0; i < vals.length; i++) {
@@ -109,20 +89,15 @@
     }
     return out;
   }
-  const lineData = (candles, arr) => {
-    const o = [];
-    for (let i = 0; i < candles.length; i++) if (arr[i] != null && isFinite(arr[i])) o.push({ time: candles[i].time, value: arr[i] });
-    return o;
-  };
 
-  // ---- Индикаторы (порт Pine) ---------------------------------------------
-  function computeIndicators(candles, tfMin) {
+  // ---- Сигналы BUY/SELL (v.29.1, без отрисовки канала) --------------------
+  function computeSignals(candles, tfMin) {
     const n = candles.length;
     const close = candles.map(c => c.close);
     const high = candles.map(c => c.high);
     const low = candles.map(c => c.low);
 
-    // === Гауссов канал (v.29.1) ===
+    // Гауссов канал (внутренний расчёт)
     const { len, h, multBuy, multSell } = IND;
     const coefs = []; let den = 0;
     for (let i = 0; i < len; i++) { const c = Math.exp(-(i * i) / (2 * h * h)); coefs.push(c); den += c; }
@@ -131,21 +106,19 @@
       const maxI = Math.min(b, len - 1);
       let s = 0;
       for (let i = 0; i <= maxI; i++) s += close[b - i] * coefs[i];
-      out[b] = den !== 0 ? s / den : null;               // делим на ПОЛНУЮ сумму — как в Pine
+      out[b] = den !== 0 ? s / den : null;
     }
     const absd = close.map((c, i) => Math.abs(c - out[i]));
     const mae = sma(absd, len);
     const upper = out.map((o, i) => (mae[i] == null ? null : o + mae[i] * multSell));
     const lower = out.map((o, i) => (mae[i] == null ? null : o - mae[i] * multBuy));
 
-    // === Фильтры ===
-    // Liquidity Sweep
+    // Фильтр Liquidity Sweep
     const loLowest = rollLowest(low, IND.sweepBars);
     const hiHighest = rollHighest(high, IND.sweepBars);
     const sweptLow = i => i >= IND.sweepBars && loLowest[i] < loLowest[i - IND.sweepBars];
     const sweptHigh = i => i >= IND.sweepBars && hiHighest[i] > hiHighest[i - IND.sweepBars];
 
-    // === Сигналы + cooldown ===
     const barsToCheck = Math.max(1, Math.round(IND.checkMin / tfMin));
     const markers = [];
     let lastLong = -1e9, lastShort = -1e9;
@@ -154,7 +127,6 @@
       const crossUnder = close[i] < lower[i] && close[i - 1] >= lower[i - 1];
       const crossOver = close[i] > upper[i] && close[i - 1] <= upper[i - 1];
 
-      // Impulse Filter
       let canLong = true, canShort = true;
       if (IND.impulseOn && i >= IND.impulseLb) {
         const base = close[i - IND.impulseLb];
@@ -174,32 +146,7 @@
       }
     }
     markers.sort((a, b) => a.time - b.time);
-
-    // === Market Oscillator ===
-    const atr2000 = atr(candles, 2000);   // обычно na при <2000 свечей
-    const atr200 = atr(candles, 200);
-    const osc = new Array(n).fill(null);
-    const L = IND.oscLen;
-    for (let i = L; i < n; i++) {
-      let sumWC = 0, sumW = 0;
-      for (let k = 0; k < L; k++) {
-        const prev = close[i - k - 1];
-        const w = Math.abs(close[i - k] - prev) / prev;
-        sumWC += close[i - k] * w; sumW += w;
-      }
-      const ma = sumW !== 0 ? sumWC / sumW : null;
-      const atrRaw = (atr2000[i] != null) ? atr2000[i] : atr200[i];
-      const rangeATR = atrRaw != null ? atrRaw * IND.oscMult : null;
-      osc[i] = (rangeATR && rangeATR !== 0 && ma != null) ? 100 * (close[i] - ma) / rangeATR : null;
-    }
-
-    return {
-      mid: lineData(candles, out),
-      upper: lineData(candles, upper),
-      lower: lineData(candles, lower),
-      osc: lineData(candles, osc),
-      markers,
-    };
+    return markers;
   }
 
   // ---- Разметка ------------------------------------------------------------
@@ -219,11 +166,9 @@
         <div class="lc-overlay" data-role="overlay"></div>
       </div>
       <div class="lc-foot">
-        <span class="lc-legend"><i style="background:${C.mid}"></i>Gaussian</span>
-        <span class="lc-legend"><i style="background:${C.lowerCh}"></i>BUY</span>
-        <span class="lc-legend"><i style="background:${C.upperCh}"></i>SELL</span>
-        <span class="lc-legend"><i style="background:${C.osc}"></i>Oscillator</span>
-        <span class="lc-note">🟣 v.29.1 · Market Oscillator</span>
+        <span class="lc-legend"><i style="background:${C.buy}"></i>BUY</span>
+        <span class="lc-legend"><i style="background:${C.sell}"></i>SELL</span>
+        <span class="lc-note">🟣 v.29.1 · сигналы</span>
       </div>`;
     host.querySelectorAll('[data-sym]').forEach(b =>
       b.addEventListener('click', () => { st.sym = b.dataset.sym; syncPills(host, st); load(host, st); }));
@@ -241,8 +186,7 @@
     const el = host.querySelector('[data-role="chart"]');
     const chart = LW.createChart(el, {
       autoSize: true,
-      layout: { background: { type: 'solid', color: C.bg }, textColor: C.text, fontSize: 11,
-        attributionLogo: true, panes: { separatorColor: C.grid, enableResize: false } },
+      layout: { background: { type: 'solid', color: C.bg }, textColor: C.text, fontSize: 11, attributionLogo: true },
       grid: { horzLines: { color: C.grid }, vertLines: { color: C.grid } },
       rightPriceScale: { borderColor: 'transparent' },
       timeScale: { borderColor: 'transparent', timeVisible: true, secondsVisible: false },
@@ -250,26 +194,16 @@
     });
 
     const candle = chart.addSeries(LW.CandlestickSeries, {
-      upColor: C.up, downColor: C.down, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down,
+      upColor: C.up, downColor: C.down, borderVisible: false,
+      wickUpColor: C.up, wickDownColor: C.down,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      priceLineColor: C.lastLine, priceLineStyle: 1,   // пунктирная линия последней цены
     });
-    const lineOpt = (color, w) => ({ color, lineWidth: w, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    const mid = chart.addSeries(LW.LineSeries, lineOpt(C.mid, 1.5));
-    const upper = chart.addSeries(LW.LineSeries, lineOpt(C.upperCh, 1));
-    const lower = chart.addSeries(LW.LineSeries, lineOpt(C.lowerCh, 1));
-
-    // Market Oscillator — нижняя панель (paneIndex = 1)
-    const osc = chart.addSeries(LW.LineSeries, { color: C.osc, lineWidth: 2, priceLineVisible: false,
-      priceFormat: { type: 'price', precision: 1, minMove: 0.1 } }, 1);
-    osc.createPriceLine({ price: 100, color: C.oscLevel, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
-    osc.createPriceLine({ price: 0, color: C.oscLevel, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
-    osc.createPriceLine({ price: -100, color: C.oscLevel, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
-    try { chart.panes()[1].setHeight(120); } catch (e) {}
 
     let markers = null;
     try { if (LW.createSeriesMarkers) markers = LW.createSeriesMarkers(candle, []); } catch (e) {}
 
-    return { chart, candle, mid, upper, lower, osc, markers };
+    return { chart, candle, markers };
   }
 
   function setMarkers(s, data) {
@@ -295,19 +229,16 @@
     try {
       const candles = await fetchKlines(sym, tf);
       if (!candles.length) throw new Error('empty');
-      const ind = computeIndicators(candles, tf.min);
+      const markers = computeSignals(candles, tf.min);
 
       st.s.candle.setData(candles);
-      st.s.mid.setData(ind.mid);
-      st.s.upper.setData(ind.upper);
-      st.s.lower.setData(ind.lower);
-      st.s.osc.setData(ind.osc);
-      setMarkers(st.s, ind.markers);
+      setMarkers(st.s, markers);
 
       const nn = candles.length;
-      st.s.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, nn - 160), to: nn + 3 });
+      const fromIdx = Math.max(0, nn - VIEW);
+      st.s.chart.timeScale().setVisibleLogicalRange({ from: fromIdx, to: nn + 3 });
 
-      const first = candles[Math.max(0, nn - 160)], lastC = candles[nn - 1];
+      const first = candles[fromIdx], lastC = candles[nn - 1];
       const chg = ((lastC.close - first.open) / first.open) * 100;
       const sign = chg >= 0 ? '+' : '';
       statusT.innerHTML = `${sym.label}/USDT · <b>${lastC.close.toLocaleString('en-US', { maximumFractionDigits: 2 })}</b> ` +

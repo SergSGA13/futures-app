@@ -1440,3 +1440,103 @@ html, body {
   border-radius: 12px;
   overflow: hidden;
 }
+
+/* ===== LIVE CHARTS (BTC/ETH) ===== */
+.lc-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 12px 12px 10px;
+  margin-bottom: 16px;
+}
+.lc-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.lc-host { position: relative; }
+.lc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.lc-pills { display: flex; gap: 4px; }
+.lc-pill {
+  background: var(--bg3);
+  border: 1px solid var(--card-border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all .15s;
+}
+.lc-pill.active {
+  background: var(--gradient);
+  color: #fff;
+  border-color: transparent;
+}
+.lc-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.lc-status b { color: var(--text); font-weight: 700; }
+.lc-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow: 0 0 6px currentColor;
+}
+.lc-chart {
+  width: 100%;
+  height: 380px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.lc-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.lc-legend { display: inline-flex; align-items: center; gap: 4px; }
+.lc-legend i { width: 10px; height: 2px; border-radius: 2px; display: inline-block; }
+.lc-note { margin-left: auto; opacity: .7; font-style: italic; }
+.lc-overlay {
+  position: absolute;
+  inset: 38px 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: rgba(10,11,20,.55);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+.lc-overlay:empty { display: none; }
+.lc-overlay.error { color: var(--red); pointer-events: auto; }
+.lc-retry {
+  display: inline-block;
+  margin-top: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}

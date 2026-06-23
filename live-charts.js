@@ -73,7 +73,7 @@
       autoSize: true,
       layout: { background: { type: 'solid', color: C.bg }, textColor: C.text, fontSize: 11, attributionLogo: true },
       grid: { horzLines: { color: C.grid }, vertLines: { color: C.grid } },
-      rightPriceScale: { borderColor: 'transparent' },
+      rightPriceScale: { borderColor: 'transparent', scaleMargins: { top: 0.12, bottom: 0.08 } },
       timeScale: { borderColor: 'transparent', timeVisible: true, secondsVisible: false },
       crosshair: { mode: LW.CrosshairMode ? LW.CrosshairMode.Normal : 0 },
     });

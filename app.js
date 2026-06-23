@@ -83,6 +83,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
   if (pageId === 'indicators')       { window.LiveChart && LiveChart.mount('liveChartIndicators'); }
+  if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }

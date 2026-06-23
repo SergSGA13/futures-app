@@ -1,5 +1,5 @@
 /* =========================================================================
-   futures-strategy.js — лидерборд фьючерсных стратегий (бэктест v.29.1)
+   futures-strategy.js - лидерборд фьючерсных стратегий (бэктест v.29.1)
      • карточки пар: PNL / WIN% / сеты / позиция
      • избранное (♥, как в Лаборатории) + фильтр по избранному
      • сортировка PNL / WIN% / Сигналы + ползунок-фильтр по значению
@@ -42,14 +42,14 @@
 
   // ---- Гайд (обучение) ----------------------------------------------------
   const GUIDE = [
-    { t: 'Лидерборд стратегий', b: 'Здесь — результаты бэктеста индикатора v.29.1 по фьючерсам Binance на 15m. Каждая карточка = одна монета со своей статистикой отработки сигналов.' },
-    { t: 'Карточка монеты', b: 'PNL — суммарная доходность от депозита. WIN% — доля прибыльных сетов (зелёный ≥62%, жёлтый 55.6–62%, красный ниже; «~X%» — статистики пока мало). Снизу — статус: в лонге/шорте с числом долей или «ждёт входа».' },
+    { t: 'Лидерборд стратегий', b: 'Здесь - результаты бэктеста индикатора v.29.1 по фьючерсам Binance на 15m. Каждая карточка = одна монета со своей статистикой отработки сигналов.' },
+    { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сетов (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - статус: в лонге/шорте с числом долей или «ждёт входа».' },
     { t: 'Сортировка', b: 'Переключай показатель сортировки: PNL, WIN% или число сигналов. Список мгновенно пересортируется по убыванию выбранного значения.' },
     { t: 'Ползунок-фильтр', b: 'Ползунок под сортировкой отсекает карточки, у которых выбранный показатель ниже его значения. Быстрый способ оставить только сильные по PNL или WIN%.' },
     { t: 'Избранное ★', b: 'Звезда на карточке добавляет монету в избранное (хранится на устройстве). Кнопка «★ Избранное» в панели оставляет на экране только избранные.' },
     { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает заведомо плохие сетапы: мало статистики (менее 5 сетов), отрицательный PNL или WIN% ниже безубытка (55.6%).' },
     { t: 'Детальный экран', b: 'Тап по карточке открывает монету: статы (сеты / WIN% / PNL), лента истории сетов (#1 WIN +18.7% …), текущая позиция и живой график.' },
-    { t: 'График и модель', b: 'На графике — фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 10% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает всё. TP/STOP в этой модели нет. Данные обновляет backtest_v29.py.' },
+    { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 10% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 10%. TP/STOP в этой модели нет. Данные обновляет backtest_v29.py.' },
   ];
   function closeGuide() {
     const ov = document.getElementById('fgOverlay'); if (ov) ov.remove();
@@ -200,7 +200,7 @@
 
     const cards = rows.map(r => {
       const sym = r.symbol.replace(/USDT$/, ''), st = statusInfo(r), fav = favHas(r.symbol);
-      const wrTxt = r.winrate == null ? '—' : (r.sets < MIN_SETS ? '~' + Math.round(r.winrate) : Math.round(r.winrate)) + '%';
+      const wrTxt = r.winrate == null ? '-' : (r.sets < MIN_SETS ? '~' + Math.round(r.winrate) : Math.round(r.winrate)) + '%';
       return `
         <div class="fs-card ${r.pnl_pct >= 0 ? 'pos' : 'neg'}" data-sym="${r.symbol}">
           <button class="fs-fav ${fav ? 'on' : ''}" data-fav="${r.symbol}" title="В избранное">${fav ? '★' : '☆'}</button>
@@ -236,7 +236,7 @@
         <span class="fs-sliderval">${sortDef.label} ≥ ${S.sliderVal}${sortDef.unit}</span>
       </div>
       <div class="fs-grid">${cards}</div>
-      ${S.demo ? `<div class="fs-hint">Демо-набор для предпросмотра. Запусти <b>backtest_v29.py</b> и залей результат во вкладку <b>FUT_STRAT</b> — карточки заполнятся реальными цифрами.</div>` : ''}`;
+      ${S.demo ? `<div class="fs-hint">Демо-набор для предпросмотра. Не используйте информацию изложенную тут для торговли на реальные средства.</div>` : ''}`;
 
     host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
@@ -256,15 +256,18 @@
     const sym = symbol.replace(/USDT$/, '');
     const fav = favHas(symbol);
     const st = statusInfo(row);
-    const wrTxt = row.winrate == null ? '—' : (row.sets < MIN_SETS ? '~' + Math.round(row.winrate) : Math.round(row.winrate)) + '%';
+    const wrTxt = row.winrate == null ? '-' : (row.sets < MIN_SETS ? '~' + Math.round(row.winrate) : Math.round(row.winrate)) + '%';
 
-    // чипы истории сетов (последние 14) + текущий открытый
-    const chips = (row.sets_pct || []).slice(-14).map((s, i) => {
+    // чипы истории сетов: реальные номера, новейшие слева, текущая позиция первой
+    const allSets = row.sets_pct || [];
+    const recent = allSets.map((s, i) => ({ n: i + 1, s })).slice(-12).reverse();
+    const chips = recent.map(({ n, s }) => {
       const win = s >= 0;
-      return `<div class="fs-chip ${win ? 'win' : 'loss'}"><div class="fs-chip-n">#${i + 1} ${win ? 'WIN' : 'LOSS'}</div><div class="fs-chip-v">${fmtPct(s)}</div></div>`;
+      return `<div class="fd-chip ${win ? 'win' : 'loss'}"><div class="fd-chip-n">#${n} ${win ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s)}</div></div>`;
     }).join('');
-    const openChip = (row.pos_side === 'long' || row.pos_side === 'short')
-      ? `<div class="fs-chip open"><div class="fs-chip-n">OPEN ${row.pos_side === 'long' ? '▲' : '▼'}</div><div class="fs-chip-v">×${row.pos_lots}</div></div>` : '';
+    const isOpen = (row.pos_side === 'long' || row.pos_side === 'short');
+    const openChip = isOpen
+      ? `<div class="fd-chip open"><div class="fd-chip-n">СЕЙЧАС ${row.pos_side === 'long' ? '▲ LONG' : '▼ SHORT'}</div><div class="fd-chip-v">×${row.pos_lots}</div></div>` : '';
 
     host.innerHTML = `
       <div class="fd-bar">
@@ -278,10 +281,10 @@
         <div class="fd-stat"><div class="fd-stat-val" style="color:${pnlHex(row.pnl_pct)}">${fmtPct(row.pnl_pct)}</div><div class="fd-stat-lbl">pnl</div></div>
       </div>
       <div class="fd-pos ${st.cls}">${st.txt}${row.pos_avg ? ` · средняя ${row.pos_avg}` : ''}</div>
-      <div class="fd-chips">${chips}${openChip || (chips ? '' : '<span class="fs-sets">нет завершённых сетов</span>')}</div>
+      <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">нет завершённых сетов</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div><div class="fd-overlay" id="fdOverlay">Загрузка графика…</div></div>
-      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">линии — набранные входы и средняя</span></div>
-      <div class="fs-hint">Модель v.29.1: вход 10% депо на сигнал, усреднение в ту же сторону, переворот закрывает всё. Уровни на графике — фактические заливки усреднения (TP/STOP в этой модели нет).</div>`;
+      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">линии - набранные входы и средняя</span></div>
+      <div class="fs-hint">Модель v.29.1: вход 10% депо на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 10%. Уровни на графике - фактические заливки усреднения (TP/STOP в этой модели нет).</div>`;
 
     host.querySelector('[data-back]').addEventListener('click', () => renderList(host, S));
     host.querySelector('[data-fav]').addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '★' : '☆'; });
@@ -301,7 +304,7 @@
         if (row.pos_avg) lines.push({ price: row.pos_avg, color: col, title: 'средняя', width: 2, style: 0 });
       }
       const el = host.querySelector('#fdChart');
-      if (window.LiveChart) LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, viewBars: 220 });
+      if (window.LiveChart) LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, viewBars: 140 });
       const ov = host.querySelector('#fdOverlay'); if (ov) ov.remove();
     } catch (err) {
       const ov = host.querySelector('#fdOverlay');

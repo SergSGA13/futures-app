@@ -1543,3 +1543,86 @@ html, body {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+
+/* ===== FUTURES STRATEGY · лидерборд (неоновый) ===== */
+.fs-wrap { margin-top: 28px; }
+.fs-loading { text-align: center; color: var(--text-muted); padding: 30px 0; font-size: 14px; }
+
+.fs-header { margin-bottom: 14px; }
+.fs-title {
+  font-size: 22px; font-weight: 800; letter-spacing: .2px;
+  background: var(--gradient); -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.fs-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+.fs-demo { color: var(--yellow); font-weight: 600; }
+
+/* Верхняя панель статов — неоновая рамка */
+.fs-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: linear-gradient(135deg, rgba(102,163,255,.25), rgba(157,80,255,.25));
+  border-radius: var(--radius); overflow: hidden; padding: 1px;
+  box-shadow: 0 0 24px rgba(102,163,255,.10);
+  margin-bottom: 16px;
+}
+.fs-stat {
+  background: linear-gradient(160deg, #141930, #0e1120);
+  padding: 12px 6px; text-align: center;
+}
+.fs-stat-val { font-size: 20px; font-weight: 800; color: var(--blue); text-shadow: 0 0 12px currentColor; }
+.fs-stat-lbl { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+
+/* Сортировка */
+.fs-sortbar { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.fs-sortlbl { font-size: 11px; color: var(--text-muted); margin-right: 2px; }
+.fs-sortpill {
+  background: var(--bg3); border: 1px solid var(--card-border); color: var(--text-muted);
+  font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); cursor: pointer;
+  transition: all .15s;
+}
+.fs-sortpill.active { background: var(--gradient); color: #fff; border-color: transparent; box-shadow: 0 0 14px rgba(157,80,255,.35); }
+
+/* Сетка карточек */
+.fs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fs-card {
+  position: relative;
+  background: linear-gradient(160deg, #161b33, #0f1322);
+  border: 1px solid var(--card-border);
+  border-radius: 14px; padding: 14px 14px 12px; overflow: hidden;
+  transition: transform .12s ease, box-shadow .2s ease;
+}
+.fs-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--gradient); opacity: .6;
+}
+.fs-card.pos { border-color: rgba(78,255,160,.30); box-shadow: 0 0 18px rgba(78,255,160,.07); }
+.fs-card.neg { border-color: rgba(255,82,114,.28); box-shadow: 0 0 18px rgba(255,82,114,.06); }
+.fs-card.pos::before { background: linear-gradient(135deg, var(--green), var(--blue)); }
+.fs-card.neg::before { background: linear-gradient(135deg, var(--red), var(--purple)); }
+.fs-card:active { transform: scale(.985); }
+
+.fs-card-top { display: flex; align-items: center; justify-content: space-between; }
+.fs-sym { font-size: 15px; font-weight: 800; color: var(--text); letter-spacing: .3px; }
+.fs-tf {
+  font-size: 9px; font-weight: 700; letter-spacing: .5px; color: var(--text-muted);
+  background: rgba(123,132,176,.12); padding: 2px 7px; border-radius: 6px;
+}
+.fs-pnl { font-size: 26px; font-weight: 800; margin: 8px 0 6px; text-shadow: 0 0 16px currentColor; line-height: 1; }
+.fs-meta { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.fs-wr { font-size: 12px; font-weight: 700; }
+.fs-sets { font-size: 11px; color: var(--text-muted); }
+
+.fs-status {
+  font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+  text-align: center; padding: 6px 8px; border-radius: 8px;
+}
+.fs-status.long { color: var(--green); background: rgba(78,255,160,.10); border: 1px solid rgba(78,255,160,.22); }
+.fs-status.short { color: var(--purple); background: rgba(157,80,255,.10); border: 1px solid rgba(157,80,255,.22); }
+.fs-status.wait { color: var(--text-muted); background: rgba(123,132,176,.08); border: 1px solid rgba(123,132,176,.18); }
+
+.fs-hint {
+  margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: rgba(255,209,102,.06); border: 1px solid rgba(255,209,102,.2);
+  font-size: 12px; color: var(--text-muted); line-height: 1.5;
+}
+.fs-hint b { color: var(--text); }

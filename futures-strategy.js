@@ -155,7 +155,7 @@
         ${SORTS.map(s => `<button class="fs-sortpill ${state.sort === s.key ? 'active' : ''}" data-sort="${s.key}">${s.label}</button>`).join('')}
       </div>
       <div class="fs-grid">${cards}</div>
-      ${state.demo ? `<div class="fs-hint">Это демо-набор для предпросмотра дизайна. Запусти <b>backtest_v29.py</b> и залей результат во вкладку <b>FUT_STRAT</b> — карточки заполнятся реальными цифрами.</div>` : ''}`;
+      ${state.demo ? `<div class="fs-hint">Это демо-набор для предпросмотра дизайна. Данная информация не должна использоваться для реальной торговли</div>` : ''}`;
 
     host.querySelectorAll('[data-sort]').forEach(b =>
       b.addEventListener('click', () => { state.sort = b.dataset.sort; render(host, state); }));

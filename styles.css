@@ -1626,3 +1626,94 @@ html, body {
   font-size: 12px; color: var(--text-muted); line-height: 1.5;
 }
 .fs-hint b { color: var(--text); }
+
+/* ===== FUTURES STRATEGY · избранное / ползунок / фильтры ===== */
+.fs-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.fs-guidebtn {
+  flex-shrink: 0; background: rgba(255,209,102,.08); border: 1px solid rgba(255,209,102,.4);
+  color: var(--yellow); font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; box-shadow: 0 0 12px rgba(255,209,102,.18); transition: all .15s;
+}
+.fs-guidebtn:active { transform: scale(.96); }
+
+.fs-fav {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  background: none; border: none; color: var(--text-muted); font-size: 16px; line-height: 1;
+  cursor: pointer; padding: 2px; transition: transform .12s, color .15s;
+}
+.fs-fav.on { color: var(--yellow); text-shadow: 0 0 10px rgba(255,209,102,.6); }
+.fs-fav:active { transform: scale(1.25); }
+
+.fs-favbtn {
+  background: var(--bg3); border: 1px solid var(--card-border); color: var(--text-muted);
+  font-size: 11px; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: all .15s;
+}
+.fs-favbtn.active { color: var(--yellow); border-color: rgba(255,209,102,.45); background: rgba(255,209,102,.08); box-shadow: 0 0 12px rgba(255,209,102,.18); }
+.fs-favbtn.qual.active { color: var(--green); border-color: rgba(78,255,160,.45); background: rgba(78,255,160,.08); box-shadow: 0 0 12px rgba(78,255,160,.16); }
+
+.fs-sliderbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.fs-slider { -webkit-appearance: none; appearance: none; flex: 1; height: 4px; border-radius: 4px;
+  background: linear-gradient(90deg, rgba(102,163,255,.5), rgba(157,80,255,.5)); outline: none; }
+.fs-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; cursor: pointer; box-shadow: 0 0 10px rgba(102,163,255,.8); }
+.fs-slider::-moz-range-thumb { width: 16px; height: 16px; border: none; border-radius: 50%; background: #fff; cursor: pointer; box-shadow: 0 0 10px rgba(102,163,255,.8); }
+.fs-sliderval { font-size: 12px; font-weight: 700; color: var(--blue); white-space: nowrap; min-width: 92px; text-align: right; }
+.fs-empty { grid-column: 1 / -1; text-align: center; color: var(--text-muted); font-size: 13px; padding: 24px 0; }
+
+/* ===== Детальный экран монеты ===== */
+.fd-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.fd-back {
+  width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px;
+  background: var(--bg3); border: 1px solid var(--card-border); color: var(--blue);
+  font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.fd-sym { font-size: 20px; font-weight: 800; color: var(--text); flex: 1; }
+.fd-tf { font-size: 10px; font-weight: 700; color: var(--text-muted); background: rgba(123,132,176,.14); padding: 2px 7px; border-radius: 6px; margin-left: 8px; vertical-align: middle; }
+
+.fd-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-bottom: 12px;
+  background: linear-gradient(135deg, rgba(102,163,255,.25), rgba(157,80,255,.25));
+  border-radius: var(--radius); overflow: hidden; padding: 1px; box-shadow: 0 0 24px rgba(102,163,255,.10);
+}
+.fd-stat { background: linear-gradient(160deg, #141930, #0e1120); padding: 12px 6px; text-align: center; }
+.fd-stat-val { font-size: 20px; font-weight: 800; text-shadow: 0 0 12px currentColor; color: var(--text); }
+.fd-stat-lbl { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-top: 2px; }
+
+.fd-pos { font-size: 12px; font-weight: 700; text-align: center; padding: 8px; border-radius: var(--radius-sm); margin-bottom: 12px; }
+.fd-pos.long { color: var(--green); background: rgba(78,255,160,.10); border: 1px solid rgba(78,255,160,.22); }
+.fd-pos.short { color: var(--purple); background: rgba(157,80,255,.10); border: 1px solid rgba(157,80,255,.22); }
+.fd-pos.wait { color: var(--text-muted); background: rgba(123,132,176,.08); border: 1px solid rgba(123,132,176,.18); }
+
+.fd-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 12px; -webkit-overflow-scrolling: touch; }
+.fd-chip { flex-shrink: 0; min-width: 84px; border-radius: 10px; padding: 8px 10px; background: var(--bg3); border: 1px solid var(--card-border); text-align: center; }
+.fd-chip-n { font-size: 9px; font-weight: 700; letter-spacing: .5px; color: var(--text-muted); margin-bottom: 3px; }
+.fd-chip-v { font-size: 14px; font-weight: 800; }
+.fd-chip.win { border-color: rgba(78,255,160,.3); } .fd-chip.win .fd-chip-v { color: var(--green); }
+.fd-chip.loss { border-color: rgba(255,82,114,.3); } .fd-chip.loss .fd-chip-v { color: var(--red); }
+.fd-chip.open { border-color: rgba(102,163,255,.4); box-shadow: 0 0 12px rgba(102,163,255,.15); } .fd-chip.open .fd-chip-v { color: var(--blue); }
+
+.fd-chartwrap { position: relative; border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 8px; }
+.fd-chart { width: 100%; height: 360px; }
+.fd-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  font-size: 13px; color: var(--text-muted); background: rgba(10,11,20,.55); backdrop-filter: blur(2px); }
+.fd-overlay.err { color: var(--red); }
+.fd-legend { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
+.fd-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+.fd-note { margin-left: auto; opacity: .7; font-style: italic; }
+
+/* ===== Гайд / обучение ===== */
+.fg-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(6,7,14,.82); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center; padding: 24px; }
+.fg-card { width: 100%; max-width: 440px; background: linear-gradient(160deg, #161b33, #0e1120);
+  border: 1px solid rgba(255,209,102,.4); border-radius: var(--radius); padding: 20px;
+  box-shadow: 0 0 40px rgba(255,209,102,.12), 0 20px 60px rgba(0,0,0,.5); }
+.fg-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.fg-title { font-size: 17px; font-weight: 800; color: var(--yellow); }
+.fg-x { background: none; border: none; color: var(--text-muted); font-size: 22px; cursor: pointer; line-height: 1; }
+.fg-body { font-size: 14px; line-height: 1.55; color: var(--text); margin-bottom: 18px; }
+.fg-foot { display: flex; align-items: center; justify-content: space-between; }
+.fg-step { font-size: 12px; color: var(--text-muted); letter-spacing: 1px; }
+.fg-btns { display: flex; gap: 8px; }
+.fg-btn { font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; border: none; }
+.fg-btn.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--card-border); }
+.fg-btn.pri { background: var(--gradient); color: #fff; box-shadow: 0 0 16px rgba(157,80,255,.35); }

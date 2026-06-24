@@ -176,7 +176,8 @@
     if (!candles || candles.length < 60) throw new Error('thin');
     const sigs = window.LiveChart.computeSignalList(candles, 15);
     const sim = simulateJS(candles, sigs); const p = sim.position;
-    const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg };
+    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4)]);
+    const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, sets_json: sj };
     cacheSet(sym, s);
     return Object.assign({ symbol: sym, tf: '15m', computed: true }, s);
   }

@@ -1684,14 +1684,14 @@ html, body {
 .fd-pos.short { color: var(--purple); background: rgba(157,80,255,.10); border: 1px solid rgba(157,80,255,.22); }
 .fd-pos.wait { color: var(--text-muted); background: rgba(123,132,176,.08); border: 1px solid rgba(123,132,176,.18); }
 
-.fd-chips { display: flex; gap: 9px; overflow-x: auto; padding: 2px 2px 8px; margin-bottom: 12px; -webkit-overflow-scrolling: touch; }
+.fd-chips { display: flex; gap: 7px; overflow-x: auto; padding: 2px 2px 8px; margin-bottom: 12px; -webkit-overflow-scrolling: touch; }
 .fd-chip {
-  position: relative; flex-shrink: 0; min-width: 96px; border-radius: 12px; padding: 11px 12px 10px;
+  position: relative; flex-shrink: 0; min-width: 74px; border-radius: 10px; padding: 7px 9px 6px;
   background: linear-gradient(160deg, #161b33, #0f1322); border: 1px solid var(--card-border); text-align: center;
 }
-.fd-chip::before { content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 2px; border-radius: 2px; opacity: .8; }
-.fd-chip-n { font-size: 9px; font-weight: 800; letter-spacing: .6px; color: var(--text-muted); margin-bottom: 5px; }
-.fd-chip-v { font-size: 16px; font-weight: 800; line-height: 1; }
+.fd-chip::before { content: ''; position: absolute; top: 0; left: 9px; right: 9px; height: 2px; border-radius: 2px; opacity: .8; }
+.fd-chip-n { font-size: 8px; font-weight: 800; letter-spacing: .4px; color: var(--text-muted); margin-bottom: 4px; }
+.fd-chip-v { font-size: 13px; font-weight: 800; line-height: 1; }
 .fd-chip.win { border-color: rgba(78,255,160,.32); box-shadow: 0 0 14px rgba(78,255,160,.07); }
 .fd-chip.win::before { background: var(--green); }
 .fd-chip.win .fd-chip-v { color: var(--green); text-shadow: 0 0 10px rgba(78,255,160,.4); }
@@ -1735,3 +1735,24 @@ html, body {
 .fd-chip.sel { transform: translateY(-2px); }
 .fd-chip.win.sel { box-shadow: 0 0 0 1px var(--green), 0 0 18px rgba(78,255,160,.3); }
 .fd-chip.loss.sel { box-shadow: 0 0 0 1px var(--red), 0 0 18px rgba(255,82,114,.28); }
+
+/* ===== Детальный экран: компактная шапка с выбором актива ===== */
+.fd-head { position: relative; background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; }
+.fd-head-row { display: flex; align-items: center; gap: 10px; }
+.fd-name { background: none; border: none; color: var(--text); font-size: 20px; font-weight: 800; display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 6px; border-radius: 8px; }
+.fd-name:active { background: rgba(102,163,255,.1); }
+.fd-caret { font-size: 12px; color: var(--text-muted); transition: transform .2s; }
+.fd-caret.open { transform: rotate(180deg); }
+.fd-head-row .fs-fav { margin-left: auto; position: static; }
+.fd-head-stats { display: flex; align-items: center; gap: 9px; margin-top: 9px; font-size: 13px; color: var(--text-muted); }
+.fd-head-stats b { font-size: 15px; font-weight: 800; color: var(--text); }
+.fd-dot { opacity: .45; }
+
+/* выпадающий список активов */
+.fd-pick-backdrop { position: fixed; inset: 0; z-index: 40; }
+.fd-picker { position: absolute; top: calc(100% - 2px); left: 12px; right: 12px; max-height: 320px; overflow-y: auto; z-index: 50;
+  background: #11142a; border: 1px solid var(--card-border); border-radius: var(--radius-sm); box-shadow: 0 14px 44px rgba(0,0,0,.55); padding: 6px; -webkit-overflow-scrolling: touch; }
+.fd-pick-item { display: flex; justify-content: space-between; align-items: center; width: 100%; background: none; border: none;
+  color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.fd-pick-item:active { background: rgba(102,163,255,.12); }
+.fd-pick-item.cur { background: rgba(102,163,255,.14); color: var(--blue); }

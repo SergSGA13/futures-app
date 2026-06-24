@@ -1795,10 +1795,17 @@ html, body {
 
 /* ===== Переключатель прогонов + новые метрики ===== */
 .fs-runbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 12px; }
-.fs-runlbl { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-.fs-runpill { padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; cursor: pointer;
-  background: rgba(157,80,255,.06); border: 1px solid rgba(157,80,255,.25); color: var(--text-muted); }
+.fs-runlbl { font-size: 12px; color: var(--text-muted); font-weight: 600; margin-right: 2px; flex-shrink: 0; }
+.fs-runpill {
+  -webkit-appearance: none; appearance: none; outline: none;
+  font-family: inherit; line-height: 1.2; white-space: nowrap;
+  margin: 3px 4px 3px 0;
+  padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; cursor: pointer;
+  background: rgba(157,80,255,.06); border: 1px solid rgba(157,80,255,.25); color: var(--text-muted);
+  transition: all .15s;
+}
 .fs-runpill.active { background: linear-gradient(135deg, var(--blue), var(--purple)); color: #fff; border-color: transparent; box-shadow: 0 0 16px rgba(157,80,255,.35); }
+.fs-runpill:last-child { margin-right: 0; }
 .fs-runerr { margin-top: 14px; padding: 18px 16px; border: 1px dashed rgba(255,210,102,.4); border-radius: var(--radius);
   background: rgba(255,210,102,.05); color: var(--text); font-size: 13px; line-height: 1.5; }
 .fs-runerr code { display: inline-block; margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: rgba(102,163,255,.12); color: var(--blue); font-size: 12px; }
@@ -1807,5 +1814,7 @@ html, body {
 .fs-pnl-dep { font-size: 12px; color: var(--text-muted); margin: 2px 0 8px; }
 .fs-pnl-dep b { color: var(--text); font-weight: 800; font-size: 13px; }
 
-.fd-sub2 { display: flex; gap: 16px; justify-content: center; margin: -4px 0 12px; font-size: 12px; color: var(--text-muted); }
-.fd-sub2 b { font-weight: 800; }
+.fd-sub2 { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; margin: -4px 0 12px; font-size: 12px; color: var(--text-muted); }
+.fd-sub2 span { display: inline-flex; align-items: center; gap: 5px; margin: 0 8px; white-space: nowrap; }
+.fd-sub2 span:not(:last-child)::after { content: '•'; margin-left: 8px; color: var(--card-border); font-weight: 700; }
+.fd-sub2 b { font-weight: 800; margin-left: 2px; }

@@ -49,7 +49,7 @@
     { t: 'Избранное ★', b: 'Звезда на карточке добавляет монету в избранное (хранится на устройстве). Кнопка «★ Избранное» в панели оставляет на экране только избранные.' },
     { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает заведомо плохие сетапы: мало статистики (менее 5 сделок), отрицательный PNL или WIN% ниже безубытка (55.6%).' },
     { t: 'Детальный экран', b: 'Тап по карточке открывает монету: статы (сделки / WIN% / PNL), лента истории сделок (#1 WIN +18.7% …), текущая позиция и живой график.' },
-    { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 10% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 10%. TP/STOP в этой модели нет. Данные обновляет backtest_v29.py.' },
+    { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 25% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 25%. TP/STOP в этой модели нет.' },
   ];
   function closeGuide() {
     const ov = document.getElementById('fgOverlay'); if (ov) ov.remove();
@@ -238,7 +238,7 @@
       const i = s.i, price = close[i];
       if (!pos) { openPos(s.side, i); continue; }
       if (pos.side === s.side) { if (pos.lots.length < SIM.cap) { const note = lotNote(), qty = note / price; eq -= note * SIM.fee; setPnl -= note * SIM.fee; pos.lots.push({ p: price, q: qty }); } continue; }
-      // переворот: закрыть всё, зафиксировать сет, открыть реверс на 10%
+      // переворот: закрыть всё, зафиксировать сет, открыть реверс на 25%
       let realized = 0, closeNote = 0, totQ = 0, totCost = 0;
       for (const { p, q } of pos.lots) { realized += pos.side === 'long' ? q * (price - p) : q * (p - price); closeNote += q * price; totQ += q; totCost += p * q; }
       const cfee = closeNote * SIM.fee; eq += realized - cfee; setPnl += realized - cfee;
@@ -269,6 +269,8 @@
 
   // ════════════════════════ ЛИДЕРБОРД ════════════════════════
   const SORTS = [{ key: 'pnl_pct', label: 'PNL', unit: '%' }, { key: 'winrate', label: 'WIN%', unit: '%' }, { key: 'signals', label: 'Сигналы', unit: '' }];
+  // Сортировка жёстко зафиксирована на PNL — панель выбора скрыта
+  const FIXED_SORT = 'pnl_pct';
 
   function statusInfo(r) {
     if (r.pos_side === 'long') return { txt: 'В ЛОНГЕ ×' + r.pos_lots, cls: 'long' };
@@ -331,26 +333,40 @@
     return { mode: 'coins', labels, cum, per, total: acc };
   }
   function pnlSvg(d) {
-    const W = 340, H = 118, pad = 5, n = d.cum.length;
+    const W = 340, H = 118, pad = 5, padB = 20, n = d.cum.length;
     if (n < 2) return '<div class="fs-pnl-empty">мало данных для кривой</div>';
     const min = Math.min(...d.cum, 0), max = Math.max(...d.cum, 0), span = (max - min) || 1;
-    const X = i => pad + i / (n - 1) * (W - 2 * pad), Y = v => pad + (1 - (v - min) / span) * (H - 2 * pad);
+    const X = i => pad + i / (n - 1) * (W - 2 * pad), Y = v => pad + (1 - (v - min) / span) * (H - padB - pad);
     const up = d.total >= 0, col = up ? '#4EFFA0' : '#FF5272', gid = 'pg' + (up ? 'g' : 'r');
     const line = d.cum.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
-    const area = line + ' L' + X(n - 1).toFixed(1) + ' ' + (H - pad) + ' L' + X(0).toFixed(1) + ' ' + (H - pad) + ' Z';
+    const area = line + ' L' + X(n - 1).toFixed(1) + ' ' + (H - padB) + ' L' + X(0).toFixed(1) + ' ' + (H - padB) + ' Z';
     const zY = (min < 0 && max > 0) ? Y(0).toFixed(1) : null;
+    // Подписи дат на нижней оси (если есть метки)
+    let dateAxis = '';
+    if (d.labels && d.labels.length >= 2) {
+      const step = Math.max(1, Math.floor(n / 6));
+      const ticks = [];
+      for (let i = 0; i < n; i += step) ticks.push(i);
+      if (ticks[ticks.length - 1] !== n - 1) ticks.push(n - 1);
+      dateAxis = ticks.map(i => {
+        const lbl = d.labels[i] || '';
+        const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        return `<text x="${X(i).toFixed(1)}" y="${H - 3}" text-anchor="${anchor}" font-size="8" fill="rgba(123,132,176,0.7)" font-family="sans-serif">${lbl}</text>`;
+      }).join('');
+    }
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="fs-pnl-svg">
       <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity="0.32"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
       ${zY ? `<line x1="${pad}" y1="${zY}" x2="${W - pad}" y2="${zY}" stroke="rgba(123,132,176,0.45)" stroke-dasharray="3 3" stroke-width="1" vector-effect="non-scaling-stroke"/>` : ''}
       <path d="${area}" fill="url(#${gid})"/>
       <path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      ${dateAxis}
     </svg>`;
   }
   function pnlCardInner(S, d, sortDef, filtered) {
     const isTime = d.mode === 'time';
-    const title = isTime ? 'Кривая портфеля (равный вес)' : 'Накопленный PNL по парам';
+    const title = 'Накопленный PNL по парам';
     const totTxt = d.cum.length ? fmtPct(d.total) : '—';
-    const xrow = isTime ? `<div class="fs-pnl-x"><span>${d.dateFrom}</span><span>${d.dateTo}</span></div>` : '';
+    const xrow = (isTime && d.dateFrom) ? `<div class="fs-pnl-x"><span>${d.dateFrom}</span><span>${d.dateTo}</span></div>` : '';
     let metrics = '';
     if (isTime) {
       const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
@@ -368,8 +384,8 @@
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
     const base = isTime
-      ? `Кривая - средний результат на пару за 90 дней. Вход 10% депозита на сигнал.`
-      : `сумма по ${d.labels.length} парам в порядке сортировки · ${sortDef.label}`;
+      ? `Кривая - средний результат на пару за 90 дней. Вход 25% депозита на сигнал.`
+      : `накоплено по ${d.labels.length} парам · 90 дней · 15m`;
     const dep = isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
     return `
       <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>
@@ -393,6 +409,7 @@
   }
 
   function renderList(host, S) {
+    S.sort = FIXED_SORT; // сортировка вшита
     const sortDef = SORTS.find(s => s.key === S.sort);
     const done = S.rows.filter(r => r.computed && !r.error);
     const rng = metricRange(done.length ? done : S.rows, S.sort);
@@ -419,7 +436,7 @@
     };
     if (S.runError) {
       host.innerHTML = `
-        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub">Бэктест индикатора 🟣 v.29.1 · 15m · 90 дней</div></div><button class="fs-guidebtn" data-guide>🎓 Гайд</button></div>
+        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · 15m · 90 дней</div></div><button class="fs-guidebtn" data-guide>🎓 Гайд</button></div>
         ${runPills}
         <div class="fs-runerr">Прогон не найден: вкладка <b>${S.runError}</b> пуста или отсутствует.<br><br>Сделай бэктест с нужными правилами и вставь результат в эту вкладку. В терминале:<br><code>python backtest_v29.py ${S.run}</code></div>`;
       wireCommon();
@@ -432,7 +449,7 @@
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub">Бэктест индикатора 🟣 v.29.1 · 15m · 90 дней${srcNote}${progNote}</div>
+          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · 15m · 90 дней${srcNote}${progNote}</div>
         </div>
         <button class="fs-guidebtn" data-guide>🎓 Гайд</button>
       </div>
@@ -445,12 +462,10 @@
       </div>
       <div class="fs-pnlcard" id="fsPnlCard">${pnlCardInner(S, series, sortDef, filtered)}</div>
       <div class="fs-sortbar">
-        <span class="fs-sortlbl">Сортировка:</span>
-        ${SORTS.map(s => `<button class="fs-sortpill ${S.sort === s.key ? 'active' : ''}" data-sort="${s.key}">${s.label}</button>`).join('')}
         <button class="fs-favbtn ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
         <button class="fs-favbtn qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
       </div>
-      <div class="fs-sliderbar">
+      <div class="fs-sliderbar" style="display:none">
         <input type="range" class="fs-slider" min="${rng.min}" max="${rng.max}" value="${S.sliderVal}" step="1">
         <span class="fs-sliderval">${sortDef.label} ≥ ${S.sliderVal}${sortDef.unit}</span>
       </div>
@@ -458,7 +473,6 @@
 
     wirePnlCard(host, S);
     host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
-    host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
     host.querySelector('[data-guide]').addEventListener('click', () => renderGuide(0));
@@ -549,7 +563,7 @@
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
       <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
-      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u041d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0445\u043e\u0434\u043e\u0432 \u0432 \u043e\u0434\u043d\u0443 \u0441\u0442\u043e\u0440\u043e\u043d\u0443 - \u044d\u0442\u043e \u043e\u0434\u043d\u0430 \u0441\u0434\u0435\u043b\u043a\u0430. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
+      <div class="fs-hint">Модель v.29.1: вход 25% депо на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 25%. Несколько входов в одну сторону - это одна сделка. Уровни на графике - фактические заливки усреднения (TP/STOP в этой модели нет).</div>`;
     wireBar();
 
     const el = host.querySelector('#fdChart');
@@ -623,7 +637,7 @@
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
-    const S = { rows: [], run: 'base', source: 'sheet', sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    const S = { rows: [], run: 'base', source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
     state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
     await loadRun(host, S, 'base');

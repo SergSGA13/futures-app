@@ -4,7 +4,7 @@
      • избранное (♥, как в Лаборатории) + фильтр по избранному
      • сортировка PNL / WIN% / Сигналы + ползунок-фильтр по значению
      • тап по карточке → детальный экран: график с сигналами, набранные
-       позиции (входы усреднения + средняя), история сетов, статус
+       позиции (входы усреднения + средняя), история сделок, статус
    Данные: вкладка FUT_STRAT (backtest_v29.py). Нет вкладки → демо-данные.
    ========================================================================= */
 (function () {
@@ -43,12 +43,12 @@
   // ---- Гайд (обучение) ----------------------------------------------------
   const GUIDE = [
     { t: 'Лидерборд стратегий', b: 'Здесь - результаты бэктеста индикатора v.29.1 по фьючерсам Binance на 15m. Каждая карточка = одна монета со своей статистикой отработки сигналов.' },
-    { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сетов (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - статус: в лонге/шорте с числом долей или «ждёт входа».' },
+    { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сделок (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - статус: в лонге/шорте с числом долей или «ждёт входа».' },
     { t: 'Сортировка', b: 'Переключай показатель сортировки: PNL, WIN% или число сигналов. Список мгновенно пересортируется по убыванию выбранного значения.' },
     { t: 'Ползунок-фильтр', b: 'Ползунок под сортировкой отсекает карточки, у которых выбранный показатель ниже его значения. Быстрый способ оставить только сильные по PNL или WIN%.' },
     { t: 'Избранное ★', b: 'Звезда на карточке добавляет монету в избранное (хранится на устройстве). Кнопка «★ Избранное» в панели оставляет на экране только избранные.' },
-    { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает заведомо плохие сетапы: мало статистики (менее 5 сетов), отрицательный PNL или WIN% ниже безубытка (55.6%).' },
-    { t: 'Детальный экран', b: 'Тап по карточке открывает монету: статы (сеты / WIN% / PNL), лента истории сетов (#1 WIN +18.7% …), текущая позиция и живой график.' },
+    { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает заведомо плохие сетапы: мало статистики (менее 5 сделок), отрицательный PNL или WIN% ниже безубытка (55.6%).' },
+    { t: 'Детальный экран', b: 'Тап по карточке открывает монету: статы (сделки / WIN% / PNL), лента истории сделок (#1 WIN +18.7% …), текущая позиция и живой график.' },
     { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 10% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 10%. TP/STOP в этой модели нет. Данные обновляет backtest_v29.py.' },
   ];
   function closeGuide() {
@@ -284,11 +284,38 @@
     const wrTxt = r.winrate == null ? '-' : (r.sets < MIN_SETS ? '~' + Math.round(r.winrate) : Math.round(r.winrate)) + '%';
     return `${favB}${top}
       <div class="fs-pnl" style="color:${pnlHex(r.pnl_pct)}">${fmtPct(r.pnl_pct)}</div>
-      <div class="fs-meta"><span class="fs-wr" style="color:${wrHex(r.winrate, r.sets)}">WIN ${wrTxt}</span><span class="fs-sets">${r.sets} сетов</span></div>
+      <div class="fs-meta"><span class="fs-wr" style="color:${wrHex(r.winrate, r.sets)}">WIN ${wrTxt}</span><span class="fs-sets">${r.sets} сделок</span></div>
       <div class="fs-status ${st.cls}">${st.txt}</div>`;
   }
   function updateCard(host, r) { const el = host.querySelector(`.fs-card[data-sym="${r.symbol}"]`); if (el) { el.className = cardOuterClass(r); el.innerHTML = cardInner(r); } }
   function updateProgress(host, S) { const p = host.querySelector('#fsProg'); if (p) p.textContent = S.computing ? `считаю ${S.progress}/${S.total}` : ''; }
+
+  // накопленный PNL по показанным парам (в порядке сортировки) — для главной
+  function pnlSeries(rows) {
+    const r = rows.filter(x => x.computed && !x.error);
+    let acc = 0; const labels = [], cum = [], per = [];
+    r.forEach(x => { acc += (x.pnl_pct || 0); labels.push(x.symbol.replace(/USDT$/, '')); cum.push(+acc.toFixed(2)); per.push(x.pnl_pct || 0); });
+    return { labels, cum, per, total: acc };
+  }
+  function drawPnlChart(host, S, d) {
+    if (S._chart) { try { S._chart.destroy(); } catch (e) {} S._chart = null; }
+    const cv = host.querySelector('#fsPnlCanvas');
+    if (!cv || typeof window.Chart === 'undefined' || !d.cum.length) return;
+    const up = d.total >= 0, ctx = cv.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, cv.clientHeight || 130);
+    grad.addColorStop(0, up ? 'rgba(78,255,160,0.30)' : 'rgba(255,82,114,0.30)');
+    grad.addColorStop(1, 'rgba(10,11,20,0)');
+    S._chart = new window.Chart(ctx, {
+      type: 'line',
+      data: { labels: d.labels, datasets: [{ data: d.cum, borderColor: up ? COL.green : COL.red, backgroundColor: grad, borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0, pointHoverRadius: 4 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { title: it => it[0].label, label: it => `накоплено ${fmtPct(d.cum[it.dataIndex])} · пара ${fmtPct(d.per[it.dataIndex])}` } } },
+        scales: { x: { display: false, grid: { display: false } }, y: { position: 'right', grid: { color: 'rgba(102,163,255,0.08)' }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 4, callback: v => v + '%' } } },
+        interaction: { mode: 'index', intersect: false },
+      },
+    });
+  }
 
   function renderList(host, S) {
     const sortDef = SORTS.find(s => s.key === S.sort);
@@ -303,6 +330,8 @@
     rows.sort((a, b) => { if (a.computed !== b.computed) return a.computed ? -1 : 1; return (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]); });
 
     const all = S.rows, pairs = all.length;
+    const series = pnlSeries(rows);
+    const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
@@ -320,9 +349,17 @@
       </div>
       <div class="fs-stats">
         <div class="fs-stat"><div class="fs-stat-val">${pairs}</div><div class="fs-stat-lbl">пар</div></div>
-        <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сетов</div></div>
+        <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сделок</div></div>
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.green}">${inTrade}</div><div class="fs-stat-lbl">в сделке</div></div>
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.yellow}">${done.length - inTrade}</div><div class="fs-stat-lbl">ждут</div></div>
+      </div>
+      <div class="fs-pnlcard">
+        <div class="fs-pnlcard-top">
+          <span class="fs-pnlcard-t">Накопленный PNL${filtered ? ' (по фильтру)' : ''}</span>
+          <span class="fs-pnlcard-v" style="color:${pnlHex(series.total)}">${series.cum.length ? fmtPct(series.total) : '—'}</span>
+        </div>
+        <div class="fs-pnlcard-wrap"><canvas id="fsPnlCanvas"></canvas></div>
+        <div class="fs-pnlcard-cap">сумма по ${series.labels.length} парам в порядке сортировки · ${sortDef.label}</div>
       </div>
       <div class="fs-sortbar">
         <span class="fs-sortlbl">Сортировка:</span>
@@ -336,6 +373,7 @@
       </div>
       <div class="fs-grid">${cards}</div>`;
 
+    drawPnlChart(host, S, series);
     host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
@@ -412,21 +450,21 @@
     const prec = precisionFor(candles[candles.length - 1].close);
     const avgTxt = p.avg ? ` \u00b7 \u0441\u0440\u0435\u0434\u043d\u044f\u044f ${p.avg.toFixed(prec.precision)}` : '';
 
-    const view = sim.sets.map((s, i) => ({ i, s })).slice(-12).reverse();
+    const view = sim.sets.map((s, i) => ({ i, s })).reverse();
     const chips = view.map(({ i, s }) =>
       `<div class="fd-chip ${s.pnl >= 0 ? 'win' : 'loss'}" data-set="${i}"><div class="fd-chip-n">#${i + 1} ${s.pnl >= 0 ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s.pnl)}</div></div>`).join('');
     const isOpen = p.side === 'long' || p.side === 'short';
     const openChip = isOpen
       ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
 
-    const head = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0415\u0422\u041e\u0412</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div><span class="fd-tf">15m</span>${favBtn()}</div>`;
+    const head = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div><span class="fd-tf">15m</span>${favBtn()}</div>`;
 
     host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
-      <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0435\u0442\u043e\u0432</span>' : ''}</div>
+      <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
-      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0435\u0442\u0443 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
-      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u041d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0445\u043e\u0434\u043e\u0432 \u043e\u0434\u043d\u043e\u0433\u043e \u0441\u0435\u0442\u0430 - \u044d\u0442\u043e \u043e\u0434\u043d\u0430 \u0441\u0434\u0435\u043b\u043a\u0430. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
+      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
+      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u041d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0445\u043e\u0434\u043e\u0432 \u0432 \u043e\u0434\u043d\u0443 \u0441\u0442\u043e\u0440\u043e\u043d\u0443 - \u044d\u0442\u043e \u043e\u0434\u043d\u0430 \u0441\u0434\u0435\u043b\u043a\u0430. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
     wireBar();
 
     const el = host.querySelector('#fdChart');
@@ -457,7 +495,7 @@
       const s = sim.sets[+ds];
       const pad = Math.max(3600, (s.t1 - s.t0) * 0.35);
       const lines = [
-        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0435\u0442\u0430', width: 2, style: 2 },
+        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0434\u0435\u043b\u043a\u0438', width: 2, style: 2 },
         { price: s.exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: '\u0432\u044b\u0445\u043e\u0434', width: 2, style: 2 },
       ];
       window.LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, visibleRange: { from: s.t0 - pad, to: s.t1 + pad } });

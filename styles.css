@@ -1742,12 +1742,14 @@ html, body {
   border: 1px solid rgba(102,163,255,.28); border-radius: var(--radius); padding: 9px 11px; margin-bottom: 10px;
   box-shadow: 0 0 0 1px rgba(157,80,255,.05), 0 10px 30px rgba(102,163,255,.07), inset 0 1px 0 rgba(255,255,255,.04); }
 .fd-back { flex-shrink: 0; }
-.fd-name { background: none; border: none; color: var(--text); font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 5px; cursor: pointer;
-  padding: 5px 11px 5px 4px; border-right: 1px solid rgba(102,163,255,.18); white-space: nowrap; }
-.fd-name:active { color: var(--blue); }
-.fd-caret { font-size: 11px; color: var(--text-muted); transition: transform .2s; }
+.fd-name { flex-shrink: 1; min-width: 0; max-width: 140px; display: flex; align-items: center; gap: 6px; cursor: pointer;
+  background: rgba(102,163,255,.08); border: 1px solid rgba(102,163,255,.30); border-radius: 9px; padding: 6px 9px;
+  color: var(--text); font-size: 17px; font-weight: 800; }
+.fd-name:active { background: rgba(102,163,255,.16); }
+.fd-name-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fd-caret { flex-shrink: 0; font-size: 13px; color: var(--blue); transition: transform .2s; }
 .fd-caret.open { transform: rotate(180deg); }
-.fd-hstats { display: flex; align-items: center; gap: 13px; padding: 5px 11px; border: 1px solid rgba(102,163,255,.16); border-radius: 10px; background: rgba(102,163,255,.05); }
+.fd-hstats { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 5px 11px; border: 1px solid rgba(102,163,255,.16); border-radius: 10px; background: rgba(102,163,255,.05); }
 .fd-hstat { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; }
 .fd-hstat b { font-size: 15px; font-weight: 800; color: var(--text); text-shadow: 0 0 10px rgba(255,255,255,.06); }
 .fd-hstat span { font-size: 8px; letter-spacing: .5px; color: var(--text-muted); margin-top: 2px; }

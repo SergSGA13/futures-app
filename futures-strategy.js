@@ -76,68 +76,10 @@
     ov.querySelector('[data-next]').addEventListener('click', () => { idx < n - 1 ? renderGuide(idx + 1) : closeGuide(); });
   }
 
-  // синтетическая история сетов для демо (из числа wins/losses)
-  function synthSets(wins, losses) {
-    const out = [];
-    for (let i = 0; i < wins; i++) out.push(+(4 + (i * 37 % 16)).toFixed(1));
-    for (let i = 0; i < losses; i++) out.push(-(3 + (i * 53 % 9)).toFixed(1));
-    // псевдо-перемешивание для реалистичного порядка
-    return out.sort(() => ((Math.sin(out.length) + 1) % 1) - 0.5);
-  }
+  // ---- Список монет по умолчанию (если FUT_STRAT недоступен) --------------
+  const DEFAULT_SYMS = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','SUIUSDT','TONUSDT','NEARUSDT','APTUSDT','ARBUSDT','OPUSDT','INJUSDT','1000PEPEUSDT','WIFUSDT','TIAUSDT','SEIUSDT','LTCUSDT','ATOMUSDT','FILUSDT','HBARUSDT','RUNEUSDT','ORDIUSDT','JTOUSDT','ENAUSDT','FETUSDT','RENDERUSDT'];
+  const HIST_DAYS = 90;
 
-  // ---- ДЕМО-данные --------------------------------------------------------
-  const SAMPLE = [
-    ['SOLUSDT', 24, 11, 8, 3, 72.7, 58.4, 'long', 2], ['SUIUSDT', 19, 9, 6, 3, 66.7, 41.2, 'short', 1],
-    ['DOGEUSDT', 31, 14, 9, 5, 64.3, 33.7, '—', 0], ['AVAXUSDT', 17, 8, 5, 3, 62.5, 27.9, 'long', 3],
-    ['LINKUSDT', 22, 10, 6, 4, 60.0, 18.4, 'long', 1], ['TONUSDT', 15, 7, 4, 3, 57.1, 12.1, '—', 0],
-    ['BNBUSDT', 20, 9, 5, 4, 55.6, 9.8, 'short', 2], ['XRPUSDT', 26, 12, 6, 6, 50.0, 4.3, 'long', 4],
-    ['ETHUSDT', 18, 8, 4, 4, 50.0, -2.6, 'short', 1], ['BTCUSDT', 14, 6, 3, 3, 50.0, -5.1, '—', 0],
-    ['ADAUSDT', 23, 10, 5, 5, 50.0, -8.7, 'short', 3], ['NEARUSDT', 16, 7, 3, 4, 42.9, -14.2, 'long', 2],
-    ['APTUSDT', 21, 9, 4, 5, 44.4, -16.8, 'short', 5], ['ARBUSDT', 19, 8, 3, 5, 37.5, -22.4, 'short', 6],
-    ['OPUSDT', 13, 4, 3, 1, 75.0, 19.5, 'long', 1], ['INJUSDT', 11, 3, 2, 1, 66.7, 8.2, '—', 0],
-    ['PEPEUSDT', 28, 13, 8, 5, 61.5, 24.6, 'long', 2], ['WIFUSDT', 25, 11, 7, 4, 63.6, 31.0, 'short', 3],
-    ['TIAUSDT', 17, 7, 4, 3, 57.1, 6.4, '—', 0], ['SEIUSDT', 20, 9, 4, 5, 44.4, -11.3, 'short', 4],
-    ['LTCUSDT', 18, 8, 5, 3, 62.5, 22.1, 'long', 2], ['ATOMUSDT', 16, 7, 4, 3, 57.1, 7.9, '—', 0],
-    ['FILUSDT', 21, 9, 5, 4, 55.6, 11.2, 'short', 1], ['HBARUSDT', 19, 8, 5, 3, 62.5, 26.3, 'long', 2],
-    ['RUNEUSDT', 23, 10, 6, 4, 60.0, 17.5, 'short', 3], ['ORDIUSDT', 22, 10, 4, 6, 40.0, -19.6, 'long', 5],
-    ['JTOUSDT', 15, 6, 4, 2, 66.7, 14.8, '—', 0], ['ENAUSDT', 26, 12, 8, 4, 66.7, 38.9, 'long', 2],
-    ['FETUSDT', 20, 9, 5, 4, 55.6, 5.7, 'short', 2], ['RNDRUSDT', 18, 8, 5, 3, 62.5, 20.4, 'long', 1],
-  ].map(r => ({
-    symbol: r[0], tf: '15m', signals: r[1], sets: r[2], wins: r[3], losses: r[4],
-    winrate: r[5], pnl_pct: r[6], pos_side: r[7], pos_lots: r[8],
-    pos_avg: 0, lot_entries: [], sets_pct: synthSets(r[3], r[4]),
-  }));
-
-  // ---- Чтение FUT_STRAT ----------------------------------------------------
-  async function fetchRows() {
-    try {
-      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(TAB)}`;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('http');
-      const text = await r.text();
-      if (/setResponse/.test(text) || /^.{0,200}error/i.test(text)) throw new Error('no tab');
-      const grid = (window.parseCSV || localParse)(text);
-      if (!grid || grid.length < 2) throw new Error('empty');
-      const head = grid[0].map(h => String(h).trim().toLowerCase());
-      const ix = n => head.indexOf(n);
-      const jp = s => { try { return JSON.parse(s); } catch (e) { return []; } };
-      const rows = grid.slice(1).filter(r => r[ix('symbol')]).map(r => ({
-        symbol: r[ix('symbol')], tf: r[ix('tf')] || '15m',
-        signals: +r[ix('signals')] || 0, sets: +r[ix('sets')] || 0,
-        wins: +r[ix('wins')] || 0, losses: +r[ix('losses')] || 0,
-        winrate: (r[ix('winrate')] === '' || r[ix('winrate')] == null) ? null : +r[ix('winrate')],
-        pnl_pct: +r[ix('pnl_pct')] || 0,
-        pos_side: r[ix('pos_side')] || '—', pos_lots: +r[ix('pos_lots')] || 0,
-        pos_avg: ix('pos_avg') > -1 ? +r[ix('pos_avg')] || 0 : 0,
-        lot_entries: ix('lot_entries') > -1 ? jp(r[ix('lot_entries')]) : [],
-        sets_pct: ix('sets_json') > -1 ? jp(r[ix('sets_json')]) : [],
-      }));
-      if (!rows.length) throw new Error('empty');
-      return { rows, demo: false };
-    } catch (e) {
-      return { rows: SAMPLE.slice(), demo: true };
-    }
-  }
   function localParse(text) {
     return text.trim().split('\n').map(line => {
       const out = []; let c = '', q = false;
@@ -146,6 +88,71 @@
         else if (ch === '"') q = true; else if (ch === ',') { out.push(c); c = ''; } else c += ch; }
       out.push(c); return out;
     });
+  }
+  function normSym(s) {
+    s = String(s || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!s) return '';
+    if (!/USDT$/.test(s) && !/USD$/.test(s) && !/PERP$/.test(s)) s += 'USDT';
+    return s;
+  }
+  // ---- Чтение списка монет из FUT_STRAT (первый столбец или 'symbol') ------
+  async function readSymbols() {
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(TAB)}`;
+      const r = await fetch(url); if (!r.ok) throw 0;
+      const text = await r.text();
+      if (/setResponse/.test(text) || /error/i.test(text.slice(0, 200))) throw 0;
+      const grid = (window.parseCSV || localParse)(text);
+      if (!grid || !grid.length) throw 0;
+      const head = grid[0].map(h => String(h).trim().toLowerCase());
+      const named = ['symbol', 'ticker', 'pair', 'symbols', '\u0442\u0438\u043a\u0435\u0440', '\u043c\u043e\u043d\u0435\u0442\u0430'];
+      let col = head.findIndex(h => named.indexOf(h) !== -1);
+      let dataRows = grid.slice(1);
+      if (col === -1) {
+        col = 0;
+        const first = String(grid[0][0] || '').trim().toUpperCase();
+        if (/^[A-Z0-9]{2,15}$/.test(first) && named.indexOf(first.toLowerCase()) === -1) dataRows = grid;
+      }
+      const seen = {}, syms = [];
+      dataRows.forEach(rw => { const s = normSym(rw[col]); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
+      if (syms.length) return { symbols: syms, source: 'sheet' };
+      throw 0;
+    } catch (e) { return { symbols: DEFAULT_SYMS.slice(), source: 'default' }; }
+  }
+
+  // ---- Кэш расчётов (localStorage, TTL 6ч) --------------------------------
+  const CACHE_KEY = 'futStrat_cache_v1', CACHE_TTL = 6 * 3600 * 1000;
+  function cacheGet(sym) { try { const e = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}')[sym]; if (e && Date.now() - e.ts < CACHE_TTL) return e.s; } catch (e) {} return null; }
+  function cacheSet(sym, s) { try { const all = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}'); all[sym] = { ts: Date.now(), s }; localStorage.setItem(CACHE_KEY, JSON.stringify(all)); } catch (e) {} }
+
+  // ---- Троттлинг запросов к бирже (60 монет, лимиты Binance) ---------------
+  let PACE_MS = 0, _lastReq = 0;
+  async function rateGate() { const now = Date.now(), wait = Math.max(0, _lastReq + PACE_MS - now); _lastReq = now + wait; if (wait) await new Promise(r => setTimeout(r, wait)); }
+
+  // ---- Расчёт одной монеты в браузере (90 дней, тот же движок, что в детали)
+  function placeholderRow(sym) { return { symbol: sym, tf: '15m', computed: false, signals: 0, sets: 0, wins: 0, losses: 0, winrate: null, pnl_pct: 0, pos_side: '\u2014', pos_lots: 0, pos_avg: 0 }; }
+  async function computeRow(sym) {
+    const cached = cacheGet(sym);
+    if (cached) return Object.assign({ symbol: sym, tf: '15m', computed: true }, cached);
+    const candles = await fetchFutHistory(sym, HIST_DAYS);
+    if (!candles || candles.length < 60) throw new Error('thin');
+    const sigs = window.LiveChart.computeSignalList(candles, 15);
+    const sim = simulateJS(candles, sigs); const p = sim.position;
+    const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg };
+    cacheSet(sym, s);
+    return Object.assign({ symbol: sym, tf: '15m', computed: true }, s);
+  }
+  async function computeAll(symbols, onOne, concurrency) {
+    PACE_MS = 260; let idx = 0, done = 0;
+    async function worker() {
+      while (idx < symbols.length) {
+        const my = idx++, sym = symbols[my];
+        let row; try { row = await computeRow(sym); } catch (e) { row = Object.assign(placeholderRow(sym), { computed: true, error: true }); }
+        onOne(my, row, ++done, symbols.length);
+      }
+    }
+    const ws = []; for (let i = 0; i < concurrency; i++) ws.push(worker());
+    await Promise.all(ws); PACE_MS = 0;
   }
 
   // ---- Свечи фьючерсов: история за N дней (fapi -> bybit) ------------------
@@ -158,6 +165,7 @@
       try {
         const end = Date.now(); let start = end - days * 864e5; const out = [];
         for (let it = 0; it < 7 && start < end; it++) {
+          if (PACE_MS) await rateGate();
           const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=15m&limit=1500&startTime=${start}`;
           const r = await fetch(u); if (!r.ok) throw new Error('fapi ' + r.status);
           const chunk = await r.json(); if (!chunk.length) break;
@@ -231,39 +239,48 @@
     return { min: Math.floor(Math.min(...vals)), max: Math.ceil(Math.max(...vals)) };
   }
 
+  function cardOuterClass(r) { return 'fs-card ' + (!r.computed ? 'loading' : (r.error ? 'neg' : (r.pnl_pct >= 0 ? 'pos' : 'neg'))); }
+  function cardInner(r) {
+    const sym = r.symbol.replace(/USDT$/, ''), fav = favHas(r.symbol);
+    const favB = `<button class="fs-fav ${fav ? 'on' : ''}" data-fav="${r.symbol}" title="В избранное">${fav ? '★' : '☆'}</button>`;
+    const top = `<div class="fs-card-top"><span class="fs-sym">${sym}</span><span class="fs-tf">15m</span></div>`;
+    if (!r.computed) return `${favB}${top}<div class="fs-pnl fs-skel">•••</div><div class="fs-meta"><span class="fs-sets">считаю…</span></div>`;
+    if (r.error) return `${favB}${top}<div class="fs-meta" style="margin-top:16px"><span class="fs-sets">нет данных по паре</span></div>`;
+    const st = statusInfo(r);
+    const wrTxt = r.winrate == null ? '-' : (r.sets < MIN_SETS ? '~' + Math.round(r.winrate) : Math.round(r.winrate)) + '%';
+    return `${favB}${top}
+      <div class="fs-pnl" style="color:${pnlHex(r.pnl_pct)}">${fmtPct(r.pnl_pct)}</div>
+      <div class="fs-meta"><span class="fs-wr" style="color:${wrHex(r.winrate, r.sets)}">WIN ${wrTxt}</span><span class="fs-sets">${r.sets} сетов</span></div>
+      <div class="fs-status ${st.cls}">${st.txt}</div>`;
+  }
+  function updateCard(host, r) { const el = host.querySelector(`.fs-card[data-sym="${r.symbol}"]`); if (el) { el.className = cardOuterClass(r); el.innerHTML = cardInner(r); } }
+  function updateProgress(host, S) { const p = host.querySelector('#fsProg'); if (p) p.textContent = S.computing ? `считаю ${S.progress}/${S.total}` : ''; }
+
   function renderList(host, S) {
     const sortDef = SORTS.find(s => s.key === S.sort);
-    const rng = metricRange(S.rows, S.sort);
+    const done = S.rows.filter(r => r.computed && !r.error);
+    const rng = metricRange(done.length ? done : S.rows, S.sort);
     if (S.sliderVal == null || S.sliderResetFor !== S.sort) { S.sliderVal = rng.min; S.sliderResetFor = S.sort; }
 
     let rows = S.rows.slice();
     if (S.favOnly) rows = rows.filter(r => favHas(r.symbol));
-    if (S.hideWeak) rows = rows.filter(r => !isWeak(r));
-    rows = rows.filter(r => (r[S.sort] == null ? -1e9 : r[S.sort]) >= S.sliderVal);
-    rows.sort((a, b) => (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]));
+    if (S.hideWeak) rows = rows.filter(r => r.computed && !r.error && !isWeak(r));
+    rows = rows.filter(r => !r.computed || (r[S.sort] == null ? -1e9 : r[S.sort]) >= S.sliderVal);
+    rows.sort((a, b) => { if (a.computed !== b.computed) return a.computed ? -1 : 1; return (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]); });
 
-    const all = S.rows;
-    const pairs = all.length, totalSets = all.reduce((s, r) => s + r.sets, 0);
-    const inTrade = all.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
+    const all = S.rows, pairs = all.length;
+    const totalSets = done.reduce((s, r) => s + r.sets, 0);
+    const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
+    const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
+    const progNote = ` · <span class="fs-demo" id="fsProg">${S.computing ? `считаю ${S.progress}/${S.total}` : ''}</span>`;
 
-    const cards = rows.map(r => {
-      const sym = r.symbol.replace(/USDT$/, ''), st = statusInfo(r), fav = favHas(r.symbol);
-      const wrTxt = r.winrate == null ? '-' : (r.sets < MIN_SETS ? '~' + Math.round(r.winrate) : Math.round(r.winrate)) + '%';
-      return `
-        <div class="fs-card ${r.pnl_pct >= 0 ? 'pos' : 'neg'}" data-sym="${r.symbol}">
-          <button class="fs-fav ${fav ? 'on' : ''}" data-fav="${r.symbol}" title="В избранное">${fav ? '★' : '☆'}</button>
-          <div class="fs-card-top"><span class="fs-sym">${sym}</span><span class="fs-tf">${r.tf}</span></div>
-          <div class="fs-pnl" style="color:${pnlHex(r.pnl_pct)}">${fmtPct(r.pnl_pct)}</div>
-          <div class="fs-meta"><span class="fs-wr" style="color:${wrHex(r.winrate, r.sets)}">WIN ${wrTxt}</span><span class="fs-sets">${r.sets} сетов</span></div>
-          <div class="fs-status ${st.cls}">${st.txt}</div>
-        </div>`;
-    }).join('') || `<div class="fs-empty">Ничего не найдено под текущим фильтром</div>`;
+    const cards = rows.map(r => `<div class="${cardOuterClass(r)}" data-sym="${r.symbol}">${cardInner(r)}</div>`).join('') || `<div class="fs-empty">Ничего не найдено под текущим фильтром</div>`;
 
     host.innerHTML = `
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub">Бэктест индикатора 🟣 v.29.1 · 15m${S.demo ? ' · <span class="fs-demo">демо-данные</span>' : ''}</div>
+          <div class="fs-sub">Бэктест индикатора 🟣 v.29.1 · 15m · 90 дней${srcNote}${progNote}</div>
         </div>
         <button class="fs-guidebtn" data-guide>🎓 Гайд</button>
       </div>
@@ -271,7 +288,7 @@
         <div class="fs-stat"><div class="fs-stat-val">${pairs}</div><div class="fs-stat-lbl">пар</div></div>
         <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сетов</div></div>
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.green}">${inTrade}</div><div class="fs-stat-lbl">в сделке</div></div>
-        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.yellow}">${pairs - inTrade}</div><div class="fs-stat-lbl">ждут</div></div>
+        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.yellow}">${done.length - inTrade}</div><div class="fs-stat-lbl">ждут</div></div>
       </div>
       <div class="fs-sortbar">
         <span class="fs-sortlbl">Сортировка:</span>
@@ -280,11 +297,10 @@
         <button class="fs-favbtn qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
       </div>
       <div class="fs-sliderbar">
-        <input type="range" class="fs-slider" min="${rng.min}" max="${rng.max}" value="${S.sliderVal}" step="${sortDef.unit === '%' ? 1 : 1}">
+        <input type="range" class="fs-slider" min="${rng.min}" max="${rng.max}" value="${S.sliderVal}" step="1">
         <span class="fs-sliderval">${sortDef.label} ≥ ${S.sliderVal}${sortDef.unit}</span>
       </div>
-      <div class="fs-grid">${cards}</div>
-      ${S.demo ? `<div class="fs-hint">Демо-набор для предпросмотра. Не используйте информацию изложенную тут для торговли на реальные средства.</div>` : ''}`;
+      <div class="fs-grid">${cards}</div>`;
 
     host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
@@ -293,8 +309,13 @@
     const sl = host.querySelector('.fs-slider');
     sl.addEventListener('input', () => { S.sliderVal = +sl.value; host.querySelector('.fs-sliderval').textContent = `${sortDef.label} ≥ ${S.sliderVal}${sortDef.unit}`; });
     sl.addEventListener('change', () => { S.sliderVal = +sl.value; renderList(host, S); });
-    host.querySelectorAll('[data-fav]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); favToggle(b.dataset.fav); renderList(host, S); }));
-    host.querySelectorAll('.fs-card').forEach(c => c.addEventListener('click', () => openDetail(host, S, c.dataset.sym)));
+    const grid = host.querySelector('.fs-grid');
+    grid.addEventListener('click', e => {
+      const fb = e.target.closest('[data-fav]');
+      if (fb) { e.stopPropagation(); favToggle(fb.dataset.fav); if (S.favOnly) renderList(host, S); else updateCard(host, S.rows.find(x => x.symbol === fb.dataset.fav)); return; }
+      const card = e.target.closest('.fs-card');
+      if (card && card.dataset.sym) { const r = S.rows.find(x => x.symbol === card.dataset.sym); if (r && r.computed && !r.error) openDetail(host, S, card.dataset.sym); }
+    });
   }
 
   // ════════════════════════ ДЕТАЛЬНЫЙ ЭКРАН ════════════════════════
@@ -323,15 +344,15 @@
     if (!row) return;
     const sym = symbol.replace(/USDT$/, '');
     const favBtn = () => `<button class="fs-fav ${favHas(symbol) ? 'on' : ''}" data-fav="${symbol}" style="position:static">${favHas(symbol) ? '\u2605' : '\u2606'}</button>`;
-    const headRow = `<div class="fd-head-row"><button class="fd-back" data-back>\u2190</button><button class="fd-name" data-picker>${sym} <span class="fd-caret">\u25be</span></button><span class="fd-tf">15m</span>${favBtn()}</div>`;
-    const headLoading = `<div class="fd-head">${headRow}</div>`;
+    const nameBtn = `<button class="fd-name" data-picker>${sym} <span class="fd-caret">\u25be</span></button>`;
+    const headBare = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-tf">15m</span>${favBtn()}</div>`;
     const wireBar = () => {
       const bk = host.querySelector('[data-back]'); if (bk) bk.addEventListener('click', () => renderList(host, S));
       const fb = host.querySelector('[data-fav]'); if (fb) fb.addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '\u2605' : '\u2606'; });
       const pk = host.querySelector('[data-picker]'); if (pk) pk.addEventListener('click', () => togglePicker(host, S, symbol));
     };
 
-    host.innerHTML = headLoading + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
+    host.innerHTML = headBare + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
     wireBar();
 
     let candles, sim, markers;
@@ -342,7 +363,7 @@
       sim = simulateJS(candles, sigs);
       markers = window.LiveChart.computeSignals(candles, 15);
     } catch (err) {
-      host.innerHTML = headLoading + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
+      host.innerHTML = headBare + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
       wireBar();
       const rt = host.querySelector('[data-retry]'); if (rt) rt.addEventListener('click', () => openDetail(host, S, symbol));
       return;
@@ -364,9 +385,7 @@
     const openChip = isOpen
       ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
 
-    const head = `<div class="fd-head">${headRow}
-        <div class="fd-head-stats"><span><b>${sim.stats.sets}</b> \u0441\u0435\u0442\u043e\u0432</span><span class="fd-dot">\u00b7</span><span><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b> WR</span><span class="fd-dot">\u00b7</span><span><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b> PNL</span></div>
-      </div>`;
+    const head = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0415\u0422\u041e\u0412</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div><span class="fd-tf">15m</span>${favBtn()}</div>`;
 
     host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
@@ -416,15 +435,19 @@
   async function mount(containerId) {
     const host = document.getElementById(containerId);
     if (!host) return;
-    if (state[containerId]) return;
-    host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
-    const { rows, demo } = await fetchRows();
-    const S = { rows, demo, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false };
+    if (state[containerId]) { renderList(host, state[containerId]); return; }
+    host.innerHTML = '<div class="fs-loading">Загрузка списка монет…</div>';
+    const { symbols, source } = await readSymbols();
+    const S = { rows: symbols.map(placeholderRow), source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length };
     state[containerId] = S;
     renderList(host, S);
-    // авто-открытие гайда при первом заходе
     let seen = false; try { seen = localStorage.getItem('futStrat_guide_seen') === '1'; } catch (e) {}
     if (!seen) setTimeout(() => renderGuide(0), 400);
+    computeAll(symbols, (i, row, done, total) => {
+      S.rows[i] = row; S.progress = done;
+      updateCard(host, row); updateProgress(host, S);
+      if (done === total) { S.computing = false; renderList(host, S); }
+    }, 3);
   }
 
   window.FutStrat = { mount, simulateJS, fetchFutHistory };

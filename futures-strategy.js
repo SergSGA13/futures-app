@@ -104,11 +104,13 @@
     const g = k => { const i = ix(k); return i > -1 ? arr[i] : undefined; };
     const sym = normSym(g('symbol')); if (!sym) return null;
     const side = String(g('pos_side') || '').trim().toLowerCase();
+    let sj = []; try { const j = JSON.parse(g('sets_json')); if (Array.isArray(j)) sj = j; } catch (e) {}
     return {
       symbol: sym, tf: String(g('tf') || '15m').trim() || '15m', computed: true,
       signals: num(g('signals')) || 0, sets: num(g('sets')) || 0, wins: num(g('wins')) || 0, losses: num(g('losses')) || 0,
       winrate: num(g('winrate')), pnl_pct: num(g('pnl_pct')) || 0,
       pos_side: (side === 'long' || side === 'short') ? side : '\u2014', pos_lots: num(g('pos_lots')) || 0, pos_avg: num(g('pos_avg')) || 0,
+      sets_json: sj,
     };
   }
 
@@ -290,12 +292,29 @@
   function updateCard(host, r) { const el = host.querySelector(`.fs-card[data-sym="${r.symbol}"]`); if (el) { el.className = cardOuterClass(r); el.innerHTML = cardInner(r); } }
   function updateProgress(host, S) { const p = host.querySelector('#fsProg'); if (p) p.textContent = S.computing ? `считаю ${S.progress}/${S.total}` : ''; }
 
-  // накопленный PNL по показанным парам (в порядке сортировки) — для главной
+  function fmtDate(unixSec) { const d = new Date(unixSec * 1000); return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2); }
+  // кривая накопленного PNL: по датам (если в sets_json есть метки времени) либо по парам
   function pnlSeries(rows) {
     const r = rows.filter(x => x.computed && !x.error);
+    const haveTime = r.some(x => Array.isArray(x.sets_json) && x.sets_json.length && Array.isArray(x.sets_json[0]));
+    if (haveTime && r.length) {
+      const N = r.length, trades = [];
+      r.forEach(x => (x.sets_json || []).forEach(e => { if (Array.isArray(e) && e.length >= 2) trades.push([+e[0], +e[1]]); }));
+      if (trades.length) {
+        trades.sort((a, b) => a[0] - b[0]);
+        const day = 86400, t1 = trades[trades.length - 1][0];
+        const start = Math.floor(trades[0][0] / day) * day;
+        const labels = [], cum = []; let acc = 0, ti = 0;
+        for (let d = start; d <= t1 + day; d += day) {
+          while (ti < trades.length && trades[ti][0] < d + day) { acc += trades[ti][1]; ti++; }
+          labels.push(fmtDate(d)); cum.push(+(acc / N).toFixed(2));
+        }
+        return { mode: 'time', labels, cum, total: acc / N, coins: N, trades: trades.length };
+      }
+    }
     let acc = 0; const labels = [], cum = [], per = [];
     r.forEach(x => { acc += (x.pnl_pct || 0); labels.push(x.symbol.replace(/USDT$/, '')); cum.push(+acc.toFixed(2)); per.push(x.pnl_pct || 0); });
-    return { labels, cum, per, total: acc };
+    return { mode: 'coins', labels, cum, per, total: acc };
   }
   function drawPnlChart(host, S, d) {
     if (S._chart) { try { S._chart.destroy(); } catch (e) {} S._chart = null; }
@@ -305,13 +324,14 @@
     const grad = ctx.createLinearGradient(0, 0, 0, cv.clientHeight || 130);
     grad.addColorStop(0, up ? 'rgba(78,255,160,0.30)' : 'rgba(255,82,114,0.30)');
     grad.addColorStop(1, 'rgba(10,11,20,0)');
+    const isTime = d.mode === 'time';
     S._chart = new window.Chart(ctx, {
       type: 'line',
-      data: { labels: d.labels, datasets: [{ data: d.cum, borderColor: up ? COL.green : COL.red, backgroundColor: grad, borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0, pointHoverRadius: 4 }] },
+      data: { labels: d.labels, datasets: [{ data: d.cum, borderColor: up ? COL.green : COL.red, backgroundColor: grad, borderWidth: 2, fill: true, tension: isTime ? 0.15 : 0.25, pointRadius: 0, pointHoverRadius: 4 }] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { title: it => it[0].label, label: it => `накоплено ${fmtPct(d.cum[it.dataIndex])} · пара ${fmtPct(d.per[it.dataIndex])}` } } },
-        scales: { x: { display: false, grid: { display: false } }, y: { position: 'right', grid: { color: 'rgba(102,163,255,0.08)' }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 4, callback: v => v + '%' } } },
+        plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { title: it => it[0].label, label: it => isTime ? `портфель ${fmtPct(d.cum[it.dataIndex])}` : `накоплено ${fmtPct(d.cum[it.dataIndex])} · пара ${fmtPct(d.per[it.dataIndex])}` } } },
+        scales: { x: { display: isTime, grid: { display: false }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 6, autoSkip: true } }, y: { position: 'right', grid: { color: 'rgba(102,163,255,0.08)' }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 4, callback: v => v + '%' } } },
         interaction: { mode: 'index', intersect: false },
       },
     });
@@ -332,6 +352,10 @@
     const all = S.rows, pairs = all.length;
     const series = pnlSeries(rows);
     const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
+    const pnlTitle = series.mode === 'time' ? 'Кривая портфеля (равный вес)' : 'Накопленный PNL по парам';
+    const pnlCap = series.mode === 'time'
+      ? `портфель из ${series.coins} пар · среднее на пару · 90 дней`
+      : `сумма по ${series.labels.length} парам в порядке сортировки · ${sortDef.label}`;
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
@@ -355,11 +379,11 @@
       </div>
       <div class="fs-pnlcard">
         <div class="fs-pnlcard-top">
-          <span class="fs-pnlcard-t">Накопленный PNL${filtered ? ' (по фильтру)' : ''}</span>
+          <span class="fs-pnlcard-t">${pnlTitle}${filtered ? ' (по фильтру)' : ''}</span>
           <span class="fs-pnlcard-v" style="color:${pnlHex(series.total)}">${series.cum.length ? fmtPct(series.total) : '—'}</span>
         </div>
         <div class="fs-pnlcard-wrap"><canvas id="fsPnlCanvas"></canvas></div>
-        <div class="fs-pnlcard-cap">сумма по ${series.labels.length} парам в порядке сортировки · ${sortDef.label}</div>
+        <div class="fs-pnlcard-cap">${pnlCap}</div>
       </div>
       <div class="fs-sortbar">
         <span class="fs-sortlbl">Сортировка:</span>
@@ -416,7 +440,7 @@
     if (!row) return;
     const sym = symbol.replace(/USDT$/, '');
     const favBtn = () => `<button class="fs-fav ${favHas(symbol) ? 'on' : ''}" data-fav="${symbol}" style="position:static">${favHas(symbol) ? '\u2605' : '\u2606'}</button>`;
-    const nameBtn = `<button class="fd-name" data-picker>${sym} <span class="fd-caret">\u25be</span></button>`;
+    const nameBtn = `<button class="fd-name" data-picker><span class="fd-name-t">${sym}</span><span class="fd-caret">\u25be</span></button>`;
     const headBare = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-tf">15m</span>${favBtn()}</div>`;
     const wireBar = () => {
       const bk = host.querySelector('[data-back]'); if (bk) bk.addEventListener('click', () => renderList(host, S));

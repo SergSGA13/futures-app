@@ -1727,3 +1727,11 @@ html, body {
 .fg-btn { font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: var(--radius-sm); cursor: pointer; border: none; }
 .fg-btn.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--card-border); }
 .fg-btn.pri { background: var(--gradient); color: #fff; box-shadow: 0 0 16px rgba(157,80,255,.35); }
+
+/* ===== Детальный экран: загрузка и выбранный сет ===== */
+.fd-loading { text-align: center; color: var(--text-muted); padding: 40px 0; font-size: 14px; }
+.fd-chip { cursor: pointer; transition: transform .12s, box-shadow .2s; }
+.fd-chip[data-set]:active { transform: scale(.96); }
+.fd-chip.sel { transform: translateY(-2px); }
+.fd-chip.win.sel { box-shadow: 0 0 0 1px var(--green), 0 0 18px rgba(78,255,160,.3); }
+.fd-chip.loss.sel { box-shadow: 0 0 0 1px var(--red), 0 0 18px rgba(255,82,114,.28); }

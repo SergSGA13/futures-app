@@ -116,13 +116,14 @@
   }
 
   // ---- Чтение FUT_STRAT: готовая статистика (мгновенно) или список монет ---
-  async function readSheet() {
+  async function readSheet(tab, allowDefault) {
+    tab = tab || TAB; if (allowDefault === undefined) allowDefault = true;
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(TAB)}`;
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
       const r = await tfetch(url, 12000); if (!r.ok) throw 0;
       const text = await r.text();
       if (/setResponse/.test(text) || /error/i.test(text.slice(0, 200))) throw 0;
-      let grid = (window.parseCSV || localParse)(text);
+      let grid = localParse(text);
       if (!grid || !grid.length) throw 0;
       grid = explodeRows(grid).filter(row => row.some(c => String(c).trim() !== ''));
       if (!grid.length) throw 0;
@@ -153,7 +154,7 @@
       dataRows.forEach(rw => { let cell = String(rw[col] || ''); if (/,/.test(cell)) cell = splitSmart(cell)[0]; const s = normSym(cell); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
       if (syms.length) return { mode: 'compute', symbols: syms, source: 'sheet' };
       throw 0;
-    } catch (e) { return { mode: 'compute', symbols: DEFAULT_SYMS.slice(), source: 'default' }; }
+    } catch (e) { return allowDefault ? { mode: 'compute', symbols: DEFAULT_SYMS.slice(), source: 'default' } : { mode: 'error', tab: tab }; }
   }
 
   // ---- Кэш расчётов (localStorage, TTL 6ч) --------------------------------
@@ -250,10 +251,13 @@
       pside = pos.side; plots = pos.lots.length; pavg = totQ ? totCost / totQ : 0; pt0 = pos.t0;
     }
     const wins = sets.filter(s => s.pnl > 0).length, losses = sets.filter(s => s.pnl < 0).length, closed = wins + losses;
+    const pnls = sets.map(s => s.pnl);
+    let accm = 0, peak = 0, maxDD = 0; pnls.forEach(p => { accm += p; if (accm > peak) peak = accm; if (peak - accm > maxDD) maxDD = peak - accm; });
+    const exp = pnls.length ? pnls.reduce((a, p) => a + p, 0) / pnls.length : 0;
     return {
       sets,
       position: { side: pside, lots: plots, avg: pavg, entries, t0: pt0, unrealPct: unreal / SIM.capital * 100 },
-      stats: { sets: sets.length, wins, losses, winrate: closed ? wins / closed * 100 : null, pnlPct: (eq + unreal - SIM.capital) / SIM.capital * 100 },
+      stats: { sets: sets.length, wins, losses, winrate: closed ? wins / closed * 100 : null, pnlPct: (eq + unreal - SIM.capital) / SIM.capital * 100, maxDD, exp },
     };
   }
   function precisionFor(price) {
@@ -363,10 +367,12 @@
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
     const base = isTime
-      ? `База: условный депозит $100 на пару (всего $${(d.coins * 100).toLocaleString('ru-RU')} на ${d.coins} пар), вход 10% на сигнал. Кривая - средний результат на пару за 90 дней.`
+      ? `Кривая - средний результат на пару за 90 дней. Вход 10% депозита на сигнал.`
       : `сумма по ${d.labels.length} парам в порядке сортировки · ${sortDef.label}`;
+    const dep = isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
     return `
       <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>
+      ${dep}
       <div class="fs-pnlcard-wrap">${pnlSvg(d)}</div>
       ${xrow}${metrics}${sliders}
       <div class="fs-pnlcard-cap">${base}</div>`;
@@ -405,6 +411,19 @@
     const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
     const progNote = ` · <span class="fs-demo" id="fsProg">${S.computing ? `считаю ${S.progress}/${S.total}` : ''}</span>`;
+    const runPills = `<div class="fs-runbar"><span class="fs-runlbl">Прогон:</span>${RUNS.map(rn => `<button class="fs-runpill ${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div>`;
+    const wireCommon = () => {
+      host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
+      const g = host.querySelector('[data-guide]'); if (g) g.addEventListener('click', () => renderGuide(0));
+    };
+    if (S.runError) {
+      host.innerHTML = `
+        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub">Бэктест индикатора 🟣 v.29.1 · 15m · 90 дней</div></div><button class="fs-guidebtn" data-guide>🎓 Гайд</button></div>
+        ${runPills}
+        <div class="fs-runerr">Прогон не найден: вкладка <b>${S.runError}</b> пуста или отсутствует.<br><br>Сделай бэктест с нужными правилами и вставь результат в эту вкладку. В терминале:<br><code>python backtest_v29.py ${S.run}</code></div>`;
+      wireCommon();
+      return;
+    }
 
     const cards = rows.map(r => `<div class="${cardOuterClass(r)}" data-sym="${r.symbol}">${cardInner(r)}</div>`).join('') || `<div class="fs-empty">Ничего не найдено под текущим фильтром</div>`;
 
@@ -416,6 +435,7 @@
         </div>
         <button class="fs-guidebtn" data-guide>🎓 Гайд</button>
       </div>
+      ${runPills}
       <div class="fs-stats">
         <div class="fs-stat"><div class="fs-stat-val">${pairs}</div><div class="fs-stat-lbl">пар</div></div>
         <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сделок</div></div>
@@ -436,6 +456,7 @@
       <div class="fs-grid">${cards}</div>`;
 
     wirePnlCard(host, S);
+    host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
     host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
@@ -523,6 +544,7 @@
 
     host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
+      <div class="fd-sub2"><span>макс. просадка <b style="color:${COL.red}">-${(sim.stats.maxDD || 0).toFixed(1)}%</b></span><span>ожидание <b style="color:${pnlHex(sim.stats.exp || 0)}">${fmtPct(sim.stats.exp || 0)}</b>/сделка</span></div>
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
       <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
@@ -566,30 +588,44 @@
 
   // ---- Публичный API -------------------------------------------------------
   const state = {};
+  const RUNS = [
+    { key: 'base', label: 'Базовый', tab: 'FUT_STRAT' },
+    { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
+    { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
+  ];
+
+  async function loadRun(host, S, runKey) {
+    const run = RUNS.find(r => r.key === runKey) || RUNS[0];
+    S.run = run.key; S.runError = false; S.computing = false; S._chart = null;
+    S._runCache = S._runCache || {};
+    if (S._runCache[run.key]) { const c = S._runCache[run.key]; S.rows = c.rows; S.source = c.source; renderList(host, S); return; }
+    host.innerHTML = `<div class="fs-loading">Загрузка прогона «${run.label}»…</div>`;
+    const data = await readSheet(run.tab, run.key === 'base');
+    if (data.mode === 'stats') {
+      S.rows = data.rows; S.source = data.source; S.total = data.rows.length; S.progress = data.rows.length;
+      S._runCache[run.key] = { rows: data.rows, source: data.source };
+      renderList(host, S);
+    } else if (data.mode === 'compute') {
+      const symbols = data.symbols;
+      S.rows = symbols.map(placeholderRow); S.source = data.source; S.computing = true; S.progress = 0; S.total = symbols.length;
+      renderList(host, S);
+      computeAll(symbols, (i, row, done, total) => {
+        S.rows[i] = row; S.progress = done; updateCard(host, row); updateProgress(host, S);
+        if (done === total) { S.computing = false; S._runCache[run.key] = { rows: S.rows, source: S.source }; renderList(host, S); }
+      }, 3);
+    } else {
+      S.rows = []; S.runError = run.tab; renderList(host, S);
+    }
+  }
+
   async function mount(containerId) {
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
+    const S = { rows: [], run: 'base', source: 'sheet', sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
-    const data = await readSheet();
-    let S;
-    if (data.mode === 'stats') {
-      // готовая статистика бэктеста за 90 дней — показываем сразу
-      S = { rows: data.rows, source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: data.rows.length, total: data.rows.length, stop: 0, tp: 0 };
-      state[containerId] = S;
-      renderList(host, S);
-    } else {
-      // лист содержит только список монет — считаем в браузере (прогрессивно)
-      const symbols = data.symbols;
-      S = { rows: symbols.map(placeholderRow), source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length, stop: 0, tp: 0 };
-      state[containerId] = S;
-      renderList(host, S);
-      computeAll(symbols, (i, row, done, total) => {
-        S.rows[i] = row; S.progress = done;
-        updateCard(host, row); updateProgress(host, S);
-        if (done === total) { S.computing = false; renderList(host, S); }
-      }, 3);
-    }
+    await loadRun(host, S, 'base');
     let seen = false; try { seen = localStorage.getItem('futStrat_guide_seen') === '1'; } catch (e) {}
     if (!seen) setTimeout(() => renderGuide(0), 400);
   }

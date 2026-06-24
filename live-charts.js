@@ -30,7 +30,7 @@
   function rollLowest(v, p) { const o = new Array(v.length); for (let i = 0; i < v.length; i++) { let m = Infinity; for (let k = Math.max(0, i - p + 1); k <= i; k++) if (v[k] < m) m = v[k]; o[i] = m; } return o; }
   function rollHighest(v, p) { const o = new Array(v.length); for (let i = 0; i < v.length; i++) { let m = -Infinity; for (let k = Math.max(0, i - p + 1); k <= i; k++) if (v[k] > m) m = v[k]; o[i] = m; } return o; }
 
-  function computeSignals(candles, tfMin) {
+  function computeSignalList(candles, tfMin) {
     const n = candles.length;
     const close = candles.map(c => c.close), high = candles.map(c => c.high), low = candles.map(c => c.low);
     const { len, h, multBuy, multSell } = IND;
@@ -46,7 +46,7 @@
     const sweptLow = i => i >= IND.sweepBars && loL[i] < loL[i - IND.sweepBars];
     const sweptHigh = i => i >= IND.sweepBars && hiH[i] > hiH[i - IND.sweepBars];
     const btc = Math.max(1, Math.round(IND.checkMin / tfMin));
-    const markers = []; let lastL = -1e9, lastS = -1e9;
+    const sigs = []; let lastL = -1e9, lastS = -1e9;
     for (let i = 1; i < n; i++) {
       if (upper[i] == null || lower[i] == null || upper[i - 1] == null || lower[i - 1] == null) continue;
       const cu = close[i] < lower[i] && close[i - 1] >= lower[i - 1];
@@ -57,11 +57,19 @@
         if (Math.abs((close[i] - base) / base) * 100 >= IND.impulseThr) { cL = close[i] <= base; cS = close[i] >= base; }
       }
       const okL = !IND.sweepOn || sweptLow(i), okS = !IND.sweepOn || sweptHigh(i);
-      if (cu && cL && okL && (i - lastL) >= btc) { lastL = i; markers.push({ time: candles[i].time, position: 'belowBar', color: C.buy, shape: 'arrowUp', size: 1 }); }
-      if (co && cS && okS && (i - lastS) >= btc) { lastS = i; markers.push({ time: candles[i].time, position: 'aboveBar', color: C.sell, shape: 'arrowDown', size: 1 }); }
+      if (cu && cL && okL && (i - lastL) >= btc) { lastL = i; sigs.push({ i, side: 'long' }); }
+      if (co && cS && okS && (i - lastS) >= btc) { lastS = i; sigs.push({ i, side: 'short' }); }
     }
-    markers.sort((a, b) => a.time - b.time);
-    return markers;
+    return sigs;
+  }
+
+  function computeSignals(candles, tfMin) {
+    return computeSignalList(candles, tfMin).map(s => ({
+      time: candles[s.i].time,
+      position: s.side === 'long' ? 'belowBar' : 'aboveBar',
+      color: s.side === 'long' ? C.buy : C.sell,
+      shape: s.side === 'long' ? 'arrowUp' : 'arrowDown', size: 1,
+    })).sort((a, b) => a.time - b.time);
   }
 
   function renderInto(el, opts) {
@@ -90,10 +98,11 @@
     }));
     try { if (LW.createSeriesMarkers) LW.createSeriesMarkers(candle, opts.markers || []); else if (candle.setMarkers) candle.setMarkers(opts.markers || []); } catch (e) {}
     const n = (opts.candles || []).length, view = opts.viewBars || 200;
-    if (n) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - view), to: n + 3 });
+    if (opts.visibleRange) { try { chart.timeScale().setVisibleRange(opts.visibleRange); } catch (e) {} }
+    else if (n) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - view), to: n + 3 });
     el.__lc = chart;
     return chart;
   }
 
-  window.LiveChart = { computeSignals, renderInto, colors: C };
+  window.LiveChart = { computeSignals, computeSignalList, renderInto, colors: C };
 })();

@@ -1771,9 +1771,22 @@ html, body {
 .fs-pnlcard-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
 .fs-pnlcard-t { font-size: 12px; color: var(--text-muted); font-weight: 600; letter-spacing: .3px; }
 .fs-pnlcard-v { font-size: 19px; font-weight: 800; }
-.fs-pnlcard-wrap { position: relative; height: 132px; }
-.fs-pnlcard-wrap canvas { width: 100% !important; height: 100% !important; }
-.fs-pnlcard-cap { font-size: 10px; color: var(--text-muted); margin-top: 6px; text-align: right; opacity: .75; }
+.fs-pnlcard-wrap { position: relative; height: 120px; }
+.fs-pnl-svg { display: block; width: 100%; height: 100%; }
+.fs-pnl-empty { height: 120px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 12px; }
+.fs-pnl-x { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-muted); margin-top: 2px; opacity: .8; }
+.fs-pnl-metrics { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(102,163,255,.14); border-radius: 10px; background: rgba(102,163,255,.04); }
+.fs-pnl-metrics > div { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
+.fs-pnl-metrics b { font-size: 14px; font-weight: 800; color: var(--text); }
+.fs-pnl-metrics span { font-size: 8px; letter-spacing: .3px; color: var(--text-muted); margin-top: 2px; }
+.fs-whatif { margin-top: 10px; padding: 10px 11px; border: 1px solid rgba(157,80,255,.18); border-radius: 10px; background: rgba(157,80,255,.05); }
+.fs-wi-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.fs-wi-row:last-of-type { margin-bottom: 6px; }
+.fs-wi-lbl { font-size: 11px; font-weight: 700; color: var(--text-muted); width: 86px; flex-shrink: 0; }
+.fs-wi { flex: 1; }
+.fs-wi-val { font-size: 12px; font-weight: 800; color: var(--purple); width: 46px; text-align: right; flex-shrink: 0; }
+.fs-wi-note { font-size: 9px; color: var(--text-muted); opacity: .75; line-height: 1.3; }
+.fs-pnlcard-cap { font-size: 10px; color: var(--text-muted); margin-top: 8px; line-height: 1.35; opacity: .8; }
 
 /* скелетоны карточек во время расчёта */
 .fs-card.loading { opacity: .75; }

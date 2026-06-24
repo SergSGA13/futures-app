@@ -96,28 +96,61 @@
     return s;
   }
   // ---- Чтение списка монет из FUT_STRAT (первый столбец или 'symbol') ------
-  async function readSymbols() {
+  function splitSmart(s) { const out = []; let c = '', d = 0; for (let i = 0; i < s.length; i++) { const ch = s[i]; if (ch === '[') d++; else if (ch === ']') d--; if (ch === ',' && d <= 0) { out.push(c); c = ''; } else c += ch; } out.push(c); return out; }
+  function explodeRows(grid) { return grid.map(row => (row.length === 1 && /,/.test(row[0])) ? splitSmart(row[0]) : row); }
+  const BT_ORDER = ['symbol', 'tf', 'signals', 'sets', 'wins', 'losses', 'winrate', 'pnl_pct', 'realized_pct', 'unreal_pct', 'pos_side', 'pos_lots', 'pos_avg', 'last_side', 'quote_volume', 'updated', 'lot_entries', 'sets_json'];
+  function num(v) { v = String(v == null ? '' : v).trim(); return v === '' ? null : +v; }
+  function parseStatsRow(arr, ix) {
+    const g = k => { const i = ix(k); return i > -1 ? arr[i] : undefined; };
+    const sym = normSym(g('symbol')); if (!sym) return null;
+    const side = String(g('pos_side') || '').trim().toLowerCase();
+    return {
+      symbol: sym, tf: String(g('tf') || '15m').trim() || '15m', computed: true,
+      signals: num(g('signals')) || 0, sets: num(g('sets')) || 0, wins: num(g('wins')) || 0, losses: num(g('losses')) || 0,
+      winrate: num(g('winrate')), pnl_pct: num(g('pnl_pct')) || 0,
+      pos_side: (side === 'long' || side === 'short') ? side : '\u2014', pos_lots: num(g('pos_lots')) || 0, pos_avg: num(g('pos_avg')) || 0,
+    };
+  }
+
+  // ---- Чтение FUT_STRAT: готовая статистика (мгновенно) или список монет ---
+  async function readSheet() {
     try {
       const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(TAB)}`;
-      const r = await fetch(url); if (!r.ok) throw 0;
+      const r = await tfetch(url, 12000); if (!r.ok) throw 0;
       const text = await r.text();
       if (/setResponse/.test(text) || /error/i.test(text.slice(0, 200))) throw 0;
-      const grid = (window.parseCSV || localParse)(text);
+      let grid = (window.parseCSV || localParse)(text);
       if (!grid || !grid.length) throw 0;
-      const head = grid[0].map(h => String(h).trim().toLowerCase());
-      const named = ['symbol', 'ticker', 'pair', 'symbols', '\u0442\u0438\u043a\u0435\u0440', '\u043c\u043e\u043d\u0435\u0442\u0430'];
-      let col = head.findIndex(h => named.indexOf(h) !== -1);
-      let dataRows = grid.slice(1);
-      if (col === -1) {
-        col = 0;
-        const first = String(grid[0][0] || '').trim().toUpperCase();
-        if (/^[A-Z0-9]{2,15}$/.test(first) && named.indexOf(first.toLowerCase()) === -1) dataRows = grid;
+      grid = explodeRows(grid).filter(row => row.some(c => String(c).trim() !== ''));
+      if (!grid.length) throw 0;
+
+      const head0 = grid[0].map(h => String(h).trim().toLowerCase());
+      const isHeaderWord = w => ['symbol', 'ticker', 'pair', 'symbols', 'tf'].indexOf(w) !== -1;
+
+      // 1) есть заголовок со столбцами статистики -> читаем готовое (быстро)
+      if (head0.indexOf('pnl_pct') !== -1 || head0.indexOf('sets') !== -1) {
+        const ix = k => head0.indexOf(k);
+        const rows = grid.slice(1).map(a => parseStatsRow(a, ix)).filter(Boolean);
+        if (rows.length) return { mode: 'stats', rows, source: 'sheet' };
       }
+      // 2) нет заголовка, но строки в формате бэктеста (символ, tf, числа...) -> по позициям
+      const f0 = String(grid[0][0] || '').trim();
+      const looksBacktest = grid[0].length >= 8 && /^[A-Z0-9]{2,15}$/i.test(f0) && !isHeaderWord(f0.toLowerCase()) && (/^\d/.test(String(grid[0][2] || '')) || /^\d/.test(String(grid[0][3] || '')));
+      if (looksBacktest) {
+        const ix = k => BT_ORDER.indexOf(k);
+        const rows = grid.map(a => parseStatsRow(a, ix)).filter(Boolean);
+        if (rows.length) return { mode: 'stats', rows, source: 'sheet' };
+      }
+      // 3) иначе это просто список монет -> считаем в браузере
+      const named = ['symbol', 'ticker', 'pair', 'symbols', '\u0442\u0438\u043a\u0435\u0440', '\u043c\u043e\u043d\u0435\u0442\u0430'];
+      let col = head0.findIndex(h => named.indexOf(h) !== -1);
+      let dataRows = grid.slice(1);
+      if (col === -1) { col = 0; if (/^[A-Z0-9]{2,15}$/.test(f0.toUpperCase()) && named.indexOf(f0.toLowerCase()) === -1) dataRows = grid; }
       const seen = {}, syms = [];
-      dataRows.forEach(rw => { const s = normSym(rw[col]); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
-      if (syms.length) return { symbols: syms, source: 'sheet' };
+      dataRows.forEach(rw => { let cell = String(rw[col] || ''); if (/,/.test(cell)) cell = splitSmart(cell)[0]; const s = normSym(cell); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
+      if (syms.length) return { mode: 'compute', symbols: syms, source: 'sheet' };
       throw 0;
-    } catch (e) { return { symbols: DEFAULT_SYMS.slice(), source: 'default' }; }
+    } catch (e) { return { mode: 'compute', symbols: DEFAULT_SYMS.slice(), source: 'default' }; }
   }
 
   // ---- Кэш расчётов (localStorage, TTL 6ч) --------------------------------
@@ -128,6 +161,7 @@
   // ---- Троттлинг запросов к бирже (60 монет, лимиты Binance) ---------------
   let PACE_MS = 0, _lastReq = 0;
   async function rateGate() { const now = Date.now(), wait = Math.max(0, _lastReq + PACE_MS - now); _lastReq = now + wait; if (wait) await new Promise(r => setTimeout(r, wait)); }
+  async function tfetch(u, ms) { const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null; const t = ac ? setTimeout(() => ac.abort(), ms) : null; try { return await fetch(u, ac ? { signal: ac.signal } : {}); } finally { if (t) clearTimeout(t); } }
 
   // ---- Расчёт одной монеты в браузере (90 дней, тот же движок, что в детали)
   function placeholderRow(sym) { return { symbol: sym, tf: '15m', computed: false, signals: 0, sets: 0, wins: 0, losses: 0, winrate: null, pnl_pct: 0, pos_side: '\u2014', pos_lots: 0, pos_avg: 0 }; }
@@ -167,7 +201,7 @@
         for (let it = 0; it < 7 && start < end; it++) {
           if (PACE_MS) await rateGate();
           const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=15m&limit=1500&startTime=${start}`;
-          const r = await fetch(u); if (!r.ok) throw new Error('fapi ' + r.status);
+          const r = await tfetch(u, 9000); if (!r.ok) throw new Error("fapi " + r.status);
           const chunk = await r.json(); if (!chunk.length) break;
           out.push(...chunk); start = chunk[chunk.length - 1][0] + 1;
           if (chunk.length < 1500) break;
@@ -179,7 +213,7 @@
     for (const sym of symVariants(baseSym)) {
       try {
         const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=${map15}&limit=1000`;
-        const r = await fetch(u); if (!r.ok) continue;
+        const r = await tfetch(u, 9000); if (!r.ok) continue;
         const j = await r.json(); const list = (j.result && j.result.list) || [];
         if (list.length) return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
       } catch (e) {}
@@ -436,18 +470,28 @@
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
-    host.innerHTML = '<div class="fs-loading">Загрузка списка монет…</div>';
-    const { symbols, source } = await readSymbols();
-    const S = { rows: symbols.map(placeholderRow), source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length };
-    state[containerId] = S;
-    renderList(host, S);
+    host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
+    const data = await readSheet();
+    let S;
+    if (data.mode === 'stats') {
+      // готовая статистика бэктеста за 90 дней — показываем сразу
+      S = { rows: data.rows, source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: data.rows.length, total: data.rows.length };
+      state[containerId] = S;
+      renderList(host, S);
+    } else {
+      // лист содержит только список монет — считаем в браузере (прогрессивно)
+      const symbols = data.symbols;
+      S = { rows: symbols.map(placeholderRow), source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length };
+      state[containerId] = S;
+      renderList(host, S);
+      computeAll(symbols, (i, row, done, total) => {
+        S.rows[i] = row; S.progress = done;
+        updateCard(host, row); updateProgress(host, S);
+        if (done === total) { S.computing = false; renderList(host, S); }
+      }, 3);
+    }
     let seen = false; try { seen = localStorage.getItem('futStrat_guide_seen') === '1'; } catch (e) {}
     if (!seen) setTimeout(() => renderGuide(0), 400);
-    computeAll(symbols, (i, row, done, total) => {
-      S.rows[i] = row; S.progress = done;
-      updateCard(host, row); updateProgress(host, S);
-      if (done === total) { S.computing = false; renderList(host, S); }
-    }, 3);
   }
 
   window.FutStrat = { mount, simulateJS, fetchFutHistory };

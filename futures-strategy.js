@@ -298,19 +298,40 @@
   }
 
   // ════════════════════════ ДЕТАЛЬНЫЙ ЭКРАН ════════════════════════
+  // выпадающий список активов (как в Лаборатории)
+  function togglePicker(host, S, currentSym) {
+    const existing = host.querySelector('#fdPicker');
+    const cr = host.querySelector('.fd-caret');
+    if (existing) { existing.remove(); const bd = host.querySelector('#fdPickBd'); if (bd) bd.remove(); if (cr) cr.classList.remove('open'); return; }
+    const rows = S.rows.slice().sort((a, b) => (b.pnl_pct == null ? -1e9 : b.pnl_pct) - (a.pnl_pct == null ? -1e9 : a.pnl_pct));
+    const items = rows.map(r => {
+      const nm = r.symbol.replace(/USDT$/, '');
+      return `<button class="fd-pick-item ${r.symbol === currentSym ? 'cur' : ''}" data-pick="${r.symbol}"><span>${nm}</span><span style="color:${pnlHex(r.pnl_pct)}">${fmtPct(r.pnl_pct)}</span></button>`;
+    }).join('');
+    const head = host.querySelector('.fd-head');
+    const bd = document.createElement('div'); bd.id = 'fdPickBd'; bd.className = 'fd-pick-backdrop';
+    bd.addEventListener('click', () => togglePicker(host, S, currentSym));
+    host.appendChild(bd);
+    const div = document.createElement('div'); div.id = 'fdPicker'; div.className = 'fd-picker'; div.innerHTML = items;
+    head.appendChild(div);
+    if (cr) cr.classList.add('open');
+    div.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('click', () => openDetail(host, S, b.dataset.pick)));
+  }
+
   async function openDetail(host, S, symbol) {
     const row = S.rows.find(r => r.symbol === symbol);
     if (!row) return;
     const sym = symbol.replace(/USDT$/, '');
     const favBtn = () => `<button class="fs-fav ${favHas(symbol) ? 'on' : ''}" data-fav="${symbol}" style="position:static">${favHas(symbol) ? '\u2605' : '\u2606'}</button>`;
-    const bar = `<div class="fd-bar"><button class="fd-back" data-back>\u2190</button><span class="fd-sym">${sym}<span class="fd-tf">15m</span></span>${favBtn()}</div>`;
+    const headRow = `<div class="fd-head-row"><button class="fd-back" data-back>\u2190</button><button class="fd-name" data-picker>${sym} <span class="fd-caret">\u25be</span></button><span class="fd-tf">15m</span>${favBtn()}</div>`;
+    const headLoading = `<div class="fd-head">${headRow}</div>`;
     const wireBar = () => {
-      host.querySelector('[data-back]').addEventListener('click', () => renderList(host, S));
-      const fb = host.querySelector('[data-fav]');
-      if (fb) fb.addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '\u2605' : '\u2606'; });
+      const bk = host.querySelector('[data-back]'); if (bk) bk.addEventListener('click', () => renderList(host, S));
+      const fb = host.querySelector('[data-fav]'); if (fb) fb.addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '\u2605' : '\u2606'; });
+      const pk = host.querySelector('[data-picker]'); if (pk) pk.addEventListener('click', () => togglePicker(host, S, symbol));
     };
 
-    host.innerHTML = bar + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
+    host.innerHTML = headLoading + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
     wireBar();
 
     let candles, sim, markers;
@@ -321,7 +342,7 @@
       sim = simulateJS(candles, sigs);
       markers = window.LiveChart.computeSignals(candles, 15);
     } catch (err) {
-      host.innerHTML = bar + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
+      host.innerHTML = headLoading + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
       wireBar();
       const rt = host.querySelector('[data-retry]'); if (rt) rt.addEventListener('click', () => openDetail(host, S, symbol));
       return;
@@ -341,22 +362,23 @@
       `<div class="fd-chip ${s.pnl >= 0 ? 'win' : 'loss'}" data-set="${i}"><div class="fd-chip-n">#${i + 1} ${s.pnl >= 0 ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s.pnl)}</div></div>`).join('');
     const isOpen = p.side === 'long' || p.side === 'short';
     const openChip = isOpen
-      ? `<div class="fd-chip open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
+      ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
 
-    host.innerHTML = bar + `
-      <div class="fd-stats">
-        <div class="fd-stat"><div class="fd-stat-val">${sim.stats.sets}</div><div class="fd-stat-lbl">\u0441\u0435\u0442\u043e\u0432</div></div>
-        <div class="fd-stat"><div class="fd-stat-val" style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</div><div class="fd-stat-lbl">win rate</div></div>
-        <div class="fd-stat"><div class="fd-stat-val" style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</div><div class="fd-stat-lbl">pnl</div></div>
-      </div>
+    const head = `<div class="fd-head">${headRow}
+        <div class="fd-head-stats"><span><b>${sim.stats.sets}</b> \u0441\u0435\u0442\u043e\u0432</span><span class="fd-dot">\u00b7</span><span><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b> WR</span><span class="fd-dot">\u00b7</span><span><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b> PNL</span></div>
+      </div>`;
+
+    host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0435\u0442\u043e\u0432</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
       <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0435\u0442\u0443 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
-      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
+      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u041d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0432\u0445\u043e\u0434\u043e\u0432 \u043e\u0434\u043d\u043e\u0433\u043e \u0441\u0435\u0442\u0430 - \u044d\u0442\u043e \u043e\u0434\u043d\u0430 \u0441\u0434\u0435\u043b\u043a\u0430. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
     wireBar();
 
     const el = host.querySelector('#fdChart');
+    const last = candles[candles.length - 1].time;
+    // линии текущей набранной позиции (по умолчанию и при переоткрытии)
     const posLines = [];
     if (isOpen) {
       const col = p.side === 'long' ? COL.green : COL.purple;
@@ -366,18 +388,25 @@
     const baseView = () => window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, viewBars: 140 });
     baseView();
 
-    let active = -1;
+    let active = null;
     const chipEls = host.querySelectorAll('.fd-chip[data-set]');
     chipEls.forEach(c => c.addEventListener('click', () => {
-      const idx = +c.dataset.set;
-      if (active === idx) { active = -1; chipEls.forEach(x => x.classList.remove('sel')); baseView(); return; }
-      active = idx; chipEls.forEach(x => x.classList.toggle('sel', x === c));
-      const s = sim.sets[idx];
+      const ds = c.dataset.set;
+      if (active === ds) { active = null; chipEls.forEach(x => x.classList.remove('sel')); baseView(); return; }
+      active = ds; chipEls.forEach(x => x.classList.toggle('sel', x === c));
+      if (ds === 'open') {
+        const from = p.t0 || candles[Math.max(0, candles.length - 140)].time;
+        const pad = Math.max(3600, (last - from) * 0.15);
+        window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: from - pad, to: last + pad } });
+        return;
+      }
+      // выбран исторический сет: показываем ТОЛЬКО его (добор объединён в одну сделку)
+      const s = sim.sets[+ds];
       const pad = Math.max(3600, (s.t1 - s.t0) * 0.35);
-      const lines = posLines.concat([
-        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0435\u0442\u0430', width: 1, style: 2 },
-        { price: s.exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: '\u0432\u044b\u0445\u043e\u0434', width: 1, style: 2 },
-      ]);
+      const lines = [
+        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0435\u0442\u0430', width: 2, style: 2 },
+        { price: s.exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: '\u0432\u044b\u0445\u043e\u0434', width: 2, style: 2 },
+      ];
       window.LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, visibleRange: { from: s.t0 - pad, to: s.t1 + pad } });
     }));
   }

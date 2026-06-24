@@ -148,20 +148,68 @@
     });
   }
 
-  // ---- Свечи фьючерсов (fapi -> bybit) ------------------------------------
-  async function fetchFutKlines(symbol, interval, limit) {
-    try {
-      const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-      const r = await fetch(u); if (!r.ok) throw new Error('fapi');
-      const raw = await r.json();
-      return raw.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
-    } catch (e) {
-      const bi = interval === '4h' ? '240' : interval === '1h' ? '60' : '15';
-      const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bi}&limit=${limit}`;
-      const r = await fetch(u); if (!r.ok) throw new Error('klines');
-      const j = await r.json(); const list = (j.result && j.result.list) || [];
-      return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
+  // ---- Свечи фьючерсов: история за N дней (fapi -> bybit) ------------------
+  // Пробуем имя символа и его 1000-вариант (мем-коины на фьючерсах: 1000PEPE и т.п.)
+  function symVariants(sym) { return [sym, '1000' + sym]; }
+
+  async function fetchFutHistory(baseSym, days) {
+    const map15 = '15';
+    for (const sym of symVariants(baseSym)) {
+      try {
+        const end = Date.now(); let start = end - days * 864e5; const out = [];
+        for (let it = 0; it < 7 && start < end; it++) {
+          const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=15m&limit=1500&startTime=${start}`;
+          const r = await fetch(u); if (!r.ok) throw new Error('fapi ' + r.status);
+          const chunk = await r.json(); if (!chunk.length) break;
+          out.push(...chunk); start = chunk[chunk.length - 1][0] + 1;
+          if (chunk.length < 1500) break;
+        }
+        if (out.length) return out.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
+      } catch (e) { /* пробуем следующий вариант имени */ }
     }
+    // фолбэк Bybit (только последние ~1000 свечей)
+    for (const sym of symVariants(baseSym)) {
+      try {
+        const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=${map15}&limit=1000`;
+        const r = await fetch(u); if (!r.ok) continue;
+        const j = await r.json(); const list = (j.result && j.result.list) || [];
+        if (list.length) return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
+      } catch (e) {}
+    }
+    throw new Error('no klines');
+  }
+
+  // ---- Браузерная симуляция позиций (та же модель, что в backtest_v29.py) --
+  const SIM = { capital: 100, lotFrac: 0.10, fee: 0.0008, lev: 1, cap: 10, reinvest: true };
+  function simulateJS(candles, sigs) {
+    const close = candles.map(c => c.close);
+    let eq = SIM.capital, setPnl = 0, eqOpen = eq, pos = null;
+    const sets = [];
+    const lotNote = () => SIM.lotFrac * (SIM.reinvest ? eq : SIM.capital) * SIM.lev;
+    function openPos(side, i) { eqOpen = eq; const note = lotNote(), qty = note / close[i]; eq -= note * SIM.fee; setPnl = -note * SIM.fee; pos = { side, lots: [{ p: close[i], q: qty }], t0: candles[i].time }; }
+    for (const s of sigs) {
+      const i = s.i, price = close[i];
+      if (!pos) { openPos(s.side, i); continue; }
+      if (pos.side === s.side) { if (pos.lots.length < SIM.cap) { const note = lotNote(), qty = note / price; eq -= note * SIM.fee; setPnl -= note * SIM.fee; pos.lots.push({ p: price, q: qty }); } continue; }
+      // переворот: закрыть всё, зафиксировать сет, открыть реверс на 10%
+      let realized = 0, closeNote = 0, totQ = 0, totCost = 0;
+      for (const { p, q } of pos.lots) { realized += pos.side === 'long' ? q * (price - p) : q * (p - price); closeNote += q * price; totQ += q; totCost += p * q; }
+      const cfee = closeNote * SIM.fee; eq += realized - cfee; setPnl += realized - cfee;
+      sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side });
+      openPos(s.side, i);
+    }
+    let pside = '—', plots = 0, pavg = 0, entries = [], unreal = 0, pt0 = null;
+    if (pos) {
+      const last = close[close.length - 1]; let totQ = 0, totCost = 0;
+      for (const { p, q } of pos.lots) { unreal += pos.side === 'long' ? q * (last - p) : q * (p - last); totQ += q; totCost += p * q; entries.push(p); }
+      pside = pos.side; plots = pos.lots.length; pavg = totQ ? totCost / totQ : 0; pt0 = pos.t0;
+    }
+    const wins = sets.filter(s => s.pnl > 0).length, losses = sets.filter(s => s.pnl < 0).length, closed = wins + losses;
+    return {
+      sets,
+      position: { side: pside, lots: plots, avg: pavg, entries, t0: pt0, unrealPct: unreal / SIM.capital * 100 },
+      stats: { sets: sets.length, wins, losses, winrate: closed ? wins / closed * 100 : null, pnlPct: (eq + unreal - SIM.capital) / SIM.capital * 100 },
+    };
   }
   function precisionFor(price) {
     if (price >= 100) return { precision: 2, minMove: 0.01 };
@@ -254,62 +302,84 @@
     const row = S.rows.find(r => r.symbol === symbol);
     if (!row) return;
     const sym = symbol.replace(/USDT$/, '');
-    const fav = favHas(symbol);
-    const st = statusInfo(row);
-    const wrTxt = row.winrate == null ? '-' : (row.sets < MIN_SETS ? '~' + Math.round(row.winrate) : Math.round(row.winrate)) + '%';
+    const favBtn = () => `<button class="fs-fav ${favHas(symbol) ? 'on' : ''}" data-fav="${symbol}" style="position:static">${favHas(symbol) ? '\u2605' : '\u2606'}</button>`;
+    const bar = `<div class="fd-bar"><button class="fd-back" data-back>\u2190</button><span class="fd-sym">${sym}<span class="fd-tf">15m</span></span>${favBtn()}</div>`;
+    const wireBar = () => {
+      host.querySelector('[data-back]').addEventListener('click', () => renderList(host, S));
+      const fb = host.querySelector('[data-fav]');
+      if (fb) fb.addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '\u2605' : '\u2606'; });
+    };
 
-    // чипы истории сетов: реальные номера, новейшие слева, текущая позиция первой
-    const allSets = row.sets_pct || [];
-    const recent = allSets.map((s, i) => ({ n: i + 1, s })).slice(-12).reverse();
-    const chips = recent.map(({ n, s }) => {
-      const win = s >= 0;
-      return `<div class="fd-chip ${win ? 'win' : 'loss'}"><div class="fd-chip-n">#${n} ${win ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s)}</div></div>`;
-    }).join('');
-    const isOpen = (row.pos_side === 'long' || row.pos_side === 'short');
-    const openChip = isOpen
-      ? `<div class="fd-chip open"><div class="fd-chip-n">СЕЙЧАС ${row.pos_side === 'long' ? '▲ LONG' : '▼ SHORT'}</div><div class="fd-chip-v">×${row.pos_lots}</div></div>` : '';
+    host.innerHTML = bar + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
+    wireBar();
 
-    host.innerHTML = `
-      <div class="fd-bar">
-        <button class="fd-back" data-back>←</button>
-        <span class="fd-sym">${sym}<span class="fd-tf">${row.tf}</span></span>
-        <button class="fs-fav ${fav ? 'on' : ''}" data-fav="${symbol}" style="position:static">${fav ? '★' : '☆'}</button>
-      </div>
-      <div class="fd-stats">
-        <div class="fd-stat"><div class="fd-stat-val">${row.sets}</div><div class="fd-stat-lbl">сетов</div></div>
-        <div class="fd-stat"><div class="fd-stat-val" style="color:${wrHex(row.winrate, row.sets)}">${wrTxt}</div><div class="fd-stat-lbl">win rate</div></div>
-        <div class="fd-stat"><div class="fd-stat-val" style="color:${pnlHex(row.pnl_pct)}">${fmtPct(row.pnl_pct)}</div><div class="fd-stat-lbl">pnl</div></div>
-      </div>
-      <div class="fd-pos ${st.cls}">${st.txt}${row.pos_avg ? ` · средняя ${row.pos_avg}` : ''}</div>
-      <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">нет завершённых сетов</span>' : ''}</div>
-      <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div><div class="fd-overlay" id="fdOverlay">Загрузка графика…</div></div>
-      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">линии - набранные входы и средняя</span></div>
-      <div class="fs-hint">Модель v.29.1: вход 10% депо на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 10%. Уровни на графике - фактические заливки усреднения (TP/STOP в этой модели нет).</div>`;
-
-    host.querySelector('[data-back]').addEventListener('click', () => renderList(host, S));
-    host.querySelector('[data-fav]').addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '★' : '☆'; });
-
-    // график
+    let candles, sim, markers;
     try {
-      const candles = await fetchFutKlines(symbol, '15m', 1000);
-      if (!candles.length) throw new Error('empty');
-      const markers = window.LiveChart ? LiveChart.computeSignals(candles, 15) : [];
-      const last = candles[candles.length - 1].close;
-      const prec = precisionFor(last);
-      // линии набранных позиций (из бэктеста) + средняя
-      const lines = [];
-      if (row.pos_side === 'long' || row.pos_side === 'short') {
-        const col = row.pos_side === 'long' ? COL.green : COL.purple;
-        (row.lot_entries || []).forEach((p, i) => lines.push({ price: p, color: 'rgba(102,163,255,0.55)', title: 'вход ' + (i + 1), style: 2 }));
-        if (row.pos_avg) lines.push({ price: row.pos_avg, color: col, title: 'средняя', width: 2, style: 0 });
-      }
-      const el = host.querySelector('#fdChart');
-      if (window.LiveChart) LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, viewBars: 140 });
-      const ov = host.querySelector('#fdOverlay'); if (ov) ov.remove();
+      candles = await fetchFutHistory(symbol, 90);
+      if (!candles || candles.length < 60) throw new Error('empty');
+      const sigs = window.LiveChart.computeSignalList(candles, 15);
+      sim = simulateJS(candles, sigs);
+      markers = window.LiveChart.computeSignals(candles, 15);
     } catch (err) {
-      const ov = host.querySelector('#fdOverlay');
-      if (ov) { ov.className = 'fd-overlay err'; ov.innerHTML = 'Не удалось загрузить график.<br><button class="lc-retry" data-retry>Повторить</button>'; ov.querySelector('[data-retry]').addEventListener('click', () => openDetail(host, S, symbol)); }
+      host.innerHTML = bar + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
+      wireBar();
+      const rt = host.querySelector('[data-retry]'); if (rt) rt.addEventListener('click', () => openDetail(host, S, symbol));
+      return;
     }
+
+    const p = sim.position;
+    const st = p.side === 'long' ? { txt: '\u0412 \u041b\u041e\u041d\u0413\u0415 \u00d7' + p.lots, cls: 'long' }
+      : p.side === 'short' ? { txt: '\u0412 \u0428\u041e\u0420\u0422\u0415 \u00d7' + p.lots, cls: 'short' }
+      : { txt: '\u0416\u0414\u0401\u0422 \u0412\u0425\u041e\u0414\u0410', cls: 'wait' };
+    const wr = sim.stats.winrate;
+    const wrTxt = wr == null ? '-' : (sim.stats.sets < MIN_SETS ? '~' + Math.round(wr) : Math.round(wr)) + '%';
+    const prec = precisionFor(candles[candles.length - 1].close);
+    const avgTxt = p.avg ? ` \u00b7 \u0441\u0440\u0435\u0434\u043d\u044f\u044f ${p.avg.toFixed(prec.precision)}` : '';
+
+    const view = sim.sets.map((s, i) => ({ i, s })).slice(-12).reverse();
+    const chips = view.map(({ i, s }) =>
+      `<div class="fd-chip ${s.pnl >= 0 ? 'win' : 'loss'}" data-set="${i}"><div class="fd-chip-n">#${i + 1} ${s.pnl >= 0 ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s.pnl)}</div></div>`).join('');
+    const isOpen = p.side === 'long' || p.side === 'short';
+    const openChip = isOpen
+      ? `<div class="fd-chip open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
+
+    host.innerHTML = bar + `
+      <div class="fd-stats">
+        <div class="fd-stat"><div class="fd-stat-val">${sim.stats.sets}</div><div class="fd-stat-lbl">\u0441\u0435\u0442\u043e\u0432</div></div>
+        <div class="fd-stat"><div class="fd-stat-val" style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</div><div class="fd-stat-lbl">win rate</div></div>
+        <div class="fd-stat"><div class="fd-stat-val" style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</div><div class="fd-stat-lbl">pnl</div></div>
+      </div>
+      <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
+      <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0435\u0442\u043e\u0432</span>' : ''}</div>
+      <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
+      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0435\u0442\u0443 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
+      <div class="fs-hint">\u041c\u043e\u0434\u0435\u043b\u044c v.29.1: \u0432\u0445\u043e\u0434 10% \u0434\u0435\u043f\u043e \u043d\u0430 \u0441\u0438\u0433\u043d\u0430\u043b, \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u0435 \u0432 \u0442\u0443 \u0436\u0435 \u0441\u0442\u043e\u0440\u043e\u043d\u0443, \u043e\u0431\u0440\u0430\u0442\u043d\u044b\u0439 \u0441\u0438\u0433\u043d\u0430\u043b \u0437\u0430\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0432\u0441\u0435 \u0434\u043e\u043b\u0438 \u0438 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u0440\u0435\u0432\u0435\u0440\u0441 \u043d\u0430 10%. \u0423\u0440\u043e\u0432\u043d\u0438 \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435 - \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u0437\u0430\u043b\u0438\u0432\u043a\u0438 \u0443\u0441\u0440\u0435\u0434\u043d\u0435\u043d\u0438\u044f (TP/STOP \u0432 \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043d\u0435\u0442).</div>`;
+    wireBar();
+
+    const el = host.querySelector('#fdChart');
+    const posLines = [];
+    if (isOpen) {
+      const col = p.side === 'long' ? COL.green : COL.purple;
+      p.entries.forEach((pr, i) => posLines.push({ price: pr, color: 'rgba(102,163,255,0.5)', title: '\u0432\u0445\u043e\u0434 ' + (i + 1), style: 2 }));
+      if (p.avg) posLines.push({ price: p.avg, color: col, title: '\u0441\u0440\u0435\u0434\u043d\u044f\u044f', width: 2, style: 0 });
+    }
+    const baseView = () => window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, viewBars: 140 });
+    baseView();
+
+    let active = -1;
+    const chipEls = host.querySelectorAll('.fd-chip[data-set]');
+    chipEls.forEach(c => c.addEventListener('click', () => {
+      const idx = +c.dataset.set;
+      if (active === idx) { active = -1; chipEls.forEach(x => x.classList.remove('sel')); baseView(); return; }
+      active = idx; chipEls.forEach(x => x.classList.toggle('sel', x === c));
+      const s = sim.sets[idx];
+      const pad = Math.max(3600, (s.t1 - s.t0) * 0.35);
+      const lines = posLines.concat([
+        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0435\u0442\u0430', width: 1, style: 2 },
+        { price: s.exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: '\u0432\u044b\u0445\u043e\u0434', width: 1, style: 2 },
+      ]);
+      window.LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, visibleRange: { from: s.t0 - pad, to: s.t1 + pad } });
+    }));
   }
 
   // ---- Публичный API -------------------------------------------------------
@@ -328,5 +398,5 @@
     if (!seen) setTimeout(() => renderGuide(0), 400);
   }
 
-  window.FutStrat = { mount };
+  window.FutStrat = { mount, simulateJS, fetchFutHistory };
 })();

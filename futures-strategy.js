@@ -98,7 +98,7 @@
   // ---- Чтение списка монет из FUT_STRAT (первый столбец или 'symbol') ------
   function splitSmart(s) { const out = []; let c = '', d = 0; for (let i = 0; i < s.length; i++) { const ch = s[i]; if (ch === '[') d++; else if (ch === ']') d--; if (ch === ',' && d <= 0) { out.push(c); c = ''; } else c += ch; } out.push(c); return out; }
   function explodeRows(grid) { return grid.map(row => (row.length === 1 && /,/.test(row[0])) ? splitSmart(row[0]) : row); }
-  const BT_ORDER = ['symbol', 'tf', 'signals', 'sets', 'wins', 'losses', 'winrate', 'pnl_pct', 'realized_pct', 'unreal_pct', 'pos_side', 'pos_lots', 'pos_avg', 'last_side', 'quote_volume', 'updated', 'lot_entries', 'sets_json'];
+  const BT_ORDER = ['symbol', 'tf', 'signals', 'sets', 'wins', 'losses', 'winrate', 'pnl_pct', 'realized_pct', 'unreal_pct', 'pos_side', 'pos_lots', 'pos_avg', 'last_side', 'quote_volume', 'updated', 'lot_entries', 'sets_json', 'max_dd', 'expectancy'];
   function num(v) { v = String(v == null ? '' : v).trim(); return v === '' ? null : +v; }
   function parseStatsRow(arr, ix) {
     const g = k => { const i = ix(k); return i > -1 ? arr[i] : undefined; };
@@ -110,6 +110,7 @@
       signals: num(g('signals')) || 0, sets: num(g('sets')) || 0, wins: num(g('wins')) || 0, losses: num(g('losses')) || 0,
       winrate: num(g('winrate')), pnl_pct: num(g('pnl_pct')) || 0,
       pos_side: (side === 'long' || side === 'short') ? side : '\u2014', pos_lots: num(g('pos_lots')) || 0, pos_avg: num(g('pos_avg')) || 0,
+      max_dd: num(g('max_dd')), expectancy: num(g('expectancy')),
       sets_json: sj,
     };
   }
@@ -293,48 +294,95 @@
   function updateProgress(host, S) { const p = host.querySelector('#fsProg'); if (p) p.textContent = S.computing ? `считаю ${S.progress}/${S.total}` : ''; }
 
   function fmtDate(unixSec) { const d = new Date(unixSec * 1000); return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2); }
-  // кривая накопленного PNL: по датам (если в sets_json есть метки времени) либо по парам
-  function pnlSeries(rows) {
+  // кривая PNL: по датам (равновзвешенный портфель) либо по парам; с «что-если» стоп/тейк
+  function pnlSeries(rows, opts) {
+    opts = opts || {};
+    const stop = opts.stop > 0 ? opts.stop : 0, tp = opts.tp > 0 ? opts.tp : 0;
+    const clip = v => { let x = v; if (stop) x = Math.max(x, -stop); if (tp) x = Math.min(x, tp); return x; };
     const r = rows.filter(x => x.computed && !x.error);
     const haveTime = r.some(x => Array.isArray(x.sets_json) && x.sets_json.length && Array.isArray(x.sets_json[0]));
     if (haveTime && r.length) {
       const N = r.length, trades = [];
-      r.forEach(x => (x.sets_json || []).forEach(e => { if (Array.isArray(e) && e.length >= 2) trades.push([+e[0], +e[1]]); }));
+      r.forEach(x => (x.sets_json || []).forEach(e => { if (Array.isArray(e) && e.length >= 2) trades.push([+e[0], clip(+e[1])]); }));
       if (trades.length) {
         trades.sort((a, b) => a[0] - b[0]);
-        const day = 86400, t1 = trades[trades.length - 1][0];
-        const start = Math.floor(trades[0][0] / day) * day;
-        const labels = [], cum = []; let acc = 0, ti = 0;
-        for (let d = start; d <= t1 + day; d += day) {
-          while (ti < trades.length && trades[ti][0] < d + day) { acc += trades[ti][1]; ti++; }
-          labels.push(fmtDate(d)); cum.push(+(acc / N).toFixed(2));
+        const day = 86400, t1 = trades[trades.length - 1][0], start = Math.floor(trades[0][0] / day) * day;
+        const labels = [], cum = []; let acc = 0, ti = 0, peak = 0, maxDD = 0;
+        for (let dd = start; dd <= t1 + day; dd += day) {
+          while (ti < trades.length && trades[ti][0] < dd + day) { acc += trades[ti][1]; ti++; }
+          const v = acc / N; labels.push(fmtDate(dd)); cum.push(+v.toFixed(2));
+          if (v > peak) peak = v; if (peak - v > maxDD) maxDD = peak - v;
         }
-        return { mode: 'time', labels, cum, total: acc / N, coins: N, trades: trades.length };
+        const pnls = trades.map(t => t[1]);
+        const wins = pnls.filter(p => p > 0).length, losses = pnls.filter(p => p < 0).length;
+        const sum = pnls.reduce((a, p) => a + p, 0);
+        return { mode: 'time', labels, cum, total: sum / N, coins: N, trades: trades.length,
+          maxDD, exp: sum / pnls.length, wr: (wins + losses) ? wins / (wins + losses) * 100 : null,
+          dateFrom: fmtDate(start), dateTo: fmtDate(t1) };
       }
     }
     let acc = 0; const labels = [], cum = [], per = [];
     r.forEach(x => { acc += (x.pnl_pct || 0); labels.push(x.symbol.replace(/USDT$/, '')); cum.push(+acc.toFixed(2)); per.push(x.pnl_pct || 0); });
     return { mode: 'coins', labels, cum, per, total: acc };
   }
-  function drawPnlChart(host, S, d) {
-    if (S._chart) { try { S._chart.destroy(); } catch (e) {} S._chart = null; }
-    const cv = host.querySelector('#fsPnlCanvas');
-    if (!cv || typeof window.Chart === 'undefined' || !d.cum.length) return;
-    const up = d.total >= 0, ctx = cv.getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 0, cv.clientHeight || 130);
-    grad.addColorStop(0, up ? 'rgba(78,255,160,0.30)' : 'rgba(255,82,114,0.30)');
-    grad.addColorStop(1, 'rgba(10,11,20,0)');
+  function pnlSvg(d) {
+    const W = 340, H = 118, pad = 5, n = d.cum.length;
+    if (n < 2) return '<div class="fs-pnl-empty">мало данных для кривой</div>';
+    const min = Math.min(...d.cum, 0), max = Math.max(...d.cum, 0), span = (max - min) || 1;
+    const X = i => pad + i / (n - 1) * (W - 2 * pad), Y = v => pad + (1 - (v - min) / span) * (H - 2 * pad);
+    const up = d.total >= 0, col = up ? '#4EFFA0' : '#FF5272', gid = 'pg' + (up ? 'g' : 'r');
+    const line = d.cum.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
+    const area = line + ' L' + X(n - 1).toFixed(1) + ' ' + (H - pad) + ' L' + X(0).toFixed(1) + ' ' + (H - pad) + ' Z';
+    const zY = (min < 0 && max > 0) ? Y(0).toFixed(1) : null;
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="fs-pnl-svg">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity="0.32"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+      ${zY ? `<line x1="${pad}" y1="${zY}" x2="${W - pad}" y2="${zY}" stroke="rgba(123,132,176,0.45)" stroke-dasharray="3 3" stroke-width="1" vector-effect="non-scaling-stroke"/>` : ''}
+      <path d="${area}" fill="url(#${gid})"/>
+      <path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+  }
+  function pnlCardInner(S, d, sortDef, filtered) {
     const isTime = d.mode === 'time';
-    S._chart = new window.Chart(ctx, {
-      type: 'line',
-      data: { labels: d.labels, datasets: [{ data: d.cum, borderColor: up ? COL.green : COL.red, backgroundColor: grad, borderWidth: 2, fill: true, tension: isTime ? 0.15 : 0.25, pointRadius: 0, pointHoverRadius: 4 }] },
-      options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { title: it => it[0].label, label: it => isTime ? `портфель ${fmtPct(d.cum[it.dataIndex])}` : `накоплено ${fmtPct(d.cum[it.dataIndex])} · пара ${fmtPct(d.per[it.dataIndex])}` } } },
-        scales: { x: { display: isTime, grid: { display: false }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 6, autoSkip: true } }, y: { position: 'right', grid: { color: 'rgba(102,163,255,0.08)' }, ticks: { color: COL.muted, font: { size: 9 }, maxTicksLimit: 4, callback: v => v + '%' } } },
-        interaction: { mode: 'index', intersect: false },
-      },
+    const title = isTime ? 'Кривая портфеля (равный вес)' : 'Накопленный PNL по парам';
+    const totTxt = d.cum.length ? fmtPct(d.total) : '—';
+    const xrow = isTime ? `<div class="fs-pnl-x"><span>${d.dateFrom}</span><span>${d.dateTo}</span></div>` : '';
+    let metrics = '';
+    if (isTime) {
+      const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
+      metrics = `<div class="fs-pnl-metrics">
+        <div><b style="color:${COL.red}">-${d.maxDD.toFixed(1)}%</b><span>макс. просадка</span></div>
+        <div><b style="color:${pnlHex(d.exp)}">${fmtPct(d.exp)}</b><span>на сделку</span></div>
+        <div><b>${wrTxt}</b><span>win rate</span></div>
+        <div><b>${d.trades}</b><span>сделок</span></div>
+      </div>`;
+    }
+    const sliders = isTime ? `
+      <div class="fs-whatif">
+        <div class="fs-wi-row"><span class="fs-wi-lbl">Стоп-лосс</span><input type="range" class="fs-slider fs-wi" data-wi="stop" min="0" max="30" step="1" value="${S.stop || 0}"><span class="fs-wi-val">${S.stop ? '-' + S.stop + '%' : 'выкл'}</span></div>
+        <div class="fs-wi-row"><span class="fs-wi-lbl">Тейк-профит</span><input type="range" class="fs-slider fs-wi" data-wi="tp" min="0" max="30" step="1" value="${S.tp || 0}"><span class="fs-wi-val">${S.tp ? '+' + S.tp + '%' : 'выкл'}</span></div>
+        <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
+      </div>` : '';
+    const base = isTime
+      ? `База: условный депозит $100 на пару (всего $${(d.coins * 100).toLocaleString('ru-RU')} на ${d.coins} пар), вход 10% на сигнал. Кривая - средний результат на пару за 90 дней.`
+      : `сумма по ${d.labels.length} парам в порядке сортировки · ${sortDef.label}`;
+    return `
+      <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>
+      <div class="fs-pnlcard-wrap">${pnlSvg(d)}</div>
+      ${xrow}${metrics}${sliders}
+      <div class="fs-pnlcard-cap">${base}</div>`;
+  }
+  function wirePnlCard(host, S) {
+    host.querySelectorAll('.fs-wi').forEach(sl => {
+      sl.addEventListener('input', () => { const k = sl.dataset.wi, v = +sl.value, lbl = sl.parentElement.querySelector('.fs-wi-val'); if (lbl) lbl.textContent = v ? (k === 'stop' ? '-' : '+') + v + '%' : 'выкл'; });
+      sl.addEventListener('change', () => { S[sl.dataset.wi] = +sl.value; refreshPnlCard(host, S); });
     });
+  }
+  function refreshPnlCard(host, S) {
+    const el = host.querySelector('#fsPnlCard'); if (!el) return;
+    const sortDef = SORTS.find(s => s.key === S.sort);
+    const filtered = S.favOnly || S.hideWeak;
+    el.innerHTML = pnlCardInner(S, pnlSeries(S._shownRows || [], { stop: S.stop, tp: S.tp }), sortDef, filtered);
+    wirePnlCard(host, S);
   }
 
   function renderList(host, S) {
@@ -350,12 +398,9 @@
     rows.sort((a, b) => { if (a.computed !== b.computed) return a.computed ? -1 : 1; return (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]); });
 
     const all = S.rows, pairs = all.length;
-    const series = pnlSeries(rows);
+    S._shownRows = rows;
+    const series = pnlSeries(rows, { stop: S.stop, tp: S.tp });
     const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
-    const pnlTitle = series.mode === 'time' ? 'Кривая портфеля (равный вес)' : 'Накопленный PNL по парам';
-    const pnlCap = series.mode === 'time'
-      ? `портфель из ${series.coins} пар · среднее на пару · 90 дней`
-      : `сумма по ${series.labels.length} парам в порядке сортировки · ${sortDef.label}`;
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
@@ -377,14 +422,7 @@
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.green}">${inTrade}</div><div class="fs-stat-lbl">в сделке</div></div>
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.yellow}">${done.length - inTrade}</div><div class="fs-stat-lbl">ждут</div></div>
       </div>
-      <div class="fs-pnlcard">
-        <div class="fs-pnlcard-top">
-          <span class="fs-pnlcard-t">${pnlTitle}${filtered ? ' (по фильтру)' : ''}</span>
-          <span class="fs-pnlcard-v" style="color:${pnlHex(series.total)}">${series.cum.length ? fmtPct(series.total) : '—'}</span>
-        </div>
-        <div class="fs-pnlcard-wrap"><canvas id="fsPnlCanvas"></canvas></div>
-        <div class="fs-pnlcard-cap">${pnlCap}</div>
-      </div>
+      <div class="fs-pnlcard" id="fsPnlCard">${pnlCardInner(S, series, sortDef, filtered)}</div>
       <div class="fs-sortbar">
         <span class="fs-sortlbl">Сортировка:</span>
         ${SORTS.map(s => `<button class="fs-sortpill ${S.sort === s.key ? 'active' : ''}" data-sort="${s.key}">${s.label}</button>`).join('')}
@@ -397,7 +435,7 @@
       </div>
       <div class="fs-grid">${cards}</div>`;
 
-    drawPnlChart(host, S, series);
+    wirePnlCard(host, S);
     host.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { S.sort = b.dataset.sort; S.sliderResetFor = null; renderList(host, S); }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
@@ -537,13 +575,13 @@
     let S;
     if (data.mode === 'stats') {
       // готовая статистика бэктеста за 90 дней — показываем сразу
-      S = { rows: data.rows, source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: data.rows.length, total: data.rows.length };
+      S = { rows: data.rows, source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: data.rows.length, total: data.rows.length, stop: 0, tp: 0 };
       state[containerId] = S;
       renderList(host, S);
     } else {
       // лист содержит только список монет — считаем в браузере (прогрессивно)
       const symbols = data.symbols;
-      S = { rows: symbols.map(placeholderRow), source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length };
+      S = { rows: symbols.map(placeholderRow), source: data.source, sort: 'pnl_pct', sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: true, progress: 0, total: symbols.length, stop: 0, tp: 0 };
       state[containerId] = S;
       renderList(host, S);
       computeAll(symbols, (i, row, done, total) => {

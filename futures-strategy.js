@@ -445,16 +445,31 @@
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
     const progNote = ` · <span class="fs-demo" id="fsProg">${S.computing ? `считаю ${S.progress}/${S.total}` : ''}</span>`;
     const delistNote = delisted.length ? ` · <span class="fs-delist">${delisted.length} выбыло (PNL < ${DELIST_PNL}%)</span>` : '';
-    const runPills = `<div class="fs-runbar"><span class="fs-runlbl">Прогон:</span>${RUNS.map(rn => `<button class="fs-runpill ${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div>`;
-    const tfPills = `<div class="fs-tfbar"><span class="fs-runlbl">Таймфрейм:</span>${TFS.map(t => `<button class="fs-tfpill ${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}${t.ready ? '' : '<span class="fs-tf-soon">скоро</span>'}</button>`).join('')}</div>`;
+    const segRun = `<div class="fs-seg">${RUNS.map(rn => `<button class="${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div>`;
+    const segTf = `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
+    const controls = `<div class="fs-controls">
+      <div class="fs-ctl-row"><span class="fs-ctl-lbl">Стратегия</span>${segRun}</div>
+      <div class="fs-ctl-row"><span class="fs-ctl-lbl">Таймфрейм</span>${segTf}</div>
+      <div class="fs-seg-cap">4H / 1H - скоро, данные пока по 15m</div>
+    </div>`;
+    const filters = `<div class="fs-filters">
+      <button class="fs-chip ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
+      <button class="fs-chip qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
+    </div>`;
     const wireCommon = () => {
       host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
+      host.querySelectorAll('[data-tf]').forEach(b => b.addEventListener('click', () => {
+        const t = TFS.find(x => x.key === b.dataset.tf);
+        if (!t || S.tf === t.key) return;
+        if (!t.ready) { flashTfHint(host, t.label); return; }
+        S.tf = t.key; renderList(host, S);
+      }));
       const g = host.querySelector('[data-guide]'); if (g) g.addEventListener('click', () => renderGuide(0));
     };
     if (S.runError) {
       host.innerHTML = `
         <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · 15m · 90 дней</div></div><button class="fs-guidebtn" data-guide>🎓 Гайд</button></div>
-        ${runPills}
+        ${controls}
         <div class="fs-runerr">Прогон не найден: вкладка <b>${S.runError}</b> пуста или отсутствует.<br><br>Сделай бэктест с нужными правилами и вставь результат в эту вкладку. В терминале:<br><code>python backtest_v29.py ${S.run}</code></div>`;
       wireCommon();
       return;
@@ -470,8 +485,7 @@
         </div>
         <button class="fs-guidebtn" data-guide>🎓 Гайд</button>
       </div>
-      ${runPills}
-      ${tfPills}
+      ${controls}
       <div class="fs-stats">
         <div class="fs-stat"><div class="fs-stat-val">${pairs}</div><div class="fs-stat-lbl">пар</div></div>
         <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сделок</div></div>
@@ -479,10 +493,7 @@
         <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.purple}">${shorts}</div><div class="fs-stat-lbl">в шорте</div></div>
       </div>
       <div class="fs-pnlcard" id="fsPnlCard">${pnlCardInner(S, series, sortDef, filtered)}</div>
-      <div class="fs-sortbar">
-        <button class="fs-favbtn ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
-        <button class="fs-favbtn qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
-      </div>
+      ${filters}
       <div class="fs-sliderbar" style="display:none">
         <input type="range" class="fs-slider" min="${rng.min}" max="${rng.max}" value="${S.sliderVal}" step="1">
         <span class="fs-sliderval">${sortDef.label} ≥ ${S.sliderVal}${sortDef.unit}</span>
@@ -539,11 +550,13 @@
     const sym = symbol.replace(/USDT$/, '');
     const favBtn = () => `<button class="fs-fav ${favHas(symbol) ? 'on' : ''}" data-fav="${symbol}" style="position:static">${favHas(symbol) ? '\u2605' : '\u2606'}</button>`;
     const nameBtn = `<button class="fd-name" data-picker><span class="fd-name-t">${sym}</span><span class="fd-caret">\u25be</span></button>`;
-    const headBare = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-tf">15m</span>${favBtn()}</div>`;
+    const tfSeg = `<div class="fs-seg compact">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
+    const headBare = `<div class="fd-headwrap"><div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-spacer"></span>${favBtn()}</div><div class="fd-head2">${tfSeg}</div></div>`;
     const wireBar = () => {
       const bk = host.querySelector('[data-back]'); if (bk) bk.addEventListener('click', () => renderList(host, S));
       const fb = host.querySelector('[data-fav]'); if (fb) fb.addEventListener('click', e => { e.stopPropagation(); const on = favToggle(symbol); e.currentTarget.classList.toggle('on', on); e.currentTarget.textContent = on ? '\u2605' : '\u2606'; });
       const pk = host.querySelector('[data-picker]'); if (pk) pk.addEventListener('click', () => togglePicker(host, S, symbol));
+      host.querySelectorAll('[data-tf]').forEach(b => b.addEventListener('click', () => { const t = TFS.find(x => x.key === b.dataset.tf); if (t && !t.ready) flashTfHint(host, t.label); }));
     };
 
     host.innerHTML = headBare + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
@@ -579,11 +592,14 @@
     const openChip = isOpen
       ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
 
-    const head = `<div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div><span class="fd-tf">15m</span>${favBtn()}</div>`;
+    const head = `<div class="fd-headwrap">
+      <div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-spacer"></span>${favBtn()}</div>
+      <div class="fd-head2"><div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div>${tfSeg}</div>
+    </div>`;
 
     host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
-      <div class="fd-sub2"><span>макс. просадка <b style="color:${COL.red}">-${(sim.stats.maxDD || 0).toFixed(1)}%</b></span><span>ожидание <b style="color:${pnlHex(sim.stats.exp || 0)}">${fmtPct(sim.stats.exp || 0)}</b>/сделка</span></div>
+      <div class="fd-metrics"><div class="fd-metric"><b style="color:${COL.red}">-${(sim.stats.maxDD || 0).toFixed(1)}%</b><span>макс. просадка</span></div><div class="fd-metric"><b style="color:${pnlHex(sim.stats.exp || 0)}">${fmtPct(sim.stats.exp || 0)}</b><span>ожидание / сделка</span></div></div>
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
       <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>

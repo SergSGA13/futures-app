@@ -15,6 +15,9 @@
   const FAV_KEY = 'futStrat_fav';
 
   const WR_RED = 55.6, WR_YELLOW = 61.9, MIN_SETS = 5;
+  // Делистинг актива: если общий PNL за 90 дней ниже этого порога - актив выбывает
+  // из дашборда (в боевом режиме по нему автоматически закрываются все позиции)
+  const DELIST_PNL = -5;
   const COL = { green: '#4EFFA0', red: '#FF5272', yellow: '#FFD166', muted: '#7B84B0', blue: '#66A3FF', purple: '#9D50FF' };
 
   const wrHex = (wr, sets) => (wr == null || sets < MIN_SETS) ? COL.muted : (wr < WR_RED ? COL.red : wr < WR_YELLOW ? COL.yellow : COL.green);
@@ -42,14 +45,14 @@
 
   // ---- Гайд (обучение) ----------------------------------------------------
   const GUIDE = [
-    { t: 'Лидерборд стратегий', b: 'Здесь - результаты бэктеста индикатора v.29.1 по фьючерсам Binance на 15m. Каждая карточка = одна монета со своей статистикой отработки сигналов.' },
-    { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сделок (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - статус: в лонге/шорте с числом долей или «ждёт входа».' },
-    { t: 'Сортировка', b: 'Переключай показатель сортировки: PNL, WIN% или число сигналов. Список мгновенно пересортируется по убыванию выбранного значения.' },
-    { t: 'Ползунок-фильтр', b: 'Ползунок под сортировкой отсекает карточки, у которых выбранный показатель ниже его значения. Быстрый способ оставить только сильные по PNL или WIN%.' },
+    { t: 'Лидерборд стратегий', b: 'Здесь - результаты бэктеста индикатора v.29.1 по фьючерсам Binance. Стандарт прогона - Стоп+Тренд (выбран по умолчанию). Каждая карточка = одна монета со своей статистикой отработки сигналов за 90 дней.' },
+    { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сделок (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - текущая сторона: в лонге или в шорте с числом долей. Стратегия реверсная - после первого сигнала монета всегда в позиции.' },
+    { t: 'Прогон и таймфрейм', b: 'Прогон переключает набор правил (Базовый / Стоп / Стоп+Тренд). Таймфрейм 4H / 1H / 15m: сейчас данные считаются по 15m, сетапы 4H и 1H добавим позже (пока это дизайн на будущее).' },
+    { t: 'Отбор активов', b: 'В дашборде - исторически успешные по индикатору активы за 90 дней. Если общий PNL по монете за 90 дней опускается ниже -5%, она выбывает из списка (в боевом режиме по ней автоматически закрываются все позиции).' },
     { t: 'Избранное ★', b: 'Звезда на карточке добавляет монету в избранное (хранится на устройстве). Кнопка «★ Избранное» в панели оставляет на экране только избранные.' },
-    { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает заведомо плохие сетапы: мало статистики (менее 5 сделок), отрицательный PNL или WIN% ниже безубытка (55.6%).' },
+    { t: 'Скрыть слабые', b: 'Кнопка «Скрыть слабые» одним тапом убирает плохие сетапы: мало статистики (менее 5 сделок), неположительный PNL или WIN% ниже безубытка (55.6%).' },
     { t: 'Детальный экран', b: 'Тап по карточке открывает монету: статы (сделки / WIN% / PNL), лента истории сделок (#1 WIN +18.7% …), текущая позиция и живой график.' },
-    { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход 25% депозита на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 25%. TP/STOP в этой модели нет.' },
+    { t: 'График и модель', b: 'На графике - фьючерсные свечи, сигналы BUY/SELL индикатора и линии фактических входов усреднения со средней ценой. Модель: вход на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс. В боевом режиме по API стандарт входа - 0.25% депозита на сигнал.' },
   ];
   function closeGuide() {
     const ov = document.getElementById('fgOverlay'); if (ov) ov.remove();
@@ -341,17 +344,17 @@
     const line = d.cum.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
     const area = line + ' L' + X(n - 1).toFixed(1) + ' ' + (H - padB) + ' L' + X(0).toFixed(1) + ' ' + (H - padB) + ' Z';
     const zY = (min < 0 && max > 0) ? Y(0).toFixed(1) : null;
-    // Подписи дат на нижней оси (если есть метки)
+    // Подписи нижней оси - только в режиме по датам (никаких имён монет на оси X)
     let dateAxis = '';
-    if (d.labels && d.labels.length >= 2) {
-      const step = Math.max(1, Math.floor(n / 6));
+    if (d.mode === 'time' && d.labels && d.labels.length >= 2) {
+      const target = 6, step = Math.max(1, Math.round(n / target));
       const ticks = [];
       for (let i = 0; i < n; i += step) ticks.push(i);
       if (ticks[ticks.length - 1] !== n - 1) ticks.push(n - 1);
       dateAxis = ticks.map(i => {
         const lbl = d.labels[i] || '';
         const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
-        return `<text x="${X(i).toFixed(1)}" y="${H - 3}" text-anchor="${anchor}" font-size="8" fill="rgba(123,132,176,0.7)" font-family="sans-serif">${lbl}</text>`;
+        return `<line x1="${X(i).toFixed(1)}" y1="${(H - padB).toFixed(1)}" x2="${X(i).toFixed(1)}" y2="${(H - padB + 3).toFixed(1)}" stroke="rgba(123,132,176,0.4)" stroke-width="1" vector-effect="non-scaling-stroke"/><text x="${X(i).toFixed(1)}" y="${H - 5}" text-anchor="${anchor}" font-size="8.5" fill="rgba(123,132,176,0.85)" font-family="sans-serif">${lbl}</text>`;
       }).join('');
     }
     return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="fs-pnl-svg">
@@ -364,9 +367,8 @@
   }
   function pnlCardInner(S, d, sortDef, filtered) {
     const isTime = d.mode === 'time';
-    const title = 'Накопленный PNL по парам';
+    const title = isTime ? 'Накопленный PNL по дням' : 'Накопленный PNL по парам';
     const totTxt = d.cum.length ? fmtPct(d.total) : '—';
-    const xrow = (isTime && d.dateFrom) ? `<div class="fs-pnl-x"><span>${d.dateFrom}</span><span>${d.dateTo}</span></div>` : '';
     let metrics = '';
     if (isTime) {
       const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
@@ -384,14 +386,14 @@
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
     const base = isTime
-      ? `Кривая - средний результат на пару за 90 дней. Вход 25% депозита на сигнал.`
-      : `накоплено по ${d.labels.length} парам · 90 дней · 15m`;
+      ? `Ось снизу - даты истории за 90 дней. Кривая - средний накопленный результат на пару, вход 25% депозита на сигнал.`
+      : `накоплено по ${d.labels.length} парам · ось появится по датам, когда в данных есть метки времени сделок`;
     const dep = isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
     return `
       <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>
       ${dep}
       <div class="fs-pnlcard-wrap">${pnlSvg(d)}</div>
-      ${xrow}${metrics}${sliders}
+      ${metrics}${sliders}
       <div class="fs-pnlcard-cap">${base}</div>`;
   }
   function wirePnlCard(host, S) {
@@ -408,28 +410,43 @@
     wirePnlCard(host, S);
   }
 
+  // подсказка для пока недоступных таймфреймов (4H/1H - только дизайн)
+  function flashTfHint(host, label) {
+    let h = host.querySelector('#fsTfHint');
+    if (!h) { h = document.createElement('div'); h.id = 'fsTfHint'; h.className = 'fs-tfhint'; host.appendChild(h); }
+    h.textContent = `Таймфрейм ${label} - в разработке. Сетапы 4H / 1H добавим позже, данные пока считаются по 15m.`;
+    h.classList.add('show');
+    clearTimeout(h._t); h._t = setTimeout(() => h.classList.remove('show'), 2600);
+  }
+
   function renderList(host, S) {
     S.sort = FIXED_SORT; // сортировка вшита
     const sortDef = SORTS.find(s => s.key === S.sort);
-    const done = S.rows.filter(r => r.computed && !r.error);
-    const rng = metricRange(done.length ? done : S.rows, S.sort);
+    // Делистинг: активы с общим PNL за 90 дней ниже порога выбывают из дашборда
+    const delisted = S.rows.filter(r => r.computed && !r.error && r.pnl_pct < DELIST_PNL);
+    const universe = S.rows.filter(r => !(r.computed && !r.error && r.pnl_pct < DELIST_PNL));
+    const done = universe.filter(r => r.computed && !r.error);
+    const rng = metricRange(done.length ? done : universe, S.sort);
     if (S.sliderVal == null || S.sliderResetFor !== S.sort) { S.sliderVal = rng.min; S.sliderResetFor = S.sort; }
 
-    let rows = S.rows.slice();
+    let rows = universe.slice();
     if (S.favOnly) rows = rows.filter(r => favHas(r.symbol));
     if (S.hideWeak) rows = rows.filter(r => r.computed && !r.error && !isWeak(r));
     rows = rows.filter(r => !r.computed || (r[S.sort] == null ? -1e9 : r[S.sort]) >= S.sliderVal);
     rows.sort((a, b) => { if (a.computed !== b.computed) return a.computed ? -1 : 1; return (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]); });
 
-    const all = S.rows, pairs = all.length;
+    const pairs = universe.length;
     S._shownRows = rows;
     const series = pnlSeries(rows, { stop: S.stop, tp: S.tp });
     const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
-    const inTrade = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
+    const longs = done.filter(r => r.pos_side === 'long').length;
+    const shorts = done.filter(r => r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
     const progNote = ` · <span class="fs-demo" id="fsProg">${S.computing ? `считаю ${S.progress}/${S.total}` : ''}</span>`;
+    const delistNote = delisted.length ? ` · <span class="fs-delist">${delisted.length} выбыло (PNL < ${DELIST_PNL}%)</span>` : '';
     const runPills = `<div class="fs-runbar"><span class="fs-runlbl">Прогон:</span>${RUNS.map(rn => `<button class="fs-runpill ${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div>`;
+    const tfPills = `<div class="fs-tfbar"><span class="fs-runlbl">Таймфрейм:</span>${TFS.map(t => `<button class="fs-tfpill ${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}${t.ready ? '' : '<span class="fs-tf-soon">скоро</span>'}</button>`).join('')}</div>`;
     const wireCommon = () => {
       host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
       const g = host.querySelector('[data-guide]'); if (g) g.addEventListener('click', () => renderGuide(0));
@@ -449,16 +466,17 @@
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · 15m · 90 дней${srcNote}${progNote}</div>
+          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · ${S.tf} · 90 дней${srcNote}${progNote}${delistNote}</div>
         </div>
         <button class="fs-guidebtn" data-guide>🎓 Гайд</button>
       </div>
       ${runPills}
+      ${tfPills}
       <div class="fs-stats">
         <div class="fs-stat"><div class="fs-stat-val">${pairs}</div><div class="fs-stat-lbl">пар</div></div>
         <div class="fs-stat"><div class="fs-stat-val">${totalSets}</div><div class="fs-stat-lbl">сделок</div></div>
-        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.green}">${inTrade}</div><div class="fs-stat-lbl">в сделке</div></div>
-        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.yellow}">${done.length - inTrade}</div><div class="fs-stat-lbl">ждут</div></div>
+        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.green}">${longs}</div><div class="fs-stat-lbl">в лонге</div></div>
+        <div class="fs-stat"><div class="fs-stat-val" style="color:${COL.purple}">${shorts}</div><div class="fs-stat-lbl">в шорте</div></div>
       </div>
       <div class="fs-pnlcard" id="fsPnlCard">${pnlCardInner(S, series, sortDef, filtered)}</div>
       <div class="fs-sortbar">
@@ -473,6 +491,12 @@
 
     wirePnlCard(host, S);
     host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
+    host.querySelectorAll('[data-tf]').forEach(b => b.addEventListener('click', () => {
+      const t = TFS.find(x => x.key === b.dataset.tf);
+      if (!t || S.tf === t.key) return;
+      if (!t.ready) { flashTfHint(host, t.label); return; } // 4H/1H - только дизайн, данные пока 15m
+      S.tf = t.key; renderList(host, S);
+    }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
     host.querySelector('[data-guide]').addEventListener('click', () => renderGuide(0));
@@ -608,6 +632,15 @@
     { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
     { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
   ];
+  // Стандарт стратегии: прогон Стоп+Тренд выбран по умолчанию
+  const DEFAULT_RUN = 'sltrend';
+  // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
+  const TFS = [
+    { key: '4h', label: '4H', ready: false },
+    { key: '1h', label: '1H', ready: false },
+    { key: '15m', label: '15m', ready: true },
+  ];
+  const DEFAULT_TF = '15m';
 
   async function loadRun(host, S, runKey) {
     const run = RUNS.find(r => r.key === runKey) || RUNS[0];
@@ -637,10 +670,10 @@
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
-    const S = { rows: [], run: 'base', source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
     state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
-    await loadRun(host, S, 'base');
+    await loadRun(host, S, DEFAULT_RUN);
     let seen = false; try { seen = localStorage.getItem('futStrat_guide_seen') === '1'; } catch (e) {}
     if (!seen) setTimeout(() => renderGuide(0), 400);
   }

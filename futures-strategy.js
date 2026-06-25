@@ -108,13 +108,14 @@
     const sym = normSym(g('symbol')); if (!sym) return null;
     const side = String(g('pos_side') || '').trim().toLowerCase();
     let sj = []; try { const j = JSON.parse(g('sets_json')); if (Array.isArray(j)) sj = j; } catch (e) {}
+    let le = []; try { const j = JSON.parse(g('lot_entries')); if (Array.isArray(j)) le = j; } catch (e) {}
     return {
       symbol: sym, tf: String(g('tf') || '15m').trim() || '15m', computed: true,
       signals: num(g('signals')) || 0, sets: num(g('sets')) || 0, wins: num(g('wins')) || 0, losses: num(g('losses')) || 0,
       winrate: num(g('winrate')), pnl_pct: num(g('pnl_pct')) || 0,
       pos_side: (side === 'long' || side === 'short') ? side : '\u2014', pos_lots: num(g('pos_lots')) || 0, pos_avg: num(g('pos_avg')) || 0,
       max_dd: num(g('max_dd')), expectancy: num(g('expectancy')),
-      sets_json: sj,
+      sets_json: sj, lot_entries: le,
     };
   }
 
@@ -160,6 +161,32 @@
     } catch (e) { return allowDefault ? { mode: 'compute', symbols: DEFAULT_SYMS.slice(), source: 'default' } : { mode: 'error', tab: tab }; }
   }
 
+  // Кривая эквити портфеля из вкладки <TAB>_PF (колонки date, ts, equity_usd, equity_pct).
+  // Возвращает {points:[{ts,pct,usd}], deposit} или null, если вкладки нет.
+  async function readPfCurve(tab) {
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab + '_PF')}`;
+      const r = await tfetch(url, 12000); if (!r.ok) throw 0;
+      const text = await r.text();
+      if (/setResponse/.test(text) || /error/i.test(text.slice(0, 200))) throw 0;
+      let grid = localParse(text);
+      if (!grid || grid.length < 2) throw 0;
+      grid = explodeRows(grid).filter(row => row.some(c => String(c).trim() !== ''));
+      const head = grid[0].map(h => String(h).trim().toLowerCase());
+      const iTs = head.indexOf('ts'), iPct = head.indexOf('equity_pct'), iUsd = head.indexOf('equity_usd');
+      if (iTs === -1 || iPct === -1) throw 0;
+      const pts = [];
+      for (const a of grid.slice(1)) {
+        const ts = num(a[iTs]), pct = num(a[iPct]);
+        if (ts == null || pct == null) continue;
+        pts.push({ ts: +ts, pct: +pct, usd: iUsd > -1 ? num(a[iUsd]) : null });
+      }
+      pts.sort((x, y) => x.ts - y.ts);
+      if (pts.length < 2) throw 0;
+      return { points: pts, deposit: pts[0].usd || null };
+    } catch (e) { return null; }
+  }
+
   // ---- Кэш расчётов (localStorage, TTL 6ч) --------------------------------
   const CACHE_KEY = 'futStrat_cache_v1', CACHE_TTL = 6 * 3600 * 1000;
   function cacheGet(sym) { try { const e = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}')[sym]; if (e && Date.now() - e.ts < CACHE_TTL) return e.s; } catch (e) {} return null; }
@@ -180,7 +207,8 @@
     const sigs = window.LiveChart.computeSignalList(candles, 15);
     const sim = simulateJS(candles, sigs); const p = sim.position;
     const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4)]);
-    const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, sets_json: sj };
+    const le = (p.side === 'long' || p.side === 'short') ? (p.entries || []).map(x => +x) : [];
+    const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, max_dd: sim.stats.maxDD, expectancy: sim.stats.exp, sets_json: sj, lot_entries: le };
     cacheSet(sym, s);
     return Object.assign({ symbol: sym, tf: '15m', computed: true }, s);
   }
@@ -305,11 +333,28 @@
 
   function fmtDate(unixSec) { const d = new Date(unixSec * 1000); return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2); }
   // кривая PNL: по датам (равновзвешенный портфель) либо по парам; с «что-если» стоп/тейк
+  function pfOpts(S) {
+    const pf = S._pfCache && S._pfCache[S.run];
+    return pf ? { pf: pf.points, pfDeposit: pf.deposit } : {};
+  }
   function pnlSeries(rows, opts) {
     opts = opts || {};
     const stop = opts.stop > 0 ? opts.stop : 0, tp = opts.tp > 0 ? opts.tp : 0;
     const clip = v => { let x = v; if (stop) x = Math.max(x, -stop); if (tp) x = Math.min(x, tp); return x; };
     const r = rows.filter(x => x.computed && !x.error);
+    // если есть кривая портфеля (вкладка <TAB>_PF) - показываем реальную модель 0.25% депозита
+    if (opts.pf && opts.pf.length >= 2) {
+      const pf = opts.pf;
+      const labels = pf.map(p => fmtDate(p.ts)), cum = pf.map(p => +p.pct);
+      let peak = cum[0], maxDD = 0;
+      cum.forEach(v => { if (v > peak) peak = v; const dd = peak - v; if (dd > maxDD) maxDD = dd; });
+      // win rate и число сделок не зависят от сайзинга - берём из строк
+      let wins = 0, losses = 0, n = 0;
+      r.forEach(x => (x.sets_json || []).forEach(e => { const v = Array.isArray(e) ? +e[1] : +e; n++; if (v > 0) wins++; else if (v < 0) losses++; }));
+      return { mode: 'portfolio', labels, cum, total: cum[cum.length - 1], coins: r.length,
+        trades: n, maxDD, wr: (wins + losses) ? wins / (wins + losses) * 100 : null,
+        deposit: opts.pfDeposit || null, dateFrom: labels[0], dateTo: labels[labels.length - 1] };
+    }
     const haveTime = r.some(x => Array.isArray(x.sets_json) && x.sets_json.length && Array.isArray(x.sets_json[0]));
     if (haveTime && r.length) {
       const N = r.length, trades = [];
@@ -367,10 +412,20 @@
   }
   function pnlCardInner(S, d, sortDef, filtered) {
     const isTime = d.mode === 'time';
-    const title = isTime ? 'Накопленный PNL по дням' : 'Накопленный PNL по парам';
+    const isPf = d.mode === 'portfolio';
+    const hasAxis = isTime || isPf;
+    const title = isPf ? 'Накопленный PNL портфеля' : isTime ? 'Накопленный PNL по дням' : 'Накопленный PNL по парам';
     const totTxt = d.cum.length ? fmtPct(d.total) : '—';
     let metrics = '';
-    if (isTime) {
+    if (isPf) {
+      const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
+      metrics = `<div class="fs-pnl-metrics">
+        <div><b style="color:${COL.red}">-${d.maxDD.toFixed(1)}%</b><span>макс. просадка</span></div>
+        <div><b>${wrTxt}</b><span>win rate</span></div>
+        <div><b>${d.trades}</b><span>сделок</span></div>
+        <div><b>${d.coins}</b><span>монет</span></div>
+      </div>`;
+    } else if (isTime) {
       const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
       metrics = `<div class="fs-pnl-metrics">
         <div><b style="color:${COL.red}">-${d.maxDD.toFixed(1)}%</b><span>макс. просадка</span></div>
@@ -379,16 +434,21 @@
         <div><b>${d.trades}</b><span>сделок</span></div>
       </div>`;
     }
+    // ползунки что-если работают только для прикидочной модели «по парам», не для готовой кривой портфеля
     const sliders = isTime ? `
       <div class="fs-whatif">
         <div class="fs-wi-row"><span class="fs-wi-lbl">Стоп-лосс</span><input type="range" class="fs-slider fs-wi" data-wi="stop" min="0" max="30" step="1" value="${S.stop || 0}"><span class="fs-wi-val">${S.stop ? '-' + S.stop + '%' : 'выкл'}</span></div>
         <div class="fs-wi-row"><span class="fs-wi-lbl">Тейк-профит</span><input type="range" class="fs-slider fs-wi" data-wi="tp" min="0" max="30" step="1" value="${S.tp || 0}"><span class="fs-wi-val">${S.tp ? '+' + S.tp + '%' : 'выкл'}</span></div>
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
-    const base = isTime
-      ? `Ось снизу - даты истории за 90 дней. Кривая - средний накопленный результат на пару, вход 25% депозита на сигнал.`
+    const base = isPf
+      ? `Реальная портфельная модель: общий депозит, вход 0.25% на сигнал, компаундинг, плечо 1x. Ось снизу - даты за 90 дней.`
+      : isTime
+      ? `Прикидка «среднее по парам» (вход 25% сленва на сигнал). Точная модель депозита - переключи, когда заполнена вкладка ${(RUNS.find(r => r.key === S.run) || {}).tab || ''}_PF.`
       : `накоплено по ${d.labels.length} парам · ось появится по датам, когда в данных есть метки времени сделок`;
-    const dep = isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
+    const dep = isPf
+      ? `<div class="fs-pnl-dep">Общий депозит: <b>$${d.deposit ? (+d.deposit).toLocaleString('ru-RU') : '—'}</b> · вход 0.25% на сигнал</div>`
+      : isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
     return `
       <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>
       ${dep}
@@ -406,7 +466,7 @@
     const el = host.querySelector('#fsPnlCard'); if (!el) return;
     const sortDef = SORTS.find(s => s.key === S.sort);
     const filtered = S.favOnly || S.hideWeak;
-    el.innerHTML = pnlCardInner(S, pnlSeries(S._shownRows || [], { stop: S.stop, tp: S.tp }), sortDef, filtered);
+    el.innerHTML = pnlCardInner(S, pnlSeries(S._shownRows || [], Object.assign({ stop: S.stop, tp: S.tp }, pfOpts(S))), sortDef, filtered);
     wirePnlCard(host, S);
   }
 
@@ -437,7 +497,7 @@
 
     const pairs = universe.length;
     S._shownRows = rows;
-    const series = pnlSeries(rows, { stop: S.stop, tp: S.tp });
+    const series = pnlSeries(rows, Object.assign({ stop: S.stop, tp: S.tp }, pfOpts(S)));
     const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const longs = done.filter(r => r.pos_side === 'long').length;
@@ -562,12 +622,10 @@
     host.innerHTML = headBare + '<div class="fd-loading">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0438 \u0440\u0430\u0441\u0447\u0451\u0442 \u0441\u0442\u0440\u0430\u0442\u0435\u0433\u0438\u0438\u2026</div>';
     wireBar();
 
-    let candles, sim, markers;
+    let candles, markers;
     try {
       candles = await fetchFutHistory(symbol, 90);
       if (!candles || candles.length < 60) throw new Error('empty');
-      const sigs = window.LiveChart.computeSignalList(candles, 15);
-      sim = simulateJS(candles, sigs);
       markers = window.LiveChart.computeSignals(candles, 15);
     } catch (err) {
       host.innerHTML = headBare + `<div class="fd-overlay err" style="position:static;padding:30px 16px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0433\u0440\u0430\u0444\u0438\u043a \u043f\u0430\u0440\u044b ${sym}.<br>\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e, \u0435\u0451 \u043d\u0435\u0442 \u043d\u0430 \u0444\u044c\u044e\u0447\u0435\u0440\u0441\u0430\u0445 Binance.<br><button class="lc-retry" data-retry>\u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u044c</button></div>`;
@@ -576,68 +634,70 @@
       return;
     }
 
-    const p = sim.position;
-    const st = p.side === 'long' ? { txt: '\u0412 \u041b\u041e\u041d\u0413\u0415 \u00d7' + p.lots, cls: 'long' }
-      : p.side === 'short' ? { txt: '\u0412 \u0428\u041e\u0420\u0422\u0415 \u00d7' + p.lots, cls: 'short' }
-      : { txt: '\u0416\u0414\u0401\u0422 \u0412\u0425\u041e\u0414\u0410', cls: 'wait' };
-    const wr = sim.stats.winrate;
-    const wrTxt = wr == null ? '-' : (sim.stats.sets < MIN_SETS ? '~' + Math.round(wr) : Math.round(wr)) + '%';
+    // ВАЖНО: цифры берём из строки бэктеста выбранного прогона (чтобы деталь = карточке),
+    // живые свечи и маркеры - только для визуализации графика.
+    if (!row) { renderList(host, S); return; }
+    const st = row.pos_side === 'long' ? { txt: '\u0412 \u041b\u041e\u041d\u0413\u0415 \u00d7' + row.pos_lots, cls: 'long' }
+      : row.pos_side === 'short' ? { txt: '\u0412 \u0428\u041e\u0420\u0422\u0415 \u00d7' + row.pos_lots, cls: 'short' }
+      : { txt: '\u0412\u041d\u0415 \u0420\u042b\u041d\u041a\u0410', cls: 'wait' };
+    const wr = row.winrate;
+    const wrTxt = wr == null ? '-' : (row.sets < MIN_SETS ? '~' + Math.round(wr) : Math.round(wr)) + '%';
     const prec = precisionFor(candles[candles.length - 1].close);
-    const avgTxt = p.avg ? ` \u00b7 \u0441\u0440\u0435\u0434\u043d\u044f\u044f ${p.avg.toFixed(prec.precision)}` : '';
+    const isOpen = row.pos_side === 'long' || row.pos_side === 'short';
+    const avgTxt = (isOpen && row.pos_avg) ? ` \u00b7 \u0441\u0440\u0435\u0434\u043d\u044f\u044f ${row.pos_avg.toFixed(prec.precision)}` : '';
 
-    const view = sim.sets.map((s, i) => ({ i, s })).reverse();
-    const chips = view.map(({ i, s }) =>
-      `<div class="fd-chip ${s.pnl >= 0 ? 'win' : 'loss'}" data-set="${i}"><div class="fd-chip-n">#${i + 1} ${s.pnl >= 0 ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(s.pnl)}</div></div>`).join('');
-    const isOpen = p.side === 'long' || p.side === 'short';
+    // сделки из бэктеста: sets_json = [[ts_выхода, pnl%], ...]
+    const sets = (row.sets_json || []).map((e, i) => ({ i, t: Array.isArray(e) ? +e[0] : 0, pnl: Array.isArray(e) ? +e[1] : +e }));
+    const view = sets.slice().reverse();
+    const chips = view.map(({ i, pnl }) =>
+      `<div class="fd-chip ${pnl >= 0 ? 'win' : 'loss'}" data-set="${i}"><div class="fd-chip-n">#${i + 1} ${pnl >= 0 ? 'WIN' : 'LOSS'}</div><div class="fd-chip-v">${fmtPct(pnl)}</div></div>`).join('');
     const openChip = isOpen
-      ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${p.side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${p.lots}</div></div>` : '';
+      ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${row.pos_side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${row.pos_lots}</div></div>` : '';
 
     const head = `<div class="fd-headwrap">
       <div class="fd-head"><button class="fd-back" data-back>\u2190</button>${nameBtn}<span class="fd-spacer"></span>${favBtn()}</div>
-      <div class="fd-head2"><div class="fd-hstats"><div class="fd-hstat"><b>${sim.stats.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, sim.stats.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(sim.stats.pnlPct)}">${fmtPct(sim.stats.pnlPct)}</b><span>PNL</span></div></div>${tfSeg}</div>
+      <div class="fd-head2"><div class="fd-hstats"><div class="fd-hstat"><b>${row.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, row.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(row.pnl_pct)}">${fmtPct(row.pnl_pct)}</b><span>PNL</span></div></div>${tfSeg}</div>
     </div>`;
 
+    const runLabel = (RUNS.find(r => r.key === S.run) || {}).label || '';
     host.innerHTML = head + `
       <div class="fd-pos ${st.cls}">${st.txt}${avgTxt}</div>
-      <div class="fd-metrics"><div class="fd-metric"><b style="color:${COL.red}">-${(sim.stats.maxDD || 0).toFixed(1)}%</b><span>макс. просадка</span></div><div class="fd-metric"><b style="color:${pnlHex(sim.stats.exp || 0)}">${fmtPct(sim.stats.exp || 0)}</b><span>ожидание / сделка</span></div></div>
+      <div class="fd-metrics"><div class="fd-metric"><b style="color:${COL.red}">-${(row.max_dd || 0).toFixed(1)}%</b><span>макс. просадка</span></div><div class="fd-metric"><b style="color:${pnlHex(row.expectancy || 0)}">${fmtPct(row.expectancy || 0)}</b><span>ожидание / сделка</span></div></div>
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
-      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u043e\u0434\u0441\u0432\u0435\u0442\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
-      <div class="fs-hint">Модель v.29.1: вход 25% депо на сигнал, усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс на 25%. Несколько входов в одну сторону - это одна сделка. Уровни на графике - фактические заливки усреднения (TP/STOP в этой модели нет).</div>`;
+      <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u0440\u0438\u0431\u043b\u0438\u0437\u0438\u0442\u044c \u043d\u0430 \u0433\u0440\u0430\u0444\u0438\u043a\u0435</span></div>
+      <div class="fs-hint">Цифры - из бэктеста прогона «${runLabel}». Маркеры BUY/SELL - сигналы индикатора v.29.1 на живых свечах. Модель: усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс. Боевой стандарт входа по API - 0.25% депозита на сигнал.</div>`;
     wireBar();
 
     const el = host.querySelector('#fdChart');
     const last = candles[candles.length - 1].time;
-    // линии текущей набранной позиции (по умолчанию и при переоткрытии)
+    // линии текущей набранной позиции (из бэктеста: lot_entries + средняя)
     const posLines = [];
     if (isOpen) {
-      const col = p.side === 'long' ? COL.green : COL.purple;
-      p.entries.forEach((pr, i) => posLines.push({ price: pr, color: 'rgba(102,163,255,0.5)', title: '\u0432\u0445\u043e\u0434 ' + (i + 1), style: 2 }));
-      if (p.avg) posLines.push({ price: p.avg, color: col, title: '\u0441\u0440\u0435\u0434\u043d\u044f\u044f', width: 2, style: 0 });
+      const col = row.pos_side === 'long' ? COL.green : COL.purple;
+      (row.lot_entries || []).forEach((pr, i) => posLines.push({ price: +pr, color: 'rgba(102,163,255,0.5)', title: '\u0432\u0445\u043e\u0434 ' + (i + 1), style: 2 }));
+      if (row.pos_avg) posLines.push({ price: row.pos_avg, color: col, title: '\u0441\u0440\u0435\u0434\u043d\u044f\u044f', width: 2, style: 0 });
     }
     const baseView = () => window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, viewBars: 140 });
     baseView();
 
     let active = null;
     const chipEls = host.querySelectorAll('.fd-chip[data-set]');
+    const setByIx = {}; sets.forEach(s => { setByIx[s.i] = s; });
     chipEls.forEach(c => c.addEventListener('click', () => {
       const ds = c.dataset.set;
       if (active === ds) { active = null; chipEls.forEach(x => x.classList.remove('sel')); baseView(); return; }
       active = ds; chipEls.forEach(x => x.classList.toggle('sel', x === c));
       if (ds === 'open') {
-        const from = p.t0 || candles[Math.max(0, candles.length - 140)].time;
+        const from = candles[Math.max(0, candles.length - 140)].time;
         const pad = Math.max(3600, (last - from) * 0.15);
         window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: from - pad, to: last + pad } });
         return;
       }
-      // выбран исторический сет: показываем ТОЛЬКО его (добор объединён в одну сделку)
-      const s = sim.sets[+ds];
-      const pad = Math.max(3600, (s.t1 - s.t0) * 0.35);
-      const lines = [
-        { price: s.entryAvg, color: COL.yellow, title: '\u0432\u0445\u043e\u0434 \u0441\u0434\u0435\u043b\u043a\u0438', width: 2, style: 2 },
-        { price: s.exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: '\u0432\u044b\u0445\u043e\u0434', width: 2, style: 2 },
-      ];
-      window.LiveChart.renderInto(el, { candles, markers, priceLines: lines, precision: prec, visibleRange: { from: s.t0 - pad, to: s.t1 + pad } });
+      // исторический сет: приближаем график к моменту выхода сделки
+      const s = setByIx[+ds]; if (!s || !s.t) { baseView(); return; }
+      const win = 18 * 3600;   // ~окно вокруг выхода
+      window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
     }));
   }
 
@@ -662,6 +722,16 @@
     const run = RUNS.find(r => r.key === runKey) || RUNS[0];
     S.run = run.key; S.runError = false; S.computing = false; S._chart = null;
     S._runCache = S._runCache || {};
+    S._pfCache = S._pfCache || {};
+    // кривая портфеля (вкладка <TAB>_PF) — догружаем в фоне, не блокируя список
+    const ensurePf = () => {
+      if (S._pfCache[run.key] !== undefined) return;
+      readPfCurve(run.tab).then(pf => {
+        S._pfCache[run.key] = pf;
+        if (S.run === run.key && !S.computing) renderList(host, S);
+      });
+    };
+    ensurePf();
     if (S._runCache[run.key]) { const c = S._runCache[run.key]; S.rows = c.rows; S.source = c.source; renderList(host, S); return; }
     host.innerHTML = `<div class="fs-loading">Загрузка прогона «${run.label}»…</div>`;
     const data = await readSheet(run.tab, run.key === 'base');

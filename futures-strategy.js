@@ -465,8 +465,10 @@
   function refreshPnlCard(host, S) {
     const el = host.querySelector('#fsPnlCard'); if (!el) return;
     const sortDef = SORTS.find(s => s.key === S.sort);
-    const filtered = S.favOnly || S.hideWeak;
-    el.innerHTML = pnlCardInner(S, pnlSeries(S._shownRows || [], Object.assign({ stop: S.stop, tp: S.tp }, pfOpts(S))), sortDef, filtered);
+    const pf = pfOpts(S);
+    const rowsForSeries = pf.pf ? (S._doneRows || []) : (S._shownRows || []);
+    const filtered = !pf.pf && (S.favOnly || S.hideWeak);
+    el.innerHTML = pnlCardInner(S, pnlSeries(rowsForSeries, Object.assign({ stop: S.stop, tp: S.tp }, pf)), sortDef, filtered);
     wirePnlCard(host, S);
   }
 
@@ -488,6 +490,11 @@
     const done = universe.filter(r => r.computed && !r.error);
     const rng = metricRange(done.length ? done : universe, S.sort);
     if (S.sliderVal == null || S.sliderResetFor !== S.sort) { S.sliderVal = rng.min; S.sliderResetFor = S.sort; }
+    // защита: если значение ползунка стало мусорным/вне диапазона - сбрасываем на минимум
+    if (Number.isFinite(rng.min) && Number.isFinite(rng.max) &&
+        (!Number.isFinite(S.sliderVal) || S.sliderVal < rng.min || S.sliderVal > rng.max)) {
+      S.sliderVal = rng.min; S.sliderResetFor = S.sort;
+    }
 
     let rows = universe.slice();
     if (S.favOnly) rows = rows.filter(r => favHas(r.symbol));
@@ -497,8 +504,13 @@
 
     const pairs = universe.length;
     S._shownRows = rows;
-    const series = pnlSeries(rows, Object.assign({ stop: S.stop, tp: S.tp }, pfOpts(S)));
-    const filtered = S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min);
+    S._doneRows = done;
+    const pf = pfOpts(S);
+    const hasPf = !!pf.pf;
+    // портфельная кривая фиксирована (из Python по всей активной вселенной) - метрики по done, без UI-фильтра;
+    // прикидка «по парам» считается по отфильтрованному списку
+    const series = pnlSeries(hasPf ? done : rows, Object.assign({ stop: S.stop, tp: S.tp }, pf));
+    const filtered = !hasPf && (S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min));
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const longs = done.filter(r => r.pos_side === 'long').length;
     const shorts = done.filter(r => r.pos_side === 'short').length;
@@ -728,7 +740,9 @@
       if (S._pfCache[run.key] !== undefined) return;
       readPfCurve(run.tab).then(pf => {
         S._pfCache[run.key] = pf;
-        if (S.run === run.key && !S.computing) renderList(host, S);
+        // обновляем ТОЛЬКО карточку PNL (refreshPnlCard сам no-op, если карточки ещё нет),
+        // чтобы не перерисовывать список на возможно ещё не загруженных строках
+        if (S.run === run.key && !S.computing) refreshPnlCard(host, S);
       });
     };
     ensurePf();

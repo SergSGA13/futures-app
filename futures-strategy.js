@@ -206,7 +206,8 @@
     if (!candles || candles.length < 60) throw new Error('thin');
     const sigs = window.LiveChart.computeSignalList(candles, 15);
     const sim = simulateJS(candles, sigs); const p = sim.position;
-    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4)]);
+    const prec = precisionFor(candles[candles.length - 1].close);
+    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4), st.side, +st.entryAvg.toFixed(prec.precision), +st.exitPrice.toFixed(prec.precision), (st.entries || []).map(p => +p.toFixed(prec.precision))]);
     const le = (p.side === 'long' || p.side === 'short') ? (p.entries || []).map(x => +x) : [];
     const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, max_dd: sim.stats.maxDD, expectancy: sim.stats.exp, sets_json: sj, lot_entries: le };
     cacheSet(sym, s);
@@ -273,7 +274,7 @@
       let realized = 0, closeNote = 0, totQ = 0, totCost = 0;
       for (const { p, q } of pos.lots) { realized += pos.side === 'long' ? q * (price - p) : q * (p - price); closeNote += q * price; totQ += q; totCost += p * q; }
       const cfee = closeNote * SIM.fee; eq += realized - cfee; setPnl += realized - cfee;
-      sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side });
+      sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side, entries: pos.lots.map(l => l.p) });
       openPos(s.side, i);
     }
     let pside = '—', plots = 0, pavg = 0, entries = [], unreal = 0, pt0 = null;
@@ -521,13 +522,11 @@
     const segTf = `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
     const controls = `<div class="fs-controls">
       <div class="fs-ctl-row">${segRun}<span class="fs-seg-div"></span>${segTf}</div>
-      <div class="fs-seg-cap">4H / 1H - скоро, данные пока по 15m</div>
     </div>`;
-    const filters = `<div class="fs-filters">
+    const filters = `<div class="fs-filters fs-panel">
       <button class="fs-chip ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
       <button class="fs-chip qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
       <div class="fs-search${S.query ? ' has' : ''}"><span class="fs-search-ic">🔍</span><input class="fs-search-in" type="text" inputmode="search" placeholder="Поиск актива" value="${(S.query || '').replace(/"/g, '&quot;')}"><button class="fs-search-x" data-searchx aria-label="Очистить">×</button></div>
-      <button class="fs-chip guide" data-guide>🎓 Гайд</button>
     </div>`;
     const wireCommon = () => {
       host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
@@ -558,6 +557,7 @@
         <div>
           <div class="fs-title">Futures-стратегии</div>
           <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · ${S.tf} · 90 дней${srcNote}${progNote}${delistNote}</div>
+          <div class="fs-guide-inline"><button class="fs-chip guide fs-guide-top" data-guide>🎓 Гайд</button></div>
         </div>
       </div>
       ${controls}
@@ -748,9 +748,25 @@
         return;
       }
       // исторический сет: приближаем график к моменту выхода сделки
+      // и показываем линии входа/выхода ЭТОЙ конкретной сделки (не текущей позиции)
       const s = setByIx[+ds]; if (!s || !s.t) { baseView(); return; }
+      // Строим линии для исторического сета из sets_json расширенного формата
+      const sj = (row.sets_json || [])[+ds];
+      const histLines = [];
+      if (Array.isArray(sj) && sj.length >= 6) {
+        // расширенный формат: [ts_exit, pnl, side, entry_avg, exit_price, [entries...]]
+        const [, , side, entryAvg, exitPrice, entries] = sj;
+        const isLong = String(side).toLowerCase() === 'long';
+        const entryCol = isLong ? COL.green : COL.purple;
+        if (Array.isArray(entries)) {
+          entries.forEach((p, i) => histLines.push({ price: +p, color: 'rgba(102,163,255,0.5)', title: 'вход ' + (i + 1), style: 2 }));
+        }
+        if (entryAvg) histLines.push({ price: +entryAvg, color: entryCol, title: 'средняя', width: 2, style: 0 });
+        if (exitPrice) histLines.push({ price: +exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: 'выход', width: 1, style: 1 });
+      }
+      const linesForHist = histLines.length ? histLines : posLines;
       const win = 18 * 3600;   // ~окно вокруг выхода
-      window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
+      window.LiveChart.renderInto(el, { candles, markers, priceLines: linesForHist, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
     }));
   }
 
@@ -761,8 +777,8 @@
     { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
     { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
   ];
-  // Стандарт стратегии: прогон Стоп+Тренд выбран по умолчанию
-  const DEFAULT_RUN = 'sltrend';
+  // Прогон по умолчанию — Базовый
+  const DEFAULT_RUN = 'base';
   // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
   const TFS = [
     { key: '4h', label: '4H', ready: false },

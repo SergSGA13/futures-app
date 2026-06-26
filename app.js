@@ -1183,7 +1183,9 @@ function sigPrecisionFor(price) {
 
 // Маркеры за сегодня по монете. Таймзону таблицы не угадываем —
 // подбираем сдвиг времени так, чтобы цена входа попадала в диапазон свечи (авто-калибровка).
-function buildSignalMarkers(rows, coin, candles) {
+// tfSec — длительность свечи в секундах (5m = 300), нужна для привязки к нужной свече.
+function buildSignalMarkers(rows, coin, candles, tfSec) {
+  tfSec = tfSec || 300;
   const today = todayStr();
   const RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
   const [dd, mo, yy] = today.split('.').map(Number);
@@ -1204,8 +1206,9 @@ function buildSignalMarkers(rows, coin, candles) {
   if (!sigs.length || !candles.length) return [];
 
   const byTime = new Map(candles.map(c => [c.time, c]));
+  const bucketOf = (s, off) => Math.floor((s.baseUnix + off * 60) / tfSec) * tfSec;
   const inCandle = (s, off) => {
-    const c = byTime.get(Math.floor((s.baseUnix + off * 60) / 900) * 900);
+    const c = byTime.get(bucketOf(s, off));
     return c && s.price >= c.low && s.price <= c.high;
   };
 
@@ -1225,7 +1228,7 @@ function buildSignalMarkers(rows, coin, candles) {
   }
 
   return sigs.map(s => {
-    const bucket = Math.floor((s.baseUnix + off * 60) / 900) * 900;
+    const bucket = bucketOf(s, off);
     const isUp = s.dir === 'UP';
     let color;
     if (s.res === 'WIN') color = isUp ? SIG_MARK_COLOR.winUp : SIG_MARK_COLOR.winDown;
@@ -1239,6 +1242,38 @@ function buildSignalMarkers(rows, coin, candles) {
       size: 1,
     };
   }).sort((a, b) => a.time - b.time);
+}
+
+// Свечи 5m для графика «Сигналы сегодня» (Binance fapi -> Bybit). Отдельно от 15m-движка Лаборатории.
+async function sigFetch(u, ms) {
+  const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), ms) : null;
+  try { return await fetch(u, ac ? { signal: ac.signal } : {}); }
+  finally { if (t) clearTimeout(t); }
+}
+async function fetchSigCandles5m(sym, days) {
+  // Binance USDT-M futures, 5m
+  try {
+    const end = Date.now(); let start = end - days * 864e5; const out = [];
+    for (let it = 0; it < 5 && start < end; it++) {
+      const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=5m&limit=1500&startTime=${start}`;
+      const r = await sigFetch(u, 9000); if (!r.ok) throw new Error('fapi ' + r.status);
+      const chunk = await r.json(); if (!chunk.length) break;
+      out.push(...chunk); start = chunk[chunk.length - 1][0] + 1;
+      if (chunk.length < 1500) break;
+    }
+    if (out.length) return out.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
+  } catch (e) { /* фолбэк ниже */ }
+  // Bybit linear, 5m (последние ~1000 свечей)
+  try {
+    const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=5&limit=1000`;
+    const r = await sigFetch(u, 9000);
+    if (r.ok) {
+      const j = await r.json(); const list = (j.result && j.result.list) || [];
+      if (list.length) return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
+    }
+  } catch (e) {}
+  throw new Error('no 5m klines');
 }
 
 // мини-статистика по выбранной монете за сегодня
@@ -1267,18 +1302,22 @@ async function renderSignalChart(force) {
   try {
     let candles = SIG_CANDLE_CACHE[coin];
     if (!candles || force) {
-      candles = await (window.FutStrat ? FutStrat.fetchFutHistory(coin + 'USDT', 2) : Promise.reject('no FutStrat'));
+      candles = await fetchSigCandles5m(coin + 'USDT', 2);
       SIG_CANDLE_CACHE[coin] = candles;
     }
     if (!candles || !candles.length) { el.innerHTML = '<div class="sig-chart-msg">Нет данных по свечам</div>'; return; }
 
+    // шаг свечи в секундах (5m = 300) — берём из реального интервала данных
+    let tfSec = 300;
+    for (let i = 1; i < candles.length; i++) { const d = candles[i].time - candles[i - 1].time; if (d > 0) { tfSec = d; break; } }
+
     const rows = await fetchAllSignals();
-    const markers = buildSignalMarkers(rows, coin, candles);
+    const markers = buildSignalMarkers(rows, coin, candles, tfSec);
     const prec = sigPrecisionFor(candles[candles.length - 1].close);
 
     el.innerHTML = '';
     requestAnimationFrame(() => {
-      window.LiveChart.renderInto(el, { candles, markers, precision: prec, viewBars: 110 });
+      window.LiveChart.renderInto(el, { candles, markers, precision: prec, viewBars: 150 });
     });
 
     if (statEl) {

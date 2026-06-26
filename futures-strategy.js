@@ -206,8 +206,7 @@
     if (!candles || candles.length < 60) throw new Error('thin');
     const sigs = window.LiveChart.computeSignalList(candles, 15);
     const sim = simulateJS(candles, sigs); const p = sim.position;
-    const prec = precisionFor(candles[candles.length - 1].close);
-    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4), st.side, +st.entryAvg.toFixed(prec.precision), +st.exitPrice.toFixed(prec.precision), (st.entries || []).map(p => +p.toFixed(prec.precision))]);
+    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4)]);
     const le = (p.side === 'long' || p.side === 'short') ? (p.entries || []).map(x => +x) : [];
     const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, max_dd: sim.stats.maxDD, expectancy: sim.stats.exp, sets_json: sj, lot_entries: le };
     cacheSet(sym, s);
@@ -274,7 +273,7 @@
       let realized = 0, closeNote = 0, totQ = 0, totCost = 0;
       for (const { p, q } of pos.lots) { realized += pos.side === 'long' ? q * (price - p) : q * (p - price); closeNote += q * price; totQ += q; totCost += p * q; }
       const cfee = closeNote * SIM.fee; eq += realized - cfee; setPnl += realized - cfee;
-      sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side, entries: pos.lots.map(l => l.p) });
+      sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side });
       openPos(s.side, i);
     }
     let pside = '—', plots = 0, pavg = 0, entries = [], unreal = 0, pt0 = null;
@@ -522,11 +521,13 @@
     const segTf = `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
     const controls = `<div class="fs-controls">
       <div class="fs-ctl-row">${segRun}<span class="fs-seg-div"></span>${segTf}</div>
+      <div class="fs-seg-cap">4H / 1H - скоро, данные пока по 15m</div>
     </div>`;
-    const filters = `<div class="fs-filters fs-panel">
+    const filters = `<div class="fs-filters">
       <button class="fs-chip ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
       <button class="fs-chip qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
       <div class="fs-search${S.query ? ' has' : ''}"><span class="fs-search-ic">🔍</span><input class="fs-search-in" type="text" inputmode="search" placeholder="Поиск актива" value="${(S.query || '').replace(/"/g, '&quot;')}"><button class="fs-search-x" data-searchx aria-label="Очистить">×</button></div>
+      <button class="fs-chip guide" data-guide>🎓 Гайд</button>
     </div>`;
     const wireCommon = () => {
       host.querySelectorAll('[data-run]').forEach(b => b.addEventListener('click', () => loadRun(host, S, b.dataset.run)));
@@ -556,8 +557,7 @@
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · ${S.tf} · 90 дней${srcNote}${progNote}${delistNote}</div>
-          <div class="fs-guide-inline"><button class="fs-chip guide fs-guide-top" data-guide>🎓 Гайд</button></div>
+          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · ${S.tf} · 90 дней${srcNote}${progNote}${delistNote} <span id="fsLiveBadge" class="fs-live-badge"></span></div>
         </div>
       </div>
       ${controls}
@@ -748,37 +748,102 @@
         return;
       }
       // исторический сет: приближаем график к моменту выхода сделки
-      // и показываем линии входа/выхода ЭТОЙ конкретной сделки (не текущей позиции)
       const s = setByIx[+ds]; if (!s || !s.t) { baseView(); return; }
-      // Строим линии для исторического сета из sets_json расширенного формата
-      const sj = (row.sets_json || [])[+ds];
-      const histLines = [];
-      if (Array.isArray(sj) && sj.length >= 6) {
-        // расширенный формат: [ts_exit, pnl, side, entry_avg, exit_price, [entries...]]
-        const [, , side, entryAvg, exitPrice, entries] = sj;
-        const isLong = String(side).toLowerCase() === 'long';
-        const entryCol = isLong ? COL.green : COL.purple;
-        if (Array.isArray(entries)) {
-          entries.forEach((p, i) => histLines.push({ price: +p, color: 'rgba(102,163,255,0.5)', title: 'вход ' + (i + 1), style: 2 }));
-        }
-        if (entryAvg) histLines.push({ price: +entryAvg, color: entryCol, title: 'средняя', width: 2, style: 0 });
-        if (exitPrice) histLines.push({ price: +exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: 'выход', width: 1, style: 1 });
-      }
-      const linesForHist = histLines.length ? histLines : posLines;
       const win = 18 * 3600;   // ~окно вокруг выхода
-      window.LiveChart.renderInto(el, { candles, markers, priceLines: linesForHist, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
+      window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
     }));
   }
 
-  // ---- Публичный API -------------------------------------------------------
+  // ---- Live-обновление строки поверх данных из Sheets ----------------------
+  // После получения статики из таблицы тихо догружаем свежие свечи с биржи
+  // и прогоняем simulateJS чтобы учесть новые сигналы (реверсы, усреднения).
+  // Результат мержится поверх sheet-строки: позиция и сеты — живые,
+  // остальная статистика (winrate за 90 дней и т.д.) — из Sheets.
+  async function liveRefreshRow(row) {
+    try {
+      // Берём свечи за 90 дней (тот же период, что и бэктест)
+      const candles = await fetchFutHistory(row.symbol, HIST_DAYS);
+      if (!candles || candles.length < 60) return row;
+      const sigs = window.LiveChart.computeSignalList(candles, 15);
+      const sim = simulateJS(candles, sigs);
+      const p = sim.position;
+      const prec = precisionFor(candles[candles.length - 1].close);
+      const sj = sim.sets.map(st => [
+        st.t1, +st.pnl.toFixed(4), st.side,
+        +st.entryAvg.toFixed(prec.precision),
+        +st.exitPrice.toFixed(prec.precision),
+        (st.entries || []).map(x => +x.toFixed(prec.precision)),
+      ]);
+      const le = (p.side === 'long' || p.side === 'short') ? (p.entries || []).map(x => +x) : [];
+      // Мержим: позиция и сеты — живые; агрегаты winrate/pnl — из Sheets (не трогаем)
+      return Object.assign({}, row, {
+        pos_side: p.side,
+        pos_lots: p.lots,
+        pos_avg: p.avg,
+        lot_entries: le,
+        sets_json: sj,
+        // обновляем число сделок и pnl из живого прогона (актуальнее таблицы)
+        sets: sim.stats.sets,
+        wins: sim.stats.wins,
+        losses: sim.stats.losses,
+        winrate: sim.stats.winrate,
+        pnl_pct: sim.stats.pnlPct,
+        max_dd: sim.stats.maxDD,
+        expectancy: sim.stats.exp,
+        _liveTs: Date.now(),       // метка времени обновления
+      });
+    } catch (e) {
+      return row; // при ошибке оставляем данные из Sheets
+    }
+  }
+
+  // Запускает live-обновление для всех строк пачками (без блокировки UI).
+  // onUpdated(idx, newRow) вызывается по мере готовности каждой монеты.
+  async function liveRefreshAll(rows, onUpdated, concurrency) {
+    PACE_MS = 280;
+    let idx = 0;
+    async function worker() {
+      while (idx < rows.length) {
+        const my = idx++, row = rows[my];
+        if (!row || !row.computed || row.error) continue;
+        const updated = await liveRefreshRow(row);
+        onUpdated(my, updated);
+      }
+    }
+    const ws = [];
+    for (let i = 0; i < concurrency; i++) ws.push(worker());
+    await Promise.all(ws);
+    PACE_MS = 0;
+  }
+
+  // Планировщик периодического обновления (каждые LIVE_INTERVAL мс)
+  const LIVE_INTERVAL = 5 * 60 * 1000; // 5 минут
+  const _liveTimers = {};
+  function scheduleLive(host, S, containerId) {
+    if (_liveTimers[containerId]) clearTimeout(_liveTimers[containerId]);
+    _liveTimers[containerId] = setTimeout(async () => {
+      if (!S.rows.length || S.computing) return;
+      const snapshot = S.rows.slice(); // копия чтобы не мешать UI
+      await liveRefreshAll(snapshot, (i, updated) => {
+        S.rows[i] = updated;
+        // обновляем карточку в списке (если список открыт)
+        if (host.querySelector('.fs-grid')) updateCard(host, updated);
+      }, 2);
+      // перерисовываем список и кривую после полного цикла
+      if (host.querySelector('.fs-grid')) renderList(host, S);
+      scheduleLive(host, S, containerId); // следующий цикл
+    }, LIVE_INTERVAL);
+  }
+
+
   const state = {};
   const RUNS = [
     { key: 'base', label: 'Базовый', tab: 'FUT_STRAT' },
     { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
     { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
   ];
-  // Прогон по умолчанию — Базовый
-  const DEFAULT_RUN = 'base';
+  // Стандарт стратегии: прогон Стоп+Тренд выбран по умолчанию
+  const DEFAULT_RUN = 'sltrend';
   // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
   const TFS = [
     { key: '4h', label: '4H', ready: false },
@@ -792,13 +857,13 @@
     S.run = run.key; S.runError = false; S.computing = false; S._chart = null;
     S._runCache = S._runCache || {};
     S._pfCache = S._pfCache || {};
+    S._liveRefreshing = false;
+
     // кривая портфеля (вкладка <TAB>_PF) — догружаем в фоне, не блокируя список
     const ensurePf = () => {
       if (S._pfCache[run.key] !== undefined) return;
       readPfCurve(run.tab).then(pf => {
         S._pfCache[run.key] = pf;
-        // обновляем ТОЛЬКО карточку PNL (refreshPnlCard сам no-op, если карточки ещё нет),
-        // чтобы не перерисовывать список на возможно ещё не загруженных строках
         if (S.run === run.key && !S.computing) refreshPnlCard(host, S);
       });
     };
@@ -810,24 +875,81 @@
       S.rows = data.rows; S.source = data.source; S.total = data.rows.length; S.progress = data.rows.length;
       S._runCache[run.key] = { rows: data.rows, source: data.source };
       renderList(host, S);
+      // После отображения статики — немедленно догружаем живые данные с биржи
+      _startLiveRefresh(host, S, run.key);
     } else if (data.mode === 'compute') {
       const symbols = data.symbols;
       S.rows = symbols.map(placeholderRow); S.source = data.source; S.computing = true; S.progress = 0; S.total = symbols.length;
       renderList(host, S);
       computeAll(symbols, (i, row, done, total) => {
         S.rows[i] = row; S.progress = done; updateCard(host, row); updateProgress(host, S);
-        if (done === total) { S.computing = false; S._runCache[run.key] = { rows: S.rows, source: S.source }; renderList(host, S); }
+        if (done === total) {
+          S.computing = false;
+          S._runCache[run.key] = { rows: S.rows, source: S.source };
+          renderList(host, S);
+          // После браузерного расчёта тоже запускаем live-цикл
+          _startLiveRefresh(host, S, run.key);
+        }
       }, 3);
     } else {
       S.rows = []; S.runError = run.tab; renderList(host, S);
     }
   }
 
+  // Запускает первый live-прогон немедленно, затем планирует повторные каждые 5 мин
+  function _startLiveRefresh(host, S, runKey) {
+    if (S._liveRefreshing) return; // не запускаем параллельно
+    S._liveRefreshing = true;
+    _doLiveRefresh(host, S, runKey);
+  }
+
+  async function _doLiveRefresh(host, S, runKey) {
+    if (S.run !== runKey) { S._liveRefreshing = false; return; } // прогон сменился
+    const rows = S.rows.slice();
+    const onUpdated = (i, updated) => {
+      if (S.run !== runKey) return;
+      S.rows[i] = updated;
+      // Обновляем кэш прогона чтобы при переключении туда-обратно данные были свежими
+      if (S._runCache[runKey]) S._runCache[runKey].rows[i] = updated;
+      // Обновляем карточку в списке если список открыт
+      if (host.querySelector('.fs-grid')) updateCard(host, updated);
+    };
+    // Показываем индикатор «🔄 обновляю…» в sub-строке
+    _setLiveBadge(host, 'updating');
+    await liveRefreshAll(rows, onUpdated, 2);
+    if (S.run !== runKey) { S._liveRefreshing = false; return; }
+    // Перерисовываем список и кривую после полного цикла
+    if (host.querySelector('.fs-grid')) renderList(host, S);
+    _setLiveBadge(host, 'done');
+    // Планируем следующий цикл
+    if (_liveTimers[runKey]) clearTimeout(_liveTimers[runKey]);
+    _liveTimers[runKey] = setTimeout(() => _doLiveRefresh(host, S, runKey), LIVE_INTERVAL);
+    S._liveRefreshing = false;
+  }
+
+  // Индикатор live-обновления в sub-строке (рядом с «149 выбыло»)
+  function _setLiveBadge(host, state) {
+    const el = host.querySelector('#fsLiveBadge');
+    if (!el) return;
+    if (state === 'updating') { el.textContent = '🔄 обновляю…'; el.className = 'fs-live-badge updating'; }
+    else { el.textContent = '✓ live'; el.className = 'fs-live-badge done'; clearTimeout(el._t); el._t = setTimeout(() => { el.textContent = ''; el.className = 'fs-live-badge'; }, 4000); }
+  }
+
+
+
   async function mount(containerId) {
     const host = document.getElementById(containerId);
     if (!host) return;
-    if (state[containerId]) { renderList(host, state[containerId]); return; }
-    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    if (state[containerId]) {
+      const S = state[containerId];
+      renderList(host, S);
+      // Если live не запущен (пользователь вернулся после паузы) — перезапускаем
+      if (!S._liveRefreshing && S.rows.length && !S.computing) {
+        _startLiveRefresh(host, S, S.run);
+      }
+      return;
+    }
+    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0, _liveRefreshing: false };
     state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
     await loadRun(host, S, DEFAULT_RUN);

@@ -157,6 +157,25 @@
             </div>
             <div class="signals-timer" id="signalTimer">—</div>
           </div>
+
+          <!-- BTC / ETH selector + chart -->
+          <div class="sig-chart-top">
+            <div class="fs-seg compact sig-asset-seg" id="sigAssetSeg">
+              <button class="active" data-coin="BTC">BTC</button>
+              <button data-coin="ETH">ETH</button>
+            </div>
+            <div class="sig-chart-stat" id="sigChartStat"></div>
+          </div>
+          <div class="sig-chartwrap">
+            <div id="sigChart" class="sig-chart"><div class="sig-chart-msg">Загрузка графика...</div></div>
+          </div>
+          <div class="sig-legend">
+            <span class="sig-leg-item"><span class="sig-leg-dot" style="background:#4EFFA0"></span>WIN ↑</span>
+            <span class="sig-leg-item"><span class="sig-leg-dot" style="background:#FF5272"></span>WIN ↓</span>
+            <span class="sig-leg-item"><span class="sig-leg-dot" style="background:#7B84B0"></span>LOSE</span>
+            <span class="sig-leg-item"><span class="sig-leg-dot" style="background:#FFD166"></span>50/50</span>
+          </div>
+
           <div id="signalsList" class="signals-list">
             <div class="signals-loading" data-i18n="sig.loading">Загрузка...</div>
           </div>

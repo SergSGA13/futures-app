@@ -1075,16 +1075,21 @@ async function loadTodaySignals() {
     // M (index 12) contains date DD.MM.YYYY — filter by today
     const todayRows = rows.filter((r, i) => i > 0 && r[12] === today);
 
+    // Показываем сигнал только после появления результата в таблице.
+    // Живые (ещё не закрытые) сигналы в приложении не отображаются — они идут в приватную группу PRO.
+    const RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
+    const resolvedRows = todayRows.filter(r => RESOLVED.has((r[9] || '').trim()));
+
     const list = document.getElementById('signalsList');
 
-    if (todayRows.length === 0) {
+    if (resolvedRows.length === 0) {
       list.innerHTML = `<div class="signals-empty">${t('sig.empty')}</div>`;
       document.getElementById('signalTimer').textContent = '—';
       return;
     }
 
-    // Time is at index 11 (col L = HH:MM)
-    const lastRow = todayRows[todayRows.length - 1];
+    // Time is at index 11 (col L = HH:MM) — по последнему ЗАКРЫТОМУ сигналу
+    const lastRow = resolvedRows[resolvedRows.length - 1];
     const lastTime = lastRow[11];
 
     // Start live timer
@@ -1095,8 +1100,8 @@ async function loadTodaySignals() {
     updateTimer();
     signalTimerInterval = setInterval(updateTimer, 1000);
 
-    // Render list (newest first)
-    const reversed = [...todayRows].reverse();
+    // Render list (newest first) — только закрытые сигналы
+    const reversed = [...resolvedRows].reverse();
     list.innerHTML = reversed.map(r => {
       const pair   = r[1]  || '—';
       const dir    = r[2]  || '—';
@@ -1139,13 +1144,13 @@ async function loadTodaySignals() {
       </div>`;
     }).join('');
 
-    // Summary line (WIN & LOSE excluded from WR calculation)
-    const wins   = todayRows.filter(r => r[9] === 'WIN').length;
-    const losses = todayRows.filter(r => r[9] === 'LOSE').length;
+    // Summary line (WIN & LOSE excluded from WR calculation) — по закрытым сигналам
+    const wins   = resolvedRows.filter(r => r[9] === 'WIN').length;
+    const losses = resolvedRows.filter(r => r[9] === 'LOSE').length;
     const wr     = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
-    summary.innerHTML = `${t('sig.sum.total')}: <b>${todayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
+    summary.innerHTML = `${t('sig.sum.total')}: <b>${resolvedRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
     list.prepend(summary);
 
   } catch(e) {

@@ -1163,7 +1163,7 @@ async function loadTodaySignals() {
 // ===== ГРАФИК «СИГНАЛЫ СЕГОДНЯ» (BTC / ETH) =====
 // Свечи 15m + маркеры по результату: WIN UP зелёный / WIN DOWN красный / LOSE серый / 50-50 жёлтый.
 // Маркеры строятся ТОЛЬКО по закрытым сигналам — живые (без результата) на график не попадают.
-const SIG_CHART = { coin: 'BTC', rendered: false };
+const SIG_CHART = { coin: 'ETH', rendered: false };
 const SIG_CANDLE_CACHE = {};        // { BTC: candles[], ETH: candles[] }
 const SIG_MARK_COLOR = { winUp: '#4EFFA0', winDown: '#FF5272', lose: '#7B84B0', half: '#FFD166' };
 // Сдвиг времени таблицы относительно UTC, в минутах (прибавляется к времени из таблицы).

@@ -72,6 +72,12 @@
     })).sort((a, b) => a.time - b.time);
   }
 
+  // Время на графике всегда показываем по Варшаве (Europe/Warsaw),
+  // независимо от часового пояса устройства зрителя — как и в списке сигналов.
+  const TZ = 'Europe/Warsaw';
+  const tickFmt = new Intl.DateTimeFormat('ru-RU', { timeZone: TZ, hour: '2-digit', minute: '2-digit' });
+  const tipFmt = new Intl.DateTimeFormat('ru-RU', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
   function renderInto(el, opts) {
     const LW = window.LightweightCharts;
     if (!LW) { el.innerHTML = '<div style="color:#7B84B0;text-align:center;padding:30px;font-size:13px">График недоступен — библиотека не загрузилась</div>'; return null; }
@@ -82,7 +88,11 @@
       layout: { background: { type: 'solid', color: C.bg }, textColor: C.text, fontSize: 11, attributionLogo: true },
       grid: { horzLines: { color: C.grid }, vertLines: { color: C.grid } },
       rightPriceScale: { borderColor: 'transparent', scaleMargins: { top: 0.12, bottom: 0.08 } },
-      timeScale: { borderColor: 'transparent', timeVisible: true, secondsVisible: false },
+      localization: { timeFormatter: (t) => tipFmt.format(new Date(t * 1000)) },
+      timeScale: {
+        borderColor: 'transparent', timeVisible: true, secondsVisible: false,
+        tickMarkFormatter: (t) => tickFmt.format(new Date(t * 1000)),
+      },
       crosshair: { mode: LW.CrosshairMode ? LW.CrosshairMode.Normal : 0 },
     });
     const prec = opts.precision || { precision: 2, minMove: 0.01 };

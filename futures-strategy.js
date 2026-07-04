@@ -102,7 +102,14 @@
   function splitSmart(s) { const out = []; let c = '', d = 0; for (let i = 0; i < s.length; i++) { const ch = s[i]; if (ch === '[') d++; else if (ch === ']') d--; if (ch === ',' && d <= 0) { out.push(c); c = ''; } else c += ch; } out.push(c); return out; }
   function explodeRows(grid) { return grid.map(row => (row.length === 1 && /,/.test(row[0])) ? splitSmart(row[0]) : row); }
   const BT_ORDER = ['symbol', 'tf', 'signals', 'sets', 'wins', 'losses', 'winrate', 'pnl_pct', 'realized_pct', 'unreal_pct', 'pos_side', 'pos_lots', 'pos_avg', 'last_side', 'quote_volume', 'updated', 'lot_entries', 'sets_json', 'max_dd', 'expectancy'];
-  function num(v) { v = String(v == null ? '' : v).trim(); return v === '' ? null : +v; }
+  function num(v) {
+    v = String(v == null ? '' : v).trim();
+    if (v === '') return null;
+    v = v.replace(/\s+/g, '').replace('%', '');
+    if (v.indexOf(',') !== -1 && v.indexOf('.') === -1) v = v.replace(',', '.');
+    const n = +v;
+    return Number.isFinite(n) ? n : null;
+  }
   function parseStatsRow(arr, ix) {
     const g = k => { const i = ix(k); return i > -1 ? arr[i] : undefined; };
     const sym = normSym(g('symbol')); if (!sym) return null;

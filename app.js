@@ -832,6 +832,17 @@ function devParseSignal(r) {
   };
 }
 
+// BLOCKEDsignal отличается от ALLsignal раскладкой: результат в K (10), индикатор в N (13),
+// остальные колонки совпадают. Приводим строку к раскладке ALLsignal (результат J, индикатор V),
+// чтобы вся остальная логика (парсинг, DOW, Indicator) работала одинаково для обоих листов.
+function devNormalizeBlockedRow(r) {
+  if (!r) return r;
+  const c = r.slice();
+  c[9] = r[10];   // результат: K → J
+  c[21] = r[13];  // индикатор: N → V
+  return c;
+}
+
 // Сигналы за 30 дней из обоих листов + объединённые сырые строки (для DOW и Indicator)
 async function devFetchSignals30d() {
   const [allRows, blockedRows] = await Promise.all([fetchAllSignals(), fetchBlockedSignals()]);
@@ -839,23 +850,24 @@ async function devFetchSignals30d() {
   const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 30);
   const cutoff = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
 
+  const blockedNorm = (blockedRows && blockedRows.length > 1)
+    ? blockedRows.slice(1).map(devNormalizeBlockedRow)
+    : [];
+
   const sigs = [];
   let cntAll = 0, cntBlocked = 0;
-  const take = (rows, isBlocked) => {
-    if (!rows) return;
-    for (let i = 1; i < rows.length; i++) {
-      const s = devParseSignal(rows[i]);
+  const take = (dataRows, isBlocked) => {
+    for (const r of dataRows) {
+      const s = devParseSignal(r);
       if (!s || s.dk < cutoff) continue;
       sigs.push(s);
       if (isBlocked) cntBlocked++; else cntAll++;
     }
   };
-  take(allRows, false);
-  take(blockedRows, true);
+  take(allRows && allRows.length > 1 ? allRows.slice(1) : [], false);
+  take(blockedNorm, true);
 
-  const combinedRaw = (allRows && allRows.length)
-    ? allRows.concat(blockedRows && blockedRows.length > 1 ? blockedRows.slice(1) : [])
-    : (blockedRows || []);
+  const combinedRaw = (allRows && allRows.length ? allRows : [[]]).concat(blockedNorm);
 
   return { sigs, cntAll, cntBlocked, combinedRaw };
 }

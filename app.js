@@ -490,7 +490,7 @@ function buildAnalTableCols(configs, dataColStart) {
     html += '</tr>';
   }
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 // hourCol=11 for ALL (col L), =24 for L30D (col Y); dataColStart = hourCol+1
@@ -556,7 +556,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
   }
 
   html += '</tbody></table>';
-  return dataFound ? html : '';
+  return dataFound ? `<div class="stats-table-wrap">${html}</div>` : '';
 }
 
 // ===== CROSS TABLE (Indicator × Timeframe) =====
@@ -638,7 +638,7 @@ function buildIndicatorTable(combos, minSample) {
     <td>${tot.dnT}</td><td>${tot.dnW}</td><td class="${dnT.cls}">${dnT.v}</td>
     <td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
@@ -915,7 +915,7 @@ function devBuildTable(order, groups) {
   html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td><td>${tot.upW}</td>${devWrTd(tot.upW, tot.upL)}` +
           `<td>${tot.dnT}</td><td>${tot.dnW}</td>${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 function devShowTable(tableId, cardId, html) {

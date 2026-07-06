@@ -472,6 +472,13 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
+          <div class="stats-sub-btn dev" onclick="navigate('stats-l30d-dev')">
+            <div class="stats-sub-info">
+              <div class="stats-sub-title">Last 30 Days <span class="dev-badge" data-i18n="stats.dev.badge">для разработчика</span></div>
+              <div class="stats-sub-desc" data-i18n="stats.dev.desc">ALLsignal + BLOCKEDsignal · расчёт из сырых данных</div>
+            </div>
+            <div class="stats-sub-arrow">›</div>
+          </div>
         </div>
 
         <!-- CALCULATOR -->
@@ -593,6 +600,53 @@
       </div>
     </div>
     <!-- /STATISTICS: LAST 30 DAYS -->
+
+    <!-- STATISTICS: LAST 30 DAYS · DEV (ALLsignal + BLOCKEDsignal, computed from raw rows) -->
+    <div class="page" id="page-stats-l30d-dev">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom:6px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Last 30 Days <span class="dev-badge" data-i18n="stats.dev.badge">для разработчика</span></h2>
+        <p class="dev-note" data-i18n="stats.dev.note">Включает сигналы из BLOCKEDsignal — не поступившие в отработку из-за лимита 5 окон и других фильтров.</p>
+
+        <div class="dev-src-summary" id="devSrcSummary"></div>
+
+        <div class="pnl-chart-card">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div class="pnl-chart-wrap"><canvas id="pnlChartL30dDev"></canvas></div>
+        </div>
+
+        <div class="pnl-chart-card" id="devPairsCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>By Trading Pair - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div id="devPairsTable"></div>
+        </div>
+
+        <div class="pnl-chart-card" id="devDowCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>WinRate by Day of Week - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div class="pnl-chart-wrap" style="height:180px"><canvas id="devDowChart"></canvas></div>
+        </div>
+
+        <div class="pnl-chart-card" id="devTFCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Time Zone - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div id="devTFTable"></div>
+        </div>
+
+        <div class="pnl-chart-card" id="dev5minCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>By 5min Zone - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div id="dev5minTable"></div>
+        </div>
+
+        <div class="pnl-chart-card" id="devHourCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div id="devHourTable"></div>
+        </div>
+
+        <div class="pnl-chart-card" id="devCrossCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>By Indicator - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <div id="devCrossTable"></div>
+        </div>
+
+      </div>
+    </div>
+    <!-- /STATISTICS: LAST 30 DAYS · DEV -->
 
     <!-- STATISTICS: ALL PERIODS -->
     <div class="page" id="page-stats-all">

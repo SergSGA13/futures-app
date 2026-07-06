@@ -43,6 +43,7 @@ const navMap = {
   'futures-prediction': 'nav-futures-prediction',
   'statistics': 'nav-statistics',
   'stats-l30d': 'nav-statistics',
+  'stats-l30d-dev': 'nav-statistics',
   'stats-all': 'nav-statistics',
   'articles': 'nav-articles',
 };
@@ -54,6 +55,7 @@ const pageTitleKeys = {
   'articles': 'title.art',
   'statistics': 'title.stats',
   'stats-l30d': 'title.stats.l30d',
+  'stats-l30d-dev': 'title.stats.l30d.dev',
   'stats-all': 'title.stats.all',
   'article-tilt': 'title.art',
   'article-paradigm': 'title.art',
@@ -81,6 +83,7 @@ function navigate(pageId) {
 
   if (pageId === 'statistics') { loadPnlAllFromSignals('pnlChart', 'main'); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
+  if (pageId === 'stats-l30d-dev') { renderDevL30d(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
@@ -177,6 +180,7 @@ function parseCSV(text) {
 
 let analL7dRows = null;
 let allSignalRows = null;
+let blockedSignalRows = null;
 let monthlyWrChartInstance = null;
 
 async function fetchAllSignals() {
@@ -187,6 +191,18 @@ async function fetchAllSignals() {
   const text = await res.text();
   allSignalRows = parseCSV(text);
   return allSignalRows;
+}
+
+// Заблокированные сигналы (не попали в отработку из-за лимита 5 окон и других фильтров).
+// Структура колонок идентична ALLsignal.
+async function fetchBlockedSignals() {
+  if (blockedSignalRows) return blockedSignalRows;
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=BLOCKEDsignal`;
+  const res = await fetch(url);
+  const text = await res.text();
+  blockedSignalRows = parseCSV(text);
+  return blockedSignalRows;
 }
 
 async function fetchAnalL7d() {
@@ -777,14 +793,223 @@ document.getElementById('all5minCard').style.display = 'block';
   }
 }
 
+// ===== DEV: LAST 30 DAYS (ALLsignal + BLOCKEDsignal) =====
+// Раздел «для разработчика»: те же разрезы, что и Last 30 Days, но данные =
+// ALLsignal + BLOCKEDsignal (сигналы, не попавшие в отработку из-за лимита
+// 5 окон и других фильтров), и все таблицы считаются из сырых строк листов,
+// а не из готовых агрегатов ANAL L7D.
+// Правила подсчёта: Total = WIN + LOSE + «WIN & LOSE»; WR% = WIN / (WIN + LOSE);
+// PNL-модель: WIN +100, LOSE −125, «WIN & LOSE» 0.
+let devL30dRendered = false;
+
+const DEV_RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
+
+function devDateKey(dateStr) {
+  const p = String(dateStr || '').trim().split('.');
+  if (p.length < 3) return null;
+  const y = p[2].substring(0, 4);
+  if (y.length < 4 || isNaN(parseInt(y))) return null;
+  return `${y}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
+}
+
+// Разбор строки листа в сигнал; null — строка без результата или без корректной даты
+function devParseSignal(r) {
+  if (!r) return null;
+  const res = (r[9] || '').trim();
+  if (!DEV_RESOLVED.has(res)) return null;
+  const dk = devDateKey(r[12]);
+  if (!dk) return null;
+  const tp = String(r[11] || '').trim().match(/^(\d{1,2}):(\d{1,2})/);
+  const hour = tp ? parseInt(tp[1], 10) : NaN;
+  const minute = tp ? parseInt(tp[2], 10) : NaN;
+  const dir = (r[2] || '').trim().toUpperCase();
+  return {
+    res, dk,
+    dir: dir === 'UP' ? 'UP' : 'DOWN',
+    pair: sigPairBase(r[1]),
+    hour: (hour >= 0 && hour <= 23) ? hour : null,
+    minute: (minute >= 0 && minute <= 59) ? minute : null,
+  };
+}
+
+// Сигналы за 30 дней из обоих листов + объединённые сырые строки (для DOW и Indicator)
+async function devFetchSignals30d() {
+  const [allRows, blockedRows] = await Promise.all([fetchAllSignals(), fetchBlockedSignals()]);
+  const n = new Date();
+  const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 30);
+  const cutoff = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
+
+  const sigs = [];
+  let cntAll = 0, cntBlocked = 0;
+  const take = (rows, isBlocked) => {
+    if (!rows) return;
+    for (let i = 1; i < rows.length; i++) {
+      const s = devParseSignal(rows[i]);
+      if (!s || s.dk < cutoff) continue;
+      sigs.push(s);
+      if (isBlocked) cntBlocked++; else cntAll++;
+    }
+  };
+  take(allRows, false);
+  take(blockedRows, true);
+
+  const combinedRaw = (allRows && allRows.length)
+    ? allRows.concat(blockedRows && blockedRows.length > 1 ? blockedRows.slice(1) : [])
+    : (blockedRows || []);
+
+  return { sigs, cntAll, cntBlocked, combinedRaw };
+}
+
+function devAggregate(sigs, keyFn) {
+  const g = {};
+  for (const s of sigs) {
+    const k = keyFn(s);
+    if (k == null) continue;
+    if (!g[k]) g[k] = { upT: 0, upW: 0, upL: 0, dnT: 0, dnW: 0, dnL: 0 };
+    const o = g[k], up = s.dir === 'UP';
+    if (up) o.upT++; else o.dnT++;
+    if (s.res === 'WIN')  { up ? o.upW++ : o.dnW++; }
+    if (s.res === 'LOSE') { up ? o.upL++ : o.dnL++; }
+  }
+  return g;
+}
+
+function devWrTd(w, l) {
+  const dec = w + l;
+  if (!dec) return '<td>-</td>';
+  const pct = Math.round(w / dec * 100);
+  return `<td class="${wrClass(pct)}">${pct}%</td>`;
+}
+
+function devBuildTable(order, groups) {
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
+  let html = '<table class="anal-table"><thead><tr>';
+  headers.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  const tot = { upT: 0, upW: 0, upL: 0, dnT: 0, dnW: 0, dnL: 0 };
+  let hasData = false;
+  for (const label of order) {
+    const o = groups[label];
+    if (!o) continue;
+    hasData = true;
+    for (const k in tot) tot[k] += o[k];
+    html += `<tr><td>${label}</td><td>${o.upT}</td><td>${o.upW}</td>${devWrTd(o.upW, o.upL)}` +
+            `<td>${o.dnT}</td><td>${o.dnW}</td>${devWrTd(o.dnW, o.dnL)}<td>${o.upT + o.dnT}</td></tr>`;
+  }
+  if (!hasData) return '';
+  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td><td>${tot.upW}</td>${devWrTd(tot.upW, tot.upL)}` +
+          `<td>${tot.dnT}</td><td>${tot.dnW}</td>${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
+  html += '</tbody></table>';
+  return html;
+}
+
+function devShowTable(tableId, cardId, html) {
+  if (!html) return;
+  const el = document.getElementById(tableId);
+  const card = document.getElementById(cardId);
+  if (!el || !card) return;
+  el.innerHTML = html;
+  card.style.display = 'block';
+}
+
+function devRenderPnlChart(sigs) {
+  if (pnlChartInstances['l30dDev']) return;
+  const dailyMap = {};
+  for (const s of sigs) {
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
+    if (s.res === 'WIN') dailyMap[s.dk].wins++;
+    else if (s.res === 'LOSE') dailyMap[s.dk].losses++;
+  }
+  const sortedDays = Object.keys(dailyMap).sort();
+  if (!sortedDays.length) return;
+
+  let cumPnl = 0;
+  const labels = [], pctData = [];
+  for (const dk of sortedDays) {
+    const { wins, losses } = dailyMap[dk];
+    cumPnl += wins * 100 - losses * 125;
+    labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+    pctData.push(Math.round((cumPnl / 5000) * 100));
+  }
+
+  const ctx = document.getElementById('pnlChartL30dDev')?.getContext('2d');
+  if (!ctx) return;
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
+  gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+  pnlChartInstances['l30dDev'] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+}
+
+async function renderDevL30d() {
+  if (devL30dRendered) return;
+  try {
+    const { sigs, cntAll, cntBlocked, combinedRaw } = await devFetchSignals30d();
+    devL30dRendered = true;
+
+    const sum = document.getElementById('devSrcSummary');
+    if (sum) {
+      sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
+    }
+    if (!sigs.length) return;
+
+    // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
+    try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
+
+    // By Trading Pair
+    const pairGroups = devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
+    devShowTable('devPairsTable', 'devPairsCard', devBuildTable(['ETH', 'BTC'], pairGroups));
+
+    // WinRate by Day of Week — по объединённым сырым строкам
+    renderDowChart('devDowChart', 30, combinedRaw);
+    const dowCard = document.getElementById('devDowCard');
+    if (dowCard) dowCard.style.display = 'block';
+
+    // By Time Zone (15-минутные зоны внутри часа)
+    const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
+    const tzGroups = devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)]);
+    devShowTable('devTFTable', 'devTFCard', devBuildTable(tzOrder, tzGroups));
+
+    // By 5min Zone
+    const fiveOrder = [];
+    for (let f = 0; f < 60; f += 5) fiveOrder.push(`${f}-${f + 4}`);
+    const fiveGroups = devAggregate(sigs, s => s.minute == null ? null : fiveOrder[Math.floor(s.minute / 5)]);
+    devShowTable('dev5minTable', 'dev5minCard', devBuildTable(fiveOrder, fiveGroups));
+
+    // By Hour Zone
+    const hourOrder = [];
+    for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
+    const hourGroups = devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`);
+    devShowTable('devHourTable', 'devHourCard', devBuildTable(hourOrder, hourGroups));
+
+    // By Indicator — та же логика, что и в основном разделе, но по объединённым строкам
+    const indHtml = buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30), MIN_SAMPLE);
+    devShowTable('devCrossTable', 'devCrossCard', indHtml);
+  } catch (e) {
+    console.log('DEV L30D error:', e);
+  }
+}
+
 // ===== DOW CHART (WinRate by Day of Week) =====
 // daysFilter: число дней назад (30 для L30D), null = все периоды
 const dowChartInstances = {};
 
-async function renderDowChart(canvasId, daysFilter) {
+async function renderDowChart(canvasId, daysFilter, rowsOverride) {
   if (dowChartInstances[canvasId]) return;
   try {
-    const rows = await fetchAllSignals();
+    const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
     // Day names Mon–Sun (index 0=Mon…6=Sun)
@@ -1358,6 +1583,10 @@ function refreshHome() {
   // Reset caches so data reloads
   analL7dRows = null;
   allSignalRows = null;
+  blockedSignalRows = null;
+  devL30dRendered = false;
+  dowChartInstances['devDowChart']?.destroy();
+  delete dowChartInstances['devDowChart'];
   Object.values(pnlChartInstances).forEach(c => c?.destroy());
   Object.keys(pnlChartInstances).forEach(k => delete pnlChartInstances[k]);
   monthlyWrChartInstance?.destroy();

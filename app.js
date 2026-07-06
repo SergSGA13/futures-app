@@ -565,7 +565,8 @@ const MIN_SAMPLE = 5;
 
 // Колонки ALLsignal: C(2)=направление, J(9)=результат, M(12)=дата, V(21)=код индикатора
 // Группировка только по коду индикатора (таймфрейм в данных почти везде пуст).
-function aggregateByIndicator(rows, indCol, daysFilter) {
+// pairFilter: 'ETH' | 'BTC' | null (без фильтра — все пары)
+function aggregateByIndicator(rows, indCol, daysFilter, pairFilter) {
   let cutoff = null;
   if (daysFilter) {
     const n = new Date();
@@ -578,6 +579,7 @@ function aggregateByIndicator(rows, indCol, daysFilter) {
     const dir = (rows[i][2] || '').trim();
     // WIN & LOSE не учитываем в подсчёте — чтобы Total совпадал с 5293
     if (res === 'WIN & LOSE') continue;
+    if (pairFilter && sigPairBase(rows[i][1]) !== pairFilter) continue;
     // Фильтр окна только для L30D; в ALL дату не трогаем, чтобы не терять сигналы
     if (cutoff) {
       const p = (rows[i][12] || '').split('.');
@@ -1006,9 +1008,10 @@ async function renderDevL30d() {
     const hourGroups = devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`);
     devShowTable('devHourTable', 'devHourCard', devBuildTable(hourOrder, hourGroups));
 
-    // By Indicator — та же логика, что и в основном разделе, но по объединённым строкам
-    const indHtml = buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30), MIN_SAMPLE);
-    devShowTable('devCrossTable', 'devCrossCard', indHtml);
+    // By Indicator — общая + отдельно ETH и BTC, по объединённым строкам
+    devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, null), MIN_SAMPLE));
+    devShowTable('devCrossEthTable', 'devCrossEthCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'ETH'), MIN_SAMPLE));
+    devShowTable('devCrossBtcTable', 'devCrossBtcCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'BTC'), MIN_SAMPLE));
   } catch (e) {
     console.log('DEV L30D error:', e);
   }

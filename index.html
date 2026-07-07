@@ -670,6 +670,30 @@
           <div id="devCrossBtcTable"></div>
         </div>
 
+        <div class="pnl-chart-card dev-insights-card" id="devTrendCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Тренд по неделям - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:12px">Первая половина месяца vs вторая — ловит деградацию индикатора до того, как она утонет в среднем WR за 30 дней.</p>
+          <div id="devTrendBlock" class="dev-insights"></div>
+        </div>
+
+        <div class="pnl-chart-card dev-insights-card" id="devBlockedCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>BLOCKED vs Исполненные - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:12px">Лимит 5 входов в 10-минутное окно - ограничение биржи, его не обойти. Но какой сигнал займёт свободный слот - вопрос приоритета, и вот тут есть что настраивать.</p>
+          <div id="devBlockedBlock" class="dev-insights"></div>
+        </div>
+
+        <div class="pnl-chart-card dev-insights-card" id="devConfidenceCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2.5 2.5"/></svg>Калибровка уверенности - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:12px">Совпадает ли заявленный моделью процент уверенности с реальным винрейтом в этом диапазоне.</p>
+          <div id="devConfidenceBlock" class="dev-insights"></div>
+        </div>
+
+        <div class="pnl-chart-card dev-insights-card" id="devStreakCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Серии проигрышей - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:12px">Самая длинная просадка подряд по индикатору - то, что не видно за средним WR, но бьёт по риск-менеджменту.</p>
+          <div id="devStreakBlock" class="dev-insights"></div>
+        </div>
+
         <div class="pnl-chart-card dev-insights-card" id="devInsightsCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>Итог · Last 30 Days <span class="dev-chip">DEV</span></div>
           <div id="devInsights" class="dev-insights"></div>

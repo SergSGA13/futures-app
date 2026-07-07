@@ -814,6 +814,22 @@ function devDateKey(dateStr) {
   return `${y}-${p[1].padStart(2, '0')}-${p[0].padStart(2, '0')}`;
 }
 
+// Заявленная уверенность модели в момент сигнала — встроена в текст сообщения
+// (колонка со свободным текстом вида "ETHUSDT Signal 68% v.3/10: UP ..."), а не в
+// отдельную фиксированную колонку, поэтому ищем ячейку с "Signal" и вытаскиваем NN%.
+function devExtractConfidence(r) {
+  for (const cell of r) {
+    if (typeof cell === 'string' && cell.includes('Signal')) {
+      const m = cell.match(/(\d{1,3})%/);
+      if (m) {
+        const v = parseInt(m[1], 10);
+        if (v >= 1 && v <= 100) return v;
+      }
+    }
+  }
+  return null;
+}
+
 // Разбор строки листа в сигнал; null — строка без результата или без корректной даты
 function devParseSignal(r) {
   if (!r) return null;
@@ -829,6 +845,8 @@ function devParseSignal(r) {
     res, dk,
     dir: dir === 'UP' ? 'UP' : 'DOWN',
     pair: sigPairBase(r[1]),
+    ind: (r[21] || '').trim() || '-',
+    conf: devExtractConfidence(r),
     hour: (hour >= 0 && hour <= 23) ? hour : null,
     minute: (minute >= 0 && minute <= 59) ? minute : null,
   };
@@ -862,6 +880,7 @@ async function devFetchSignals30d() {
     for (const r of dataRows) {
       const s = devParseSignal(r);
       if (!s || s.dk < cutoff) continue;
+      s.isBlocked = isBlocked;
       sigs.push(s);
       if (isBlocked) cntBlocked++; else cntAll++;
     }
@@ -1169,6 +1188,237 @@ function devWrWithout(pairDirRow, cell) {
   return devWrOf(w, l);
 }
 
+// ===== 1. НЕДЕЛЬНЫЙ ТРЕНД: ловим деградацию индикатора раньше, чем она утянет месячный агрегат =====
+const DEV_TREND_MIN_HALF = 8; // минимум решённых сигналов в каждой половине месяца для сравнения
+
+// 30-дневное окно, разбитое на 4 подряд идущих отрезка (не строго по 7 дней —
+// длина окна не всегда делится на 4 без остатка, поэтому распределяем поровну).
+function devWeekBuckets(days) {
+  const dateKeys = devDailyDateRange(days);
+  const n = dateKeys.length;
+  const size = Math.ceil(n / 4);
+  const buckets = [];
+  for (let i = 0; i < 4; i++) {
+    const slice = dateKeys.slice(i * size, Math.min((i + 1) * size, n));
+    if (slice.length) buckets.push(slice);
+  }
+  return buckets;
+}
+
+function devTrendCells(sigs) {
+  const buckets = devWeekBuckets(30);
+  const bucketOf = {};
+  buckets.forEach((b, i) => b.forEach(dk => { bucketOf[dk] = i; }));
+
+  const groups = {};
+  for (const s of sigs) {
+    if (s.ind === '-' || (s.pair !== 'ETH' && s.pair !== 'BTC') || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    const key = `${s.pair}|${s.ind}|${s.dir}`;
+    if (!groups[key]) groups[key] = { pair: s.pair, ind: s.ind, dir: s.dir, buckets: buckets.map(() => ({ w: 0, l: 0 })) };
+    const bi = bucketOf[s.dk];
+    if (bi == null) continue;
+    if (s.res === 'WIN') groups[key].buckets[bi].w++; else groups[key].buckets[bi].l++;
+  }
+
+  const out = [];
+  for (const key in groups) {
+    const g = groups[key];
+    const half = Math.ceil(g.buckets.length / 2);
+    const sum = arr => arr.reduce((a, b) => ({ w: a.w + b.w, l: a.l + b.l }), { w: 0, l: 0 });
+    const first = sum(g.buckets.slice(0, half));
+    const second = sum(g.buckets.slice(half));
+    const firstDec = first.w + first.l, secondDec = second.w + second.l;
+    if (firstDec < DEV_TREND_MIN_HALF || secondDec < DEV_TREND_MIN_HALF) continue;
+    const firstWr = devWrOf(first.w, first.l), secondWr = devWrOf(second.w, second.l);
+    out.push({ pair: g.pair, ind: g.ind, dir: g.dir, firstWr, secondWr, firstDec, secondDec, delta: secondWr - firstWr });
+  }
+  return out;
+}
+
+function devBuildTrendSection(sigs) {
+  const DELTA_THRESHOLD = 15; // сдвиг WR в п.п. между первой и второй половиной месяца, чтобы считать это трендом
+  const cells = devTrendCells(sigs);
+  const degrading = cells.filter(x => x.delta <= -DELTA_THRESHOLD).sort((a, b) => a.delta - b.delta);
+  const improving = cells.filter(x => x.delta >= DELTA_THRESHOLD).sort((a, b) => b.delta - a.delta);
+
+  const blocks = [];
+  degrading.slice(0, 5).forEach(x => {
+    blocks.push(devInsightBlock('dev-insight-bad', `📉 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} слабеет`,
+      [`Было <b>${x.firstWr.toFixed(0)}%</b> (первая половина месяца, n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (вторая половина, n=${x.secondDec}) — просадка на ${Math.abs(x.delta).toFixed(0)} п.п. Деградация свежая, месячный агрегат её ещё маскирует.`]));
+  });
+  improving.slice(0, 5).forEach(x => {
+    blocks.push(devInsightBlock('dev-insight-good', `📈 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} набирает силу`,
+      [`Было <b>${x.firstWr.toFixed(0)}%</b> (n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (n=${x.secondDec}) — рост на ${x.delta.toFixed(0)} п.п.`]));
+  });
+  if (!blocks.length) {
+    blocks.push(devInsightBlock('', 'Трендов не найдено', ['За месяц ни один индикатор не сдвинул WR больше чем на 15 п.п. между первой и второй половинами периода — динамика стабильна.']));
+  }
+  return blocks.join('');
+}
+
+// ===== 2. BLOCKED vs ИСПОЛНЕННЫЕ: кому отдавать приоритет на вход в лимит 5 окон =====
+// Лимит "5 одновременных входов в 10-минутное окно" — ограничение биржи, его не обойти.
+// Но какой сигнал из нескольких претендентов займёт свободный слот — решается приоритетом,
+// и вот это уже управляемо. Если у индикатора WR среди заблокированных сигналов заметно
+// выше, чем у того, что реально пропускается в отработку, — это кандидат на повышение приоритета.
+const DEV_BLOCKED_MIN_SAMPLE = 10;
+
+function devBlockedVsExecuted(sigs) {
+  const agg = { exec: { w: 0, l: 0 }, blocked: { w: 0, l: 0 } };
+  const byCell = {};
+  for (const s of sigs) {
+    if (s.pair !== 'ETH' && s.pair !== 'BTC') continue;
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    const bucket = s.isBlocked ? 'blocked' : 'exec';
+    agg[bucket][s.res === 'WIN' ? 'w' : 'l']++;
+
+    if (s.ind === '-') continue;
+    const key = `${s.pair}|${s.ind}|${s.dir}`;
+    if (!byCell[key]) byCell[key] = { pair: s.pair, ind: s.ind, dir: s.dir, exec: { w: 0, l: 0 }, blocked: { w: 0, l: 0 } };
+    byCell[key][bucket][s.res === 'WIN' ? 'w' : 'l']++;
+  }
+  return { agg, byCell };
+}
+
+function devBuildBlockedSection(sigs) {
+  const { agg, byCell } = devBlockedVsExecuted(sigs);
+  const execWr = devWrOf(agg.exec.w, agg.exec.l);
+  const blockedWr = devWrOf(agg.blocked.w, agg.blocked.l);
+  const execDec = agg.exec.w + agg.exec.l, blockedDec = agg.blocked.w + agg.blocked.l;
+
+  const blocks = [];
+  if (execDec > 0 || blockedDec > 0) {
+    blocks.push(devInsightBlock('', '📊 Общая картина',
+      [`Исполнено: WR <b>${execWr != null ? execWr.toFixed(1) + '%' : '-'}</b> на <b>${execDec}</b> сигналах. Заблокировано (лимит 5 окон и другие фильтры): WR <b>${blockedWr != null ? blockedWr.toFixed(1) + '%' : '-'}</b> на <b>${blockedDec}</b> сигналах.`]));
+  }
+
+  const candidates = [];
+  for (const key in byCell) {
+    const c = byCell[key];
+    const bDec = c.blocked.w + c.blocked.l, eDec = c.exec.w + c.exec.l;
+    if (bDec < DEV_BLOCKED_MIN_SAMPLE || eDec < DEV_BLOCKED_MIN_SAMPLE) continue;
+    const bWr = devWrOf(c.blocked.w, c.blocked.l), eWr = devWrOf(c.exec.w, c.exec.l);
+    candidates.push({ ...c, bWr, eWr, bDec, eDec, delta: bWr - eWr });
+  }
+
+  const upgrade = candidates.filter(x => x.delta >= 10).sort((a, b) => b.delta - a.delta);
+  const downgrade = candidates.filter(x => x.delta <= -10).sort((a, b) => a.delta - b.delta);
+
+  upgrade.slice(0, 4).forEach(x => {
+    blocks.push(devInsightBlock('dev-insight-good', `⬆️ Повысить приоритет: ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`,
+      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) — выше, чем у исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Этот индикатор чаще проигрывает борьбу за слот более слабым сигналам — стоит дать ему приоритет при занятости 5 окон.`]));
+  });
+  downgrade.slice(0, 4).forEach(x => {
+    blocks.push(devInsightBlock('', `⬇️ Приоритет оправдан: ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`,
+      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) — ниже исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Здесь фильтр случайно отсекает то, что и так хуже — менять приоритет не нужно.`]));
+  });
+
+  if (!upgrade.length && !downgrade.length) {
+    blocks.push(devInsightBlock('', 'Явных кандидатов на смену приоритета нет',
+      [`Либо выборка заблокированных сигналов слишком мала (нужно ≥ ${DEV_BLOCKED_MIN_SAMPLE} на срез), либо WR блокированных и исполненных сигналов близки друг к другу.`]));
+  }
+  return blocks.join('');
+}
+
+// ===== 3. КАЛИБРОВКА УВЕРЕННОСТИ: соответствует ли заявленный % реальному winrate =====
+const DEV_CONF_MIN_SAMPLE = 10;
+const DEV_CONF_GAP = 10; // расхождение декларируемой уверенности и реального WR, п.п., чтобы считать разбалансировкой
+
+function devConfidenceBins(sigs) {
+  const bins = {};
+  for (const s of sigs) {
+    if (s.conf == null || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    const start = Math.floor(s.conf / 5) * 5;
+    const key = `${start}-${start + 4}%`;
+    if (!bins[key]) bins[key] = { key, start, w: 0, l: 0, declaredSum: 0, n: 0 };
+    bins[key].declaredSum += s.conf;
+    bins[key].n++;
+    if (s.res === 'WIN') bins[key].w++; else bins[key].l++;
+  }
+  return Object.values(bins)
+    .map(b => ({ ...b, decided: b.w + b.l, avgDeclared: b.declaredSum / b.n, realizedWr: devWrOf(b.w, b.l) }))
+    .filter(b => b.decided >= DEV_CONF_MIN_SAMPLE)
+    .sort((a, b) => a.start - b.start);
+}
+
+function devBuildConfidenceSection(sigs) {
+  const bins = devConfidenceBins(sigs);
+  if (!bins.length) {
+    return devInsightBlock('', 'Недостаточно данных',
+      [`В заявленных сигналах не нашлось процента уверенности в тексте сообщения (или сигналов на срез меньше ${DEV_CONF_MIN_SAMPLE}) — сравнить заявленное и реальное не получилось.`]);
+  }
+
+  const rows = bins.map(b => {
+    const gap = b.realizedWr - b.avgDeclared;
+    const cls = Math.abs(gap) >= DEV_CONF_GAP ? (gap < 0 ? 'wr-red' : 'wr-green') : '';
+    return `<tr><td>${b.key}</td><td>${b.avgDeclared.toFixed(0)}%</td><td class="${cls}">${b.realizedWr.toFixed(0)}%</td><td class="${cls}">${gap >= 0 ? '+' : ''}${gap.toFixed(0)} п.п.</td><td>${b.decided}</td></tr>`;
+  }).join('');
+  const table = `<div class="stats-table-wrap"><table class="anal-table"><thead><tr><th>Заявлено</th><th>Ср. заявл.</th><th>Реальный WR</th><th>Разрыв</th><th>n</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  const blocks = [devInsightBlock('', '🎯 Заявленная уверенность vs реальный WR по бакетам', [table])];
+
+  const overconfident = bins.filter(b => b.avgDeclared - b.realizedWr >= DEV_CONF_GAP).sort((a, b) => (b.avgDeclared - b.realizedWr) - (a.avgDeclared - a.realizedWr));
+  const underconfident = bins.filter(b => b.realizedWr - b.avgDeclared >= DEV_CONF_GAP).sort((a, b) => (b.realizedWr - b.avgDeclared) - (a.realizedWr - a.avgDeclared));
+
+  if (overconfident.length) {
+    const worst = overconfident[0];
+    blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Модель завышает уверенность в бакете ${worst.key}`,
+      [`Заявлено в среднем <b>${worst.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${worst.realizedWr.toFixed(0)}%</b> на ${worst.decided} сигналах — разрыв ${(worst.avgDeclared - worst.realizedWr).toFixed(0)} п.п. Доверять заявленному проценту в этом диапазоне не стоит.`]));
+  }
+  if (underconfident.length) {
+    const best = underconfident[0];
+    blocks.push(devInsightBlock('dev-insight-good', `👀 Модель занижает уверенность в бакете ${best.key}`,
+      [`Заявлено в среднем <b>${best.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${best.realizedWr.toFixed(0)}%</b> на ${best.decided} сигналах — на деле сигналы этого бакета сильнее, чем написано.`]));
+  }
+  return blocks.join('');
+}
+
+// ===== 5. СЕРИИ ПРОИГРЫШЕЙ: самая длинная просадка подряд по индикатору×направлению =====
+const DEV_STREAK_MIN = 4; // от скольки проигрышей подряд считать это заметной серией
+
+function devLossStreaks(sigs) {
+  const groups = {};
+  for (const s of sigs) {
+    if (s.ind === '-' || (s.pair !== 'ETH' && s.pair !== 'BTC') || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    const key = `${s.pair}|${s.ind}|${s.dir}`;
+    if (!groups[key]) groups[key] = { pair: s.pair, ind: s.ind, dir: s.dir, seq: [] };
+    groups[key].seq.push(s);
+  }
+
+  const out = [];
+  for (const key in groups) {
+    const g = groups[key];
+    g.seq.sort((a, b) => (a.dk + String(a.hour ?? 0).padStart(2, '0') + String(a.minute ?? 0).padStart(2, '0'))
+      .localeCompare(b.dk + String(b.hour ?? 0).padStart(2, '0') + String(b.minute ?? 0).padStart(2, '0')));
+
+    let cur = 0, curStart = null, maxStreak = 0, maxStart = null, maxEnd = null;
+    for (const s of g.seq) {
+      if (s.res === 'LOSE') {
+        if (cur === 0) curStart = s.dk;
+        cur++;
+        if (cur > maxStreak) { maxStreak = cur; maxStart = curStart; maxEnd = s.dk; }
+      } else cur = 0;
+    }
+    if (maxStreak >= DEV_STREAK_MIN) {
+      out.push({ pair: g.pair, ind: g.ind, dir: g.dir, maxStreak, total: g.seq.length, maxStart, maxEnd });
+    }
+  }
+  return out.sort((a, b) => b.maxStreak - a.maxStreak);
+}
+
+function devFmtDk(dk) { return dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}` : '?'; }
+
+function devBuildStreakSection(sigs) {
+  const streaks = devLossStreaks(sigs);
+  if (!streaks.length) {
+    return devInsightBlock('', 'Серий не найдено', [`Ни у одной пары индикатор×направление нет ${DEV_STREAK_MIN}+ проигрышей подряд за 30 дней.`]);
+  }
+  const blocks = streaks.slice(0, 6).map(x =>
+    devInsightBlock('dev-insight-bad', `🔥 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} проигрышей подряд`,
+      [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}, всего сигналов за месяц: ${x.total}. Такая просадка бьёт по риск-менеджменту сильнее, чем видно по среднему WR.`]));
+  return blocks.join('');
+}
+
 function devBuildInsights(sigs, combinedRaw) {
   const pairDir = devInsightPairDir(sigs);
   const pairDirScored = pairDir.filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
@@ -1307,6 +1557,12 @@ async function renderDevL30d() {
     devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, null), MIN_SAMPLE));
     devShowTable('devCrossEthTable', 'devCrossEthCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'ETH'), MIN_SAMPLE));
     devShowTable('devCrossBtcTable', 'devCrossBtcCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'BTC'), MIN_SAMPLE));
+
+    // Углублённая аналитика — каждый блок независим, ошибка в одном не должна гасить остальные
+    try { devShowTable('devTrendBlock', 'devTrendCard', devBuildTrendSection(sigs)); } catch (e) { console.log('DEV trend error:', e); }
+    try { devShowTable('devBlockedBlock', 'devBlockedCard', devBuildBlockedSection(sigs)); } catch (e) { console.log('DEV blocked error:', e); }
+    try { devShowTable('devConfidenceBlock', 'devConfidenceCard', devBuildConfidenceSection(sigs)); } catch (e) { console.log('DEV confidence error:', e); }
+    try { devShowTable('devStreakBlock', 'devStreakCard', devBuildStreakSection(sigs)); } catch (e) { console.log('DEV streak error:', e); }
 
     // Итог — автоматические выводы по срезу (в конце страницы)
     try {

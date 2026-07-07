@@ -1074,6 +1074,22 @@ html, body {
 .dev-src-summary b { color: var(--text); }
 .dev-src-summary b.dev-blocked-num { color: #FFD166; }
 
+/* Auto-generated conclusion block at the end of DEV Last 30 Days */
+.dev-insights-card { border-color: rgba(255, 209, 102, 0.35); }
+.dev-insights { display: flex; flex-direction: column; gap: 10px; }
+.dev-insight-item {
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+.dev-insight-item.dev-insight-bad { border-color: rgba(255, 82, 114, 0.3); background: rgba(255, 82, 114, 0.06); }
+.dev-insight-item.dev-insight-good { border-color: rgba(78, 255, 160, 0.3); background: rgba(78, 255, 160, 0.06); }
+.dev-insight-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.dev-insight-body { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.dev-insight-body + .dev-insight-body { margin-top: 4px; }
+.dev-insight-body b { color: var(--text); }
+
 /* ===== REFRESH BUTTON ===== */
 .refresh-btn {
   width: 100%;

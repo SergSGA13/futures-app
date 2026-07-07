@@ -1091,6 +1091,93 @@ function devRenderPnlPriceChart(canvasId, key, labels, pnlPctData, priceData, pr
   });
 }
 
+// ===== DEV: AUTO INSIGHTS (Last 30 Days) =====
+// Автоматический разбор среза DEV L30D: находит пары×направления и индикаторы×направления
+// с винрейтом ниже точки безубытка (WR_BREAKEVEN) при значимой выборке — это кандидаты
+// на отключение/пересмотр. Порог выборки выше, чем MIN_SAMPLE в таблицах (там это просто
+// маркер "мало данных", здесь — основание для рекомендации, нужна бОльшая уверенность).
+const DEV_INSIGHT_MIN_SAMPLE = 15;
+
+function devWrOf(w, l) {
+  const dec = w + l;
+  return dec > 0 ? (w / dec * 100) : null;
+}
+
+// [{label:'ETH ↑ UP', pair, dir, w, l, decided, wr}, ...] по всем 4 комбинациям пара×направление
+function devInsightPairDir(sigs) {
+  const g = { ETH: { upW: 0, upL: 0, dnW: 0, dnL: 0 }, BTC: { upW: 0, upL: 0, dnW: 0, dnL: 0 } };
+  for (const s of sigs) {
+    if (s.pair !== 'ETH' && s.pair !== 'BTC') continue;
+    const o = g[s.pair], up = s.dir === 'UP';
+    if (s.res === 'WIN')  { up ? o.upW++ : o.dnW++; }
+    if (s.res === 'LOSE') { up ? o.upL++ : o.dnL++; }
+  }
+  const out = [];
+  for (const pair of ['ETH', 'BTC']) {
+    for (const dir of ['UP', 'DOWN']) {
+      const w = dir === 'UP' ? g[pair].upW : g[pair].dnW;
+      const l = dir === 'UP' ? g[pair].upL : g[pair].dnL;
+      const decided = w + l;
+      out.push({ label: `${pair} ${dir === 'UP' ? '↑ UP' : '↓ DOWN'}`, pair, dir, w, l, decided, wr: devWrOf(w, l) });
+    }
+  }
+  return out;
+}
+
+// [{label:'v.3/10 ↓ DOWN', ind, dir, w, l, decided, wr}, ...] для конкретной пары (или всех, если pairFilter=null)
+function devInsightIndicatorDir(combinedRaw, pairFilter) {
+  const combos = aggregateByIndicator(combinedRaw, 21, 30, pairFilter);
+  const out = [];
+  for (const o of combos) {
+    if (o.ind === '—') continue; // сигналы без кода индикатора отключать не предлагаем
+    out.push({ label: `${o.ind} ↑ UP`,   ind: o.ind, dir: 'UP',   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
+    out.push({ label: `${o.ind} ↓ DOWN`, ind: o.ind, dir: 'DOWN', w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
+  }
+  return out;
+}
+
+function devInsightBlock(cls, title, bodyLines) {
+  const body = bodyLines.map(l => `<div class="dev-insight-body">${l}</div>`).join('');
+  return `<div class="dev-insight-item ${cls}"><div class="dev-insight-title">${title}</div>${body}</div>`;
+}
+
+function devBuildInsights(sigs, combinedRaw) {
+  const pairDir = devInsightPairDir(sigs).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
+  const weakPairDir   = pairDir.filter(x => x.wr < WR_BREAKEVEN).sort((a, b) => a.wr - b.wr);
+  const strongPairDir = pairDir.filter(x => x.wr >= WR_GREEN).sort((a, b) => b.wr - a.wr);
+
+  const blocks = [];
+
+  weakPairDir.forEach((w, i) => {
+    // индикаторы конкретно для этой пары/направления, которые тянут WR вниз
+    const badInd = devInsightIndicatorDir(combinedRaw, w.pair)
+      .filter(x => x.dir === w.dir && x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null && x.wr < WR_BREAKEVEN)
+      .sort((a, b) => a.wr - b.wr);
+
+    const lines = [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> решённых сигналах — ниже точки безубытка (${WR_BREAKEVEN}%).`];
+    if (badInd.length) {
+      const names = badInd.map(x => `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided})`).join(', ');
+      lines.push(`Рекомендация: отключить или пересмотреть индикаторы ${names} — именно они тянут WR вниз в этом направлении.`);
+    } else {
+      lines.push(`Слабость распределена по многим индикаторам малыми партиями — точечно отключать нечего, стоит пересмотреть направление ${w.dir} для ${w.pair} целиком.`);
+    }
+    blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Слабая сторона: ${w.label}`, lines));
+  });
+
+  if (strongPairDir.length) {
+    const best = strongPairDir[0];
+    blocks.push(devInsightBlock('dev-insight-good', `✅ Сильная сторона: ${best.label}`,
+      [`WR <b>${best.wr.toFixed(1)}%</b> на <b>${best.decided}</b> сигналах — стабильно прибыльно, можно рассмотреть увеличение ставки.`]));
+  }
+
+  if (!blocks.length) {
+    blocks.push(devInsightBlock('', 'Явных перекосов не найдено',
+      [`Все срезы пара×направление либо в пределах нормы (${WR_BREAKEVEN}–${WR_GREEN}%), либо выборка меньше ${DEV_INSIGHT_MIN_SAMPLE} решённых сигналов для уверенного вывода.`]));
+  }
+
+  return blocks.join('');
+}
+
 async function renderDevL30d() {
   if (devL30dRendered) return;
   try {
@@ -1155,6 +1242,16 @@ async function renderDevL30d() {
     devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, null), MIN_SAMPLE));
     devShowTable('devCrossEthTable', 'devCrossEthCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'ETH'), MIN_SAMPLE));
     devShowTable('devCrossBtcTable', 'devCrossBtcCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'BTC'), MIN_SAMPLE));
+
+    // Итог — автоматические выводы по срезу (в конце страницы)
+    try {
+      const insightsEl = document.getElementById('devInsights');
+      const insightsCard = document.getElementById('devInsightsCard');
+      if (insightsEl && insightsCard) {
+        insightsEl.innerHTML = devBuildInsights(sigs, combinedRaw);
+        insightsCard.style.display = 'block';
+      }
+    } catch (e) { console.log('DEV insights error:', e); }
   } catch (e) {
     console.log('DEV L30D error:', e);
   }

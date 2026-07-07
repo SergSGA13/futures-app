@@ -1092,11 +1092,20 @@ function devRenderPnlPriceChart(canvasId, key, labels, pnlPctData, priceData, pr
 }
 
 // ===== DEV: AUTO INSIGHTS (Last 30 Days) =====
-// Автоматический разбор среза DEV L30D: находит пары×направления и индикаторы×направления
-// с винрейтом ниже точки безубытка (WR_BREAKEVEN) при значимой выборке — это кандидаты
-// на отключение/пересмотр. Порог выборки выше, чем MIN_SAMPLE в таблицах (там это просто
-// маркер "мало данных", здесь — основание для рекомендации, нужна бОльшая уверенность).
+// Автоматический разбор среза DEV L30D. Ключевой принцип: индикаторы сканируются
+// НЕЗАВИСИМО от того, выглядит ли их родительское направление (пара×направление)
+// прибыльным — гнилой индикатор с большим объёмом может прятаться внутри агрегата,
+// который в среднем выглядит хорошо (другие коды перекрывают его своим WR).
+// Плоский взгляд "пара×направление = 68%, всё ок" эту проблему не видит.
+//
+// Пороги:
+//   DEV_INSIGHT_MIN_SAMPLE  — минимум решённых сигналов, чтобы вывод вообще считался
+//                             основанием для рекомендации (выше MIN_SAMPLE=5 у таблиц —
+//                             там это просто маркер "мало данных", здесь нужна уверенность).
+//   DEV_INSIGHT_CRITICAL_WR — ниже этого WR индикатор не просто "слабый", а систематически
+//                             убыточный ("гниёт") — рекомендация жёстче, чем "пересмотреть".
 const DEV_INSIGHT_MIN_SAMPLE = 15;
+const DEV_INSIGHT_CRITICAL_WR = 45;
 
 function devWrOf(w, l) {
   const dec = w + l;
@@ -1124,16 +1133,28 @@ function devInsightPairDir(sigs) {
   return out;
 }
 
-// [{label:'v.3/10 ↓ DOWN', ind, dir, w, l, decided, wr}, ...] для конкретной пары (или всех, если pairFilter=null)
-function devInsightIndicatorDir(combinedRaw, pairFilter) {
-  const combos = aggregateByIndicator(combinedRaw, 21, 30, pairFilter);
+// Плоский список [{pair, ind, dir, label, w, l, decided, wr}, ...] по ВСЕМ ячейкам
+// индикатор×направление для ETH и BTC отдельно — сканируется целиком, без привязки
+// к тому, слабое или сильное у него родительское направление.
+function devInsightIndicatorCells(combinedRaw) {
   const out = [];
-  for (const o of combos) {
-    if (o.ind === '-') continue; // сигналы без кода индикатора отключать не предлагаем
-    out.push({ label: `${o.ind} ↑ UP`,   ind: o.ind, dir: 'UP',   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
-    out.push({ label: `${o.ind} ↓ DOWN`, ind: o.ind, dir: 'DOWN', w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
+  for (const pair of ['ETH', 'BTC']) {
+    const combos = aggregateByIndicator(combinedRaw, 21, 30, pair);
+    for (const o of combos) {
+      if (o.ind === '-') continue; // сигналы без кода индикатора отключать не предлагаем
+      out.push({ pair, ind: o.ind, dir: 'UP',   label: `${pair} ${o.ind} ↑ UP`,   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
+      out.push({ pair, ind: o.ind, dir: 'DOWN', label: `${pair} ${o.ind} ↓ DOWN`, w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
+    }
   }
   return out;
+}
+
+// Русское склонение: 1 индикатор, 2-4 индикатора, 5+/11-14 индикаторов
+function devPluralRu(n, one, few, many) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
 }
 
 function devInsightBlock(cls, title, bodyLines) {
@@ -1141,38 +1162,82 @@ function devInsightBlock(cls, title, bodyLines) {
   return `<div class="dev-insight-item ${cls}"><div class="dev-insight-title">${title}</div>${body}</div>`;
 }
 
+// Сколько наберёт WR пары×направления, если исключить один конкретный индикатор —
+// конкретная цифра "что будет, если отключить", а не абстрактная рекомендация.
+function devWrWithout(pairDirRow, cell) {
+  const w = pairDirRow.w - cell.w, l = pairDirRow.l - cell.l;
+  return devWrOf(w, l);
+}
+
 function devBuildInsights(sigs, combinedRaw) {
-  const pairDir = devInsightPairDir(sigs).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
-  const weakPairDir   = pairDir.filter(x => x.wr < WR_BREAKEVEN).sort((a, b) => a.wr - b.wr);
-  const strongPairDir = pairDir.filter(x => x.wr >= WR_GREEN).sort((a, b) => b.wr - a.wr);
+  const pairDir = devInsightPairDir(sigs);
+  const pairDirScored = pairDir.filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
+  const weakPairDir   = pairDirScored.filter(x => x.wr < WR_BREAKEVEN).sort((a, b) => a.wr - b.wr);
+  const strongPairDir = pairDirScored.filter(x => x.wr >= WR_GREEN).sort((a, b) => b.wr - a.wr);
+
+  const cells = devInsightIndicatorCells(combinedRaw).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
+  // Вес серьёзности = разрыв до безубытка × объём — большой минус на малом объёме
+  // менее важен, чем стабильный минус на большом объёме.
+  const badCells = cells
+    .filter(x => x.wr < WR_BREAKEVEN)
+    .map(x => ({ ...x, critical: x.wr < DEV_INSIGHT_CRITICAL_WR, severity: (WR_BREAKEVEN - x.wr) * x.decided }))
+    .sort((a, b) => b.severity - a.severity);
 
   const blocks = [];
 
-  weakPairDir.forEach((w, i) => {
-    // индикаторы конкретно для этой пары/направления, которые тянут WR вниз
-    const badInd = devInsightIndicatorDir(combinedRaw, w.pair)
-      .filter(x => x.dir === w.dir && x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null && x.wr < WR_BREAKEVEN)
-      .sort((a, b) => a.wr - b.wr);
+  // 1. Критично: систематически убыточные индикаторы (WR ниже DEV_INSIGHT_CRITICAL_WR)
+  const critical = badCells.filter(x => x.critical);
+  if (critical.length) {
+    const lines = critical.slice(0, 6).map(x =>
+      `<b>${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}</b>: WR ${x.wr.toFixed(0)}% на <b>${x.decided}</b> сигналах - систематически убыточен при значимом объёме, отключить.`);
+    blocks.push(devInsightBlock('dev-insight-bad',
+      `🔴 Критично: ${critical.length} ${devPluralRu(critical.length, 'индикатор гниёт', 'индикатора гниют', 'индикаторов гниют')}`, lines));
+  }
 
+  // 2. Ниже безубытка, но не критично — тоже кандидаты на пересмотр
+  const weak = badCells.filter(x => !x.critical);
+  if (weak.length) {
+    const lines = weak.slice(0, 6).map(x =>
+      `<b>${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}</b>: WR ${x.wr.toFixed(0)}% на <b>${x.decided}</b> сигналах.`);
+    blocks.push(devInsightBlock('dev-insight-bad',
+      `⚠️ Ниже безубытка: ${weak.length} ${devPluralRu(weak.length, 'индикатор', 'индикатора', 'индикаторов')}`, lines));
+  }
+
+  // 3. Пары×направления, где агрегат выглядит сильным, но внутри него сидит
+  // гнилой индикатор, замаскированный другими кодами — самое важное для критичного взгляда.
+  strongPairDir.forEach(s => {
+    const hidden = badCells.filter(x => x.pair === s.pair && x.dir === s.dir);
+    if (hidden.length) {
+      const names = hidden.map(x => {
+        const without = devWrWithout(s, x);
+        const afterTxt = without != null ? `, без него было бы ${without.toFixed(1)}%` : '';
+        return `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided}${afterTxt})`;
+      }).join('; ');
+      blocks.push(devInsightBlock('dev-insight-bad',
+        `🎭 ${s.label} маскирует слабые индикаторы под общим WR ${s.wr.toFixed(1)}%`,
+        [`${names}. Общий показатель хороший только за счёт других кодов — эти конкретные стоит отключить, а не полагаться на среднее.`]));
+    } else {
+      blocks.push(devInsightBlock('dev-insight-good', `✅ Сильная сторона: ${s.label}`,
+        [`WR <b>${s.wr.toFixed(1)}%</b> на <b>${s.decided}</b> сигналах - стабильно прибыльно и без слабых индикаторов внутри, можно рассмотреть увеличение ставки.`]));
+    }
+  });
+
+  // 4. Слабые пары×направления целиком (если такие есть)
+  weakPairDir.forEach(w => {
+    const badInd = badCells.filter(x => x.pair === w.pair && x.dir === w.dir);
     const lines = [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> решённых сигналах - ниже точки безубытка (${WR_BREAKEVEN}%).`];
     if (badInd.length) {
       const names = badInd.map(x => `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided})`).join(', ');
-      lines.push(`Рекомендация: отключить или пересмотреть индикаторы ${names} - именно они тянут WR вниз в этом направлении.`);
+      lines.push(`Отключить: ${names} - именно они тянут направление вниз.`);
     } else {
       lines.push(`Слабость распределена по многим индикаторам малыми партиями - точечно отключать нечего, стоит пересмотреть направление ${w.dir} для ${w.pair} целиком.`);
     }
-    blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Слабая сторона: ${w.label}`, lines));
+    blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Слабая сторона целиком: ${w.label}`, lines));
   });
-
-  if (strongPairDir.length) {
-    const best = strongPairDir[0];
-    blocks.push(devInsightBlock('dev-insight-good', `✅ Сильная сторона: ${best.label}`,
-      [`WR <b>${best.wr.toFixed(1)}%</b> на <b>${best.decided}</b> сигналах - стабильно прибыльно, можно рассмотреть увеличение ставки.`]));
-  }
 
   if (!blocks.length) {
     blocks.push(devInsightBlock('', 'Явных перекосов не найдено',
-      [`Все срезы пара×направление либо в пределах нормы (${WR_BREAKEVEN}–${WR_GREEN}%), либо выборка меньше ${DEV_INSIGHT_MIN_SAMPLE} решённых сигналов для уверенного вывода.`]));
+      [`Все срезы пара×направление и индикатор×направление либо в пределах нормы, либо выборка меньше ${DEV_INSIGHT_MIN_SAMPLE} решённых сигналов для уверенного вывода.`]));
   }
 
   return blocks.join('');

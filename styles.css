@@ -952,12 +952,11 @@ html, body {
 /* ===== ANAL L7D TABLES ===== */
 /* Таблица шире карточки на узких экранах — .stats-table-wrap даёт ей собственный */
 /* горизонтальный скролл (swipe), не затрагивая вертикальный скролл страницы. */
-/* touch-action:pan-x закрепляет жест горизонтального свайпа за этим контейнером, */
-/* чтобы iOS/Android не перехватывали его как вертикальный скролл страницы. */
+/* Без touch-action: это свойство "закрепляло" жест за таблицей и на практике */
+/* иногда ломало последующий вертикальный скролл страницы на iOS. */
 .stats-table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
   margin: 0 -16px;
   padding: 0 16px;
 }
@@ -973,21 +972,21 @@ html, body {
 }
 .anal-table {
   width: 100%;
-  min-width: 400px;
+  min-width: 340px;
   border-collapse: collapse;
   font-size: 10.5px;
 }
 .anal-table th {
   color: var(--text-muted);
   font-weight: 600;
-  padding: 5px 4px;
+  padding: 4px 3px;
   text-align: center;
   border-bottom: 1px solid var(--card-border);
   white-space: nowrap;
 }
 .anal-table th:first-child { text-align: left; }
 .anal-table td {
-  padding: 6px 4px;
+  padding: 5px 3px;
   text-align: center;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   color: var(--text-muted);
@@ -1001,9 +1000,9 @@ html, body {
 .wr-low { color: var(--text-muted); opacity: 0.6; font-style: italic; }
 
 /* Stats L7D compact — used inside the two-card row on the main Statistics page */
-.stats-l7d .anal-table { font-size: 11.2px; min-width: 370px; }
+.stats-l7d .anal-table { font-size: 11.2px; min-width: 300px; }
 .stats-l7d .anal-table th,
-.stats-l7d .anal-table td { padding: 4px 3px; }
+.stats-l7d .anal-table td { padding: 3px 2px; }
 
 /* Stats sub-section nav buttons */
 .stats-subsections { margin-bottom: 4px; }

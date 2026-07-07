@@ -1058,6 +1058,9 @@ html, body {
 .nav-label-glow {
   display: inline-block;
   margin-top: 1px;
+  padding: 1.5px 8px;
+  border-radius: 20px;
+  border: 1px solid rgba(157, 80, 255, 0.55);
   font-weight: 800;
   letter-spacing: -0.1px;
   background: linear-gradient(90deg, #66A3FF, #9D50FF, #4EFFA0);
@@ -1067,8 +1070,8 @@ html, body {
   animation: nav-label-pulse 2.4s ease-in-out infinite;
 }
 @keyframes nav-label-pulse {
-  0%, 100% { filter: drop-shadow(0 0 3px rgba(157, 80, 255, 0.45)); }
-  50%      { filter: drop-shadow(0 0 7px rgba(78, 255, 160, 0.55)); }
+  0%, 100% { box-shadow: 0 0 5px rgba(157, 80, 255, 0.3); border-color: rgba(157, 80, 255, 0.55); }
+  50%      { box-shadow: 0 0 12px rgba(78, 255, 160, 0.45); border-color: rgba(78, 255, 160, 0.6); }
 }
 
 /* ===== DEV STATS (Last 30 Days · для разработчика) ===== */

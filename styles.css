@@ -1139,6 +1139,15 @@ html, body {
 .dev-insight-body + .dev-insight-body { margin-top: 4px; }
 .dev-insight-body b { color: var(--text); }
 
+/* Тепловая карта День × Час */
+.dev-heatmap-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px; }
+.dev-heatmap-table { width: 100%; min-width: 300px; border-collapse: separate; border-spacing: 2px; font-size: 10px; }
+.dev-heatmap-table th { color: var(--text-muted); font-weight: 600; padding: 3px 2px; text-align: center; font-size: 9px; }
+.dev-heatmap-table td { padding: 6px 2px; text-align: center; border-radius: 6px; font-weight: 700; color: #0A0B14; }
+.dev-heatmap-table td.hm-day { text-align: left; color: var(--text); font-weight: 600; padding-left: 4px; background: none !important; }
+.dev-heatmap-table td.hm-empty { color: var(--text-muted); opacity: 0.5; font-weight: 400; }
+.dev-heatmap-table .hm-n { display: block; font-size: 8px; font-weight: 400; opacity: 0.75; margin-top: 1px; }
+
 /* ===== REFRESH BUTTON ===== */
 .refresh-btn {
   width: 100%;

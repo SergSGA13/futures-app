@@ -1376,7 +1376,8 @@ function devBuildConfidenceSection(sigs) {
 // ===== 5. СЕРИИ ПРОИГРЫШЕЙ: самая длинная просадка подряд по индикатору×направлению =====
 const DEV_STREAK_MIN = 4; // от скольки проигрышей подряд считать это заметной серией
 
-function devLossStreaks(sigs) {
+// resultType: 'LOSE' для просадок, 'WIN' для победных серий (зеркальная логика)
+function devStreaksOfType(sigs, resultType) {
   const groups = {};
   for (const s of sigs) {
     if (s.ind === '-' || (s.pair !== 'ETH' && s.pair !== 'BTC') || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
@@ -1393,7 +1394,7 @@ function devLossStreaks(sigs) {
 
     let cur = 0, curStart = null, maxStreak = 0, maxStart = null, maxEnd = null;
     for (const s of g.seq) {
-      if (s.res === 'LOSE') {
+      if (s.res === resultType) {
         if (cur === 0) curStart = s.dk;
         cur++;
         if (cur > maxStreak) { maxStreak = cur; maxStart = curStart; maxEnd = s.dk; }
@@ -1409,13 +1410,203 @@ function devLossStreaks(sigs) {
 function devFmtDk(dk) { return dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}` : '?'; }
 
 function devBuildStreakSection(sigs) {
-  const streaks = devLossStreaks(sigs);
-  if (!streaks.length) {
-    return devInsightBlock('', 'Серий не найдено', [`Ни у одной пары индикатор×направление нет ${DEV_STREAK_MIN}+ проигрышей подряд за 30 дней.`]);
-  }
-  const blocks = streaks.slice(0, 6).map(x =>
-    devInsightBlock('dev-insight-bad', `🔥 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} проигрышей подряд`,
+  const losses = devStreaksOfType(sigs, 'LOSE');
+  const wins = devStreaksOfType(sigs, 'WIN');
+  const blocks = [];
+
+  losses.slice(0, 4).forEach(x => {
+    blocks.push(devInsightBlock('dev-insight-bad', `🔥 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} проигрышей подряд`,
       [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}, всего сигналов за месяц: ${x.total}. Такая просадка бьёт по риск-менеджменту сильнее, чем видно по среднему WR.`]));
+  });
+  wins.slice(0, 4).forEach(x => {
+    blocks.push(devInsightBlock('dev-insight-good', `🏆 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} побед подряд`,
+      [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}, всего сигналов за месяц: ${x.total}. Сейчас это "горячий" сигнал - момент присмотреться к увеличению доли.`]));
+  });
+
+  if (!blocks.length) {
+    blocks.push(devInsightBlock('', 'Серий не найдено', [`Ни у одной пары индикатор×направление нет ${DEV_STREAK_MIN}+ побед или проигрышей подряд за 30 дней.`]));
+  }
+  return blocks.join('');
+}
+
+// ===== ТЕПЛОВАЯ КАРТА: День недели × Час (4-часовые интервалы) =====
+const DEV_HEATMAP_MIN = 5; // минимум решённых сигналов в клетке, чтобы красить по WR
+
+function devHeatmapBuild(sigs) {
+  const hourBuckets = [[0, 3], [4, 7], [8, 11], [12, 15], [16, 19], [20, 23]];
+  const dayLabels = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'), t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
+  const grid = Array.from({ length: 7 }, () => hourBuckets.map(() => ({ w: 0, l: 0 })));
+
+  for (const s of sigs) {
+    if ((s.res !== 'WIN' && s.res !== 'LOSE') || s.hour == null) continue;
+    const [y, m, d] = s.dk.split('-').map(Number);
+    const raw = new Date(y, m - 1, d).getDay(); // 0=Sun
+    const dayIdx = raw === 0 ? 6 : raw - 1; // Mon=0..Sun=6
+    const bi = hourBuckets.findIndex(([a, b]) => s.hour >= a && s.hour <= b);
+    if (bi < 0) continue;
+    if (s.res === 'WIN') grid[dayIdx][bi].w++; else grid[dayIdx][bi].l++;
+  }
+  return { grid, hourBuckets, dayLabels };
+}
+
+function devBuildHeatmapSection(sigs) {
+  const { grid, hourBuckets, dayLabels } = devHeatmapBuild(sigs);
+  const hourLabels = hourBuckets.map(([a, b]) => `${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`);
+
+  let html = '<div class="dev-heatmap-wrap"><table class="dev-heatmap-table"><thead><tr><th></th>';
+  hourLabels.forEach(h => { html += `<th>${h}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  for (let d = 0; d < 7; d++) {
+    html += `<tr><td class="hm-day">${dayLabels[d]}</td>`;
+    for (let h = 0; h < hourBuckets.length; h++) {
+      const { w, l } = grid[d][h];
+      const dec = w + l;
+      if (dec < DEV_HEATMAP_MIN) {
+        html += '<td class="hm-empty">-</td>';
+      } else {
+        const wr = Math.round(w / dec * 100);
+        html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
+// ===== ПРОСАДКА (DRAWDOWN): насколько глубоко проваливалась кривая PNL от локального пика =====
+function devComputeDrawdown(sigs) {
+  const dailyMap = {};
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
+    if (s.res === 'WIN') dailyMap[s.dk].wins++; else dailyMap[s.dk].losses++;
+  }
+  const sortedDays = Object.keys(dailyMap).sort();
+  if (!sortedDays.length) return null;
+
+  let cum = 0, peak = 0, peakDk = null, maxDd = 0, maxDdStart = null, maxDdEnd = null;
+  const labels = [], ddData = [];
+  for (const dk of sortedDays) {
+    const { wins, losses } = dailyMap[dk];
+    cum += wins * 100 - losses * 125;
+    if (cum > peak) { peak = cum; peakDk = dk; }
+    const dd = cum - peak; // <= 0
+    if (dd < maxDd) { maxDd = dd; maxDdStart = peakDk; maxDdEnd = dk; }
+    labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+    ddData.push(Math.round((dd / 5000) * 100));
+  }
+  return { labels, ddData, maxDdPct: Math.round((maxDd / 5000) * 100), maxDdStart, maxDdEnd };
+}
+
+function devRenderDrawdownChart(sigs) {
+  if (pnlChartInstances['l30dDrawdown']) return;
+  const dd = devComputeDrawdown(sigs);
+  if (!dd) return;
+
+  const noteEl = document.getElementById('devDrawdownNote');
+  if (noteEl) {
+    noteEl.innerHTML = dd.maxDdPct < 0
+      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита, с ${devFmtDk(dd.maxDdStart)} по ${devFmtDk(dd.maxDdEnd)}.`
+      : 'Просадок не было - кривая PNL за месяц ни разу не опускалась ниже локального пика.';
+  }
+
+  const ctx = document.getElementById('devDrawdownChart')?.getContext('2d');
+  if (!ctx) return;
+  const gradient = ctx.createLinearGradient(0, 0, 0, 140);
+  gradient.addColorStop(0, 'rgba(255, 82, 114, 0.05)');
+  gradient.addColorStop(1, 'rgba(255, 82, 114, 0.4)');
+
+  pnlChartInstances['l30dDrawdown'] = new Chart(ctx, {
+    type: 'line',
+    data: { labels: dd.labels, datasets: [{ data: dd.ddData, borderColor: '#FF5272', backgroundColor: gradient, borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.25 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `Просадка: ${c.parsed.y}%` } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 8, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { max: 0, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+}
+
+// ===== ДОЛЯ ИНДИКАТОРОВ ПО ОБЪЁМУ: контекст для чтения остальных таблиц =====
+function devIndicatorShare(sigs) {
+  const g = {};
+  let total = 0;
+  for (const s of sigs) {
+    if (s.ind === '-' || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    if (!g[s.ind]) g[s.ind] = { ind: s.ind, w: 0, l: 0 };
+    if (s.res === 'WIN') g[s.ind].w++; else g[s.ind].l++;
+    total++;
+  }
+  const rows = Object.values(g)
+    .map(o => ({ ...o, decided: o.w + o.l, wr: devWrOf(o.w, o.l) }))
+    .sort((a, b) => b.decided - a.decided);
+  return { rows, total };
+}
+
+function devBuildShareSection(sigs) {
+  const { rows, total } = devIndicatorShare(sigs);
+  if (!rows.length || !total) {
+    return devInsightBlock('', 'Нет данных', ['Не удалось определить коды индикаторов в выборке.']);
+  }
+  let html = '<div class="stats-table-wrap"><table class="anal-table"><thead><tr><th>Индикатор</th><th>Сигналов</th><th>Доля</th><th>WR%</th></tr></thead><tbody>';
+  rows.forEach(r => {
+    const share = (r.decided / total * 100);
+    const wrCls = r.wr != null ? wrClass(Math.round(r.wr)) : '';
+    html += `<tr><td>${r.ind}</td><td>${r.decided}</td><td>${share.toFixed(1)}%</td><td class="${wrCls}">${r.wr != null ? r.wr.toFixed(0) + '%' : '-'}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+// ===== ВОЛАТИЛЬНОСТЬ ЦЕНЫ vs WR: спокойные дни против волатильных (медианный сплит) =====
+function devDailyVolatility(priceMap, dateKeys) {
+  const out = {};
+  for (let i = 1; i < dateKeys.length; i++) {
+    const prev = priceMap[dateKeys[i - 1]], cur = priceMap[dateKeys[i]];
+    if (prev == null || cur == null) continue;
+    out[dateKeys[i]] = Math.abs(cur - prev) / prev * 100;
+  }
+  return out;
+}
+
+function devVolatilitySplit(sigs, pair, volMap) {
+  const vals = Object.values(volMap);
+  if (vals.length < 8) return null;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const lo = { w: 0, l: 0 }, hi = { w: 0, l: 0 };
+  for (const s of sigs) {
+    if (s.pair !== pair || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    const v = volMap[s.dk];
+    if (v == null) continue;
+    const b = v >= median ? hi : lo;
+    if (s.res === 'WIN') b.w++; else b.l++;
+  }
+  return { median, loWr: devWrOf(lo.w, lo.l), hiWr: devWrOf(hi.w, hi.l), loDec: lo.w + lo.l, hiDec: hi.w + hi.l };
+}
+
+function devBuildVolatilitySection(sigs, ethPriceMap, btcPriceMap, dateKeys) {
+  const blocks = [];
+  [['ETH', ethPriceMap], ['BTC', btcPriceMap]].forEach(([pair, priceMap]) => {
+    const volMap = devDailyVolatility(priceMap, dateKeys);
+    const s = devVolatilitySplit(sigs, pair, volMap);
+    if (!s || s.loWr == null || s.hiWr == null || s.loDec < 10 || s.hiDec < 10) return;
+    const delta = s.hiWr - s.loWr;
+    const cls = Math.abs(delta) >= 10 ? (delta < 0 ? 'dev-insight-bad' : 'dev-insight-good') : '';
+    const deltaTxt = Math.abs(delta) >= 10
+      ? ` Разница ${delta >= 0 ? '+' : ''}${delta.toFixed(0)} п.п. - в этом режиме рынка сигналы работают ${delta < 0 ? 'заметно хуже' : 'заметно лучше'}.`
+      : '';
+    blocks.push(devInsightBlock(cls, `${pair}: спокойные дни vs волатильные (медиана хода ${s.median.toFixed(1)}%)`,
+      [`Спокойные: WR <b>${s.loWr.toFixed(0)}%</b> (n=${s.loDec}). Волатильные: WR <b>${s.hiWr.toFixed(0)}%</b> (n=${s.hiDec}).${deltaTxt}`]));
+  });
+  if (!blocks.length) {
+    blocks.push(devInsightBlock('', 'Недостаточно данных', ['Нужно больше дней с успешно загруженной ценой, чтобы сравнить спокойные и волатильные дни.']));
+  }
   return blocks.join('');
 }
 
@@ -1510,22 +1701,31 @@ async function renderDevL30d() {
     }
     if (!sigs.length) return;
 
+    const dateKeys = devDailyDateRange(30);
+    const dateLabels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
+    try {
+      devRenderDrawdownChart(sigs);
+      const ddCard = document.getElementById('devDrawdownCard');
+      if (ddCard) ddCard.style.display = 'block';
+    } catch (e) { console.log('DEV drawdown error:', e); }
 
     // PNL vs Цена — отдельно ETH и BTC, чтобы сопоставить траекторию цены и PNL
     try {
-      const dateKeys = devDailyDateRange(30);
-      const labels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
       const sigsEth = sigs.filter(s => s.pair === 'ETH');
       const sigsBtc = sigs.filter(s => s.pair === 'BTC');
-      devRenderPnlPriceChart('pnlChartL30dDevEth', 'l30dDevEth', labels,
+      devRenderPnlPriceChart('pnlChartL30dDevEth', 'l30dDevEth', dateLabels,
         devCumulativePnlPct(sigsEth, dateKeys), dateKeys.map(dk => ethPriceMap[dk] ?? null), '#66A3FF');
-      devRenderPnlPriceChart('pnlChartL30dDevBtc', 'l30dDevBtc', labels,
+      devRenderPnlPriceChart('pnlChartL30dDevBtc', 'l30dDevBtc', dateLabels,
         devCumulativePnlPct(sigsBtc, dateKeys), dateKeys.map(dk => btcPriceMap[dk] ?? null), '#F7931A');
       document.getElementById('devPnlEthCard').style.display = 'block';
       document.getElementById('devPnlBtcCard').style.display = 'block';
     } catch (e) { console.log('DEV PNL/Price chart error:', e); }
+
+    try { devShowTable('devVolatilityBlock', 'devVolatilityCard', devBuildVolatilitySection(sigs, ethPriceMap, btcPriceMap, dateKeys)); } catch (e) { console.log('DEV volatility error:', e); }
+
 
     // By Trading Pair
     const pairGroups = devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
@@ -1552,6 +1752,10 @@ async function renderDevL30d() {
     for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
     const hourGroups = devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`);
     devShowTable('devHourTable', 'devHourCard', devBuildTable(hourOrder, hourGroups));
+
+    // Тепловая карта День × Час и доля индикаторов по объёму — контекст перед таблицами по индикаторам
+    try { devShowTable('devHeatmapBlock', 'devHeatmapCard', devBuildHeatmapSection(sigs)); } catch (e) { console.log('DEV heatmap error:', e); }
+    try { devShowTable('devShareBlock', 'devShareCard', devBuildShareSection(sigs)); } catch (e) { console.log('DEV share error:', e); }
 
     // By Indicator — общая + отдельно ETH и BTC, по объединённым строкам
     devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, null), MIN_SAMPLE));

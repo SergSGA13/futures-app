@@ -950,30 +950,47 @@ html, body {
 }
 
 /* ===== ANAL L7D TABLES ===== */
-/* 5 колонок (Label, ↑Total, ↑WR%, ↓Total, ↓WR%) — таблица всегда укладывается */
-/* в ширину карточки, горизонтальный скролл не нужен даже на узких экранах. */
+/* Таблица шире карточки на узких экранах — .stats-table-wrap даёт ей собственный */
+/* горизонтальный скролл (swipe), не затрагивая вертикальный скролл страницы. */
+/* touch-action:pan-x закрепляет жест горизонтального свайпа за этим контейнером, */
+/* чтобы iOS/Android не перехватывали его как вертикальный скролл страницы. */
+.stats-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  margin: 0 -16px;
+  padding: 0 16px;
+}
+.pnl-chart-card:has(.stats-table-wrap) { position: relative; }
+.pnl-chart-card:has(.stats-table-wrap)::after {
+  content: '';
+  position: absolute;
+  top: 44px; bottom: 16px; right: 0;
+  width: 22px;
+  background: linear-gradient(to right, transparent, var(--card));
+  border-radius: 0 var(--radius) var(--radius) 0;
+  pointer-events: none;
+}
 .anal-table {
   width: 100%;
-  table-layout: fixed;
+  min-width: 400px;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 10.5px;
 }
 .anal-table th {
   color: var(--text-muted);
   font-weight: 600;
-  padding: 6px 4px;
+  padding: 5px 4px;
   text-align: center;
   border-bottom: 1px solid var(--card-border);
   white-space: nowrap;
 }
-.anal-table th:first-child { text-align: left; width: 26%; }
+.anal-table th:first-child { text-align: left; }
 .anal-table td {
-  padding: 7px 4px;
+  padding: 6px 4px;
   text-align: center;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .anal-table td:first-child { text-align: left; color: var(--text); font-weight: 600; }
@@ -984,9 +1001,9 @@ html, body {
 .wr-low { color: var(--text-muted); opacity: 0.6; font-style: italic; }
 
 /* Stats L7D compact — used inside the two-card row on the main Statistics page */
-.stats-l7d .anal-table { font-size: 11.8px; }
+.stats-l7d .anal-table { font-size: 11.2px; min-width: 370px; }
 .stats-l7d .anal-table th,
-.stats-l7d .anal-table td { padding: 5px 3px; }
+.stats-l7d .anal-table td { padding: 4px 3px; }
 
 /* Stats sub-section nav buttons */
 .stats-subsections { margin-bottom: 4px; }

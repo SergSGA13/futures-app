@@ -464,12 +464,9 @@ function wrRgba(pct) {
 }
 
 // ===== ANAL TABLES (generalized) =====
-// Только 5 колонок (Label, ↑Total, ↑WR%, ↓Total, ↓WR%) — Win и общий Total убраны,
-// чтобы таблица помещалась по ширине экрана без горизонтального скролла (Win легко
-// считается как Total×WR%, общий Total — как сумма ↑Total и ↓Total).
 // dataColStart=1 for L7D (cols B-H), =12 for ALL (cols M-S), =25 for L30D (cols Z-AF)
 function buildAnalTableCols(configs, dataColStart) {
-  const headers = ['', '↑ Total', '↑ WR%', '↓ Total', '↓ WR%'];
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -477,43 +474,34 @@ function buildAnalTableCols(configs, dataColStart) {
   for (const {label, row} of configs) {
     if (!row) continue;
     const isTotal = label === 'TOTAL';
-    // Колонки: c+0=↑Total, c+2=↑WR%, c+3=↓Total, c+5=↓WR%
-    const pick = [0, 2, 3, 5].map(off => {
-      const c = dataColStart + off;
-      return (row[c] !== undefined && row[c] !== '') ? row[c] : '-';
-    });
-    html += `<tr class="${isTotal ? 'anal-total' : ''}"><td>${label}</td>`;
-    pick.forEach((v, ci) => {
+    html += `<tr class="${isTotal ? 'anal-total' : ''}">`;
+    const vals = [label];
+    for (let c = dataColStart; c <= dataColStart + 6; c++) {
+      vals.push((row[c] !== undefined && row[c] !== '') ? row[c] : '-');
+    }
+    vals.forEach((v, ci) => {
       let cls = '';
-      if ((ci === 1 || ci === 3) && String(v).includes('%')) cls = wrClass(parseInt(v));
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
+        cls = wrClass(num);
+      }
       html += `<td class="${cls}">${v}</td>`;
     });
     html += '</tr>';
   }
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 // hourCol=11 for ALL (col L), =24 for L30D (col Y); dataColStart = hourCol+1
 function buildHourTableCols(rows, hourCol, dataColStart) {
-  const headers = ['Hour', '↑ Total', '↑ WR%', '↓ Total', '↓ WR%'];
+  const headers = ['Hour', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
 
   let totalRow = null;
   let dataFound = false;
-
-  const rowHtml = (label, r, d, isTotal) => {
-    const pick = [d, d + 2, d + 3, d + 5].map(c => (r[c] !== undefined && r[c] !== '') ? r[c] : '-');
-    let out = `<tr class="${isTotal ? 'anal-total' : ''}"><td>${label}</td>`;
-    pick.forEach((v, ci) => {
-      let cls = '';
-      if ((ci === 1 || ci === 3) && String(v).includes('%')) cls = wrClass(parseInt(v));
-      out += `<td class="${cls}">${v}</td>`;
-    });
-    return out + '</tr>';
-  };
 
   for (let i = 0; i < rows.length; i++) {
     const hour = rows[i][hourCol];
@@ -536,13 +524,39 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
     if (isNaN(h) || h < 0 || h > 23) continue;
 
     dataFound = true;
-    html += rowHtml(`${h}:00`, rows[i], dataColStart, false);
+    const d = dataColStart;
+    const vals = [`${h}:00`, rows[i][d]||'-', rows[i][d+1]||'-', rows[i][d+2]||'-',
+                  rows[i][d+3]||'-', rows[i][d+4]||'-', rows[i][d+5]||'-', rows[i][d+6]||'-'];
+    html += '<tr>';
+    vals.forEach((v, ci) => {
+      let cls = '';
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
+        cls = wrClass(num);
+      }
+      html += `<td class="${cls}">${v}</td>`;
+    });
+    html += '</tr>';
   }
 
-  if (totalRow) html += rowHtml('Total', totalRow, dataColStart, true);
+  if (totalRow) {
+    const d = dataColStart;
+    const vals = ['Total', totalRow[d]||'-', totalRow[d+1]||'-', totalRow[d+2]||'-',
+                  totalRow[d+3]||'-', totalRow[d+4]||'-', totalRow[d+5]||'-', totalRow[d+6]||'-'];
+    html += '<tr class="anal-total">';
+    vals.forEach((v, ci) => {
+      let cls = '';
+      if ((ci === 3 || ci === 6) && String(v).includes('%')) {
+        const num = parseInt(v);
+        cls = wrClass(num);
+      }
+      html += `<td class="${cls}">${v}</td>`;
+    });
+    html += '</tr>';
+  }
 
   html += '</tbody></table>';
-  return dataFound ? html : '';
+  return dataFound ? `<div class="stats-table-wrap">${html}</div>` : '';
 }
 
 // ===== CROSS TABLE (Indicator × Timeframe) =====
@@ -598,7 +612,7 @@ function buildIndicatorTable(combos, minSample) {
   if (!combos.length) return '';
   combos.sort((a, b) => (b.upT + b.dnT) - (a.upT + a.dnT)); // по объёму вниз
 
-  const headers = ['', '↑ Total', '↑ WR%', '↓ Total', '↓ WR%'];
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table cross-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -611,18 +625,20 @@ function buildIndicatorTable(combos, minSample) {
     const dn = wrCell(o.dnW, o.dnL, minSample);
     html += `<tr>
       <td>${o.ind}</td>
-      <td>${o.upT}</td><td class="${up.cls}">${up.v}</td>
-      <td>${o.dnT}</td><td class="${dn.cls}">${dn.v}</td></tr>`;
+      <td>${o.upT}</td><td>${o.upW}</td><td class="${up.cls}">${up.v}</td>
+      <td>${o.dnT}</td><td>${o.dnW}</td><td class="${dn.cls}">${dn.v}</td>
+      <td>${o.upT + o.dnT}</td></tr>`;
   }
 
   const upT = wrCell(tot.upW, tot.upL, minSample);
   const dnT = wrCell(tot.dnW, tot.dnL, minSample);
   html += `<tr class="anal-total">
     <td>TOTAL</td>
-    <td>${tot.upT}</td><td class="${upT.cls}">${upT.v}</td>
-    <td>${tot.dnT}</td><td class="${dnT.cls}">${dnT.v}</td></tr>`;
+    <td>${tot.upT}</td><td>${tot.upW}</td><td class="${upT.cls}">${upT.v}</td>
+    <td>${tot.dnT}</td><td>${tot.dnW}</td><td class="${dnT.cls}">${dnT.v}</td>
+    <td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
@@ -880,7 +896,7 @@ function devWrTd(w, l) {
 }
 
 function devBuildTable(order, groups) {
-  const headers = ['', '↑ Total', '↑ WR%', '↓ Total', '↓ WR%'];
+  const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
   html += '</tr></thead><tbody>';
@@ -892,14 +908,14 @@ function devBuildTable(order, groups) {
     if (!o) continue;
     hasData = true;
     for (const k in tot) tot[k] += o[k];
-    html += `<tr><td>${label}</td><td>${o.upT}</td>${devWrTd(o.upW, o.upL)}` +
-            `<td>${o.dnT}</td>${devWrTd(o.dnW, o.dnL)}</tr>`;
+    html += `<tr><td>${label}</td><td>${o.upT}</td><td>${o.upW}</td>${devWrTd(o.upW, o.upL)}` +
+            `<td>${o.dnT}</td><td>${o.dnW}</td>${devWrTd(o.dnW, o.dnL)}<td>${o.upT + o.dnT}</td></tr>`;
   }
   if (!hasData) return '';
-  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td>${devWrTd(tot.upW, tot.upL)}` +
-          `<td>${tot.dnT}</td>${devWrTd(tot.dnW, tot.dnL)}</tr>`;
+  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td><td>${tot.upW}</td>${devWrTd(tot.upW, tot.upL)}` +
+          `<td>${tot.dnT}</td><td>${tot.dnW}</td>${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return html;
+  return `<div class="stats-table-wrap">${html}</div>`;
 }
 
 function devShowTable(tableId, cardId, html) {

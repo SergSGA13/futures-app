@@ -967,10 +967,139 @@ function devRenderPnlChart(sigs) {
   });
 }
 
+// ===== DEV: PNL vs Цена (ETH / BTC), Last 30 Days =====
+// Полный календарный ряд дат (кумулятивный PNL переносится на дни без сигналов),
+// чтобы ось X точно совпадала с рядом дневных цен закрытия.
+function devDailyDateRange(days) {
+  const out = [];
+  const now = new Date();
+  for (let i = days; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+function devCumulativePnlPct(sigs, dateKeys) {
+  const dailyMap = {};
+  for (const s of sigs) {
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
+    if (s.res === 'WIN') dailyMap[s.dk].wins++;
+    else if (s.res === 'LOSE') dailyMap[s.dk].losses++;
+  }
+  let cum = 0;
+  return dateKeys.map(dk => {
+    const d = dailyMap[dk];
+    if (d) cum += d.wins * 100 - d.losses * 125;
+    return Math.round((cum / 5000) * 100);
+  });
+}
+
+// Дневные цены закрытия (Binance fapi -> Bybit фолбэк, как и в графике «Сигналы сегодня»).
+// Возвращает { 'YYYY-MM-DD': closePrice }; при ошибке сети — пустой объект (график PNL всё равно рендерится).
+async function devFetchDailyCloses(sym, days) {
+  try {
+    const start = Date.now() - (days + 3) * 864e5;
+    const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1d&limit=${days + 5}&startTime=${start}`;
+    const r = await sigFetch(u, 9000);
+    if (r.ok) {
+      const arr = await r.json();
+      if (arr.length) {
+        const map = {};
+        arr.forEach(k => {
+          const dt = new Date(k[0]);
+          const dk = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+          map[dk] = +k[4];
+        });
+        return map;
+      }
+    }
+  } catch (e) { /* фолбэк ниже */ }
+  try {
+    const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=D&limit=${days + 5}`;
+    const r = await sigFetch(u, 9000);
+    if (r.ok) {
+      const j = await r.json();
+      const list = (j.result && j.result.list) || [];
+      if (list.length) {
+        const map = {};
+        list.forEach(k => {
+          const dt = new Date(+k[0]);
+          const dk = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+          map[dk] = +k[4];
+        });
+        return map;
+      }
+    }
+  } catch (e) {}
+  return {};
+}
+
+// PNL (левая ось, %) + цена актива (правая ось) на одном графике — чтобы сопоставить траекторию.
+function devRenderPnlPriceChart(canvasId, key, labels, pnlPctData, priceData, priceColor) {
+  if (pnlChartInstances[key]) return;
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
+  const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(157, 80, 255, 0.30)');
+  gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+
+  const hasPrice = priceData.some(v => v != null);
+  const datasets = [{
+    label: 'PNL',
+    data: pnlPctData,
+    borderColor: '#9D50FF',
+    backgroundColor: gradient,
+    borderWidth: 2,
+    pointRadius: 0,
+    fill: true,
+    tension: 0.35,
+    yAxisID: 'y',
+  }];
+  if (hasPrice) {
+    datasets.push({
+      label: 'Price',
+      data: priceData,
+      borderColor: priceColor,
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [4, 3],
+      pointRadius: 0,
+      fill: false,
+      tension: 0.25,
+      yAxisID: 'y1',
+      spanGaps: true,
+    });
+  }
+
+  pnlChartInstances[key] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: hasPrice, position: 'top', align: 'end', labels: { color: '#7B84B0', boxWidth: 10, font: { size: 10 }, usePointStyle: true } },
+        tooltip: { callbacks: { label: c => c.dataset.label === 'PNL' ? `PNL: ${c.parsed.y}%` : `Price: ${c.parsed.y}` } }
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 10, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { position: 'left', ticks: { color: '#9D50FF', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y1: { position: 'right', display: hasPrice, ticks: { color: priceColor, font: { size: 10 } }, grid: { display: false } }
+      }
+    }
+  });
+}
+
 async function renderDevL30d() {
   if (devL30dRendered) return;
   try {
-    const { sigs, cntAll, cntBlocked, combinedRaw } = await devFetchSignals30d();
+    // Цены грузим параллельно с сигналами — если сеть недоступна, графики PNL/таблицы всё равно отрисуются.
+    const [{ sigs, cntAll, cntBlocked, combinedRaw }, ethPriceMap, btcPriceMap] = await Promise.all([
+      devFetchSignals30d(),
+      devFetchDailyCloses('ETHUSDT', 30).catch(() => ({})),
+      devFetchDailyCloses('BTCUSDT', 30).catch(() => ({})),
+    ]);
     devL30dRendered = true;
 
     const sum = document.getElementById('devSrcSummary');
@@ -981,6 +1110,20 @@ async function renderDevL30d() {
 
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
+
+    // PNL vs Цена — отдельно ETH и BTC, чтобы сопоставить траекторию цены и PNL
+    try {
+      const dateKeys = devDailyDateRange(30);
+      const labels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+      const sigsEth = sigs.filter(s => s.pair === 'ETH');
+      const sigsBtc = sigs.filter(s => s.pair === 'BTC');
+      devRenderPnlPriceChart('pnlChartL30dDevEth', 'l30dDevEth', labels,
+        devCumulativePnlPct(sigsEth, dateKeys), dateKeys.map(dk => ethPriceMap[dk] ?? null), '#66A3FF');
+      devRenderPnlPriceChart('pnlChartL30dDevBtc', 'l30dDevBtc', labels,
+        devCumulativePnlPct(sigsBtc, dateKeys), dateKeys.map(dk => btcPriceMap[dk] ?? null), '#F7931A');
+      document.getElementById('devPnlEthCard').style.display = 'block';
+      document.getElementById('devPnlBtcCard').style.display = 'block';
+    } catch (e) { console.log('DEV PNL/Price chart error:', e); }
 
     // By Trading Pair
     const pairGroups = devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);

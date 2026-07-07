@@ -19,7 +19,7 @@ ru: {
   'title.stats.l30d.dev':'Last 30 Days · DEV',
   'stats.dev.badge':'для разработчика',
   'stats.dev.desc':'ALLsignal + BLOCKEDsignal · расчёт из сырых данных',
-  'stats.dev.note':'Включает сигналы из BLOCKEDsignal — не поступившие в отработку из-за лимита 5 окон и других фильтров.',
+  'stats.dev.note':'Включает сигналы из BLOCKEDsignal - не поступившие в отработку из-за лимита 5 окон и других фильтров.',
   'stats.dev.src':'Сигналов за 30 дней',
   'sig.today':'Сигналы сегодня','sig.group.btn':'Signals Group',
   'sig.empty':'Сигналов сегодня нет','sig.loading':'Загрузка...','sig.error':'Ошибка загрузки',
@@ -145,7 +145,7 @@ en: {
   'title.stats.l30d.dev':'Last 30 Days · DEV',
   'stats.dev.badge':'for developer',
   'stats.dev.desc':'ALLsignal + BLOCKEDsignal · computed from raw data',
-  'stats.dev.note':'Includes BLOCKEDsignal entries — signals that were not executed due to the 5-window limit and other filters.',
+  'stats.dev.note':'Includes BLOCKEDsignal entries - signals that were not executed due to the 5-window limit and other filters.',
   'stats.dev.src':'Signals in last 30 days',
   'sig.today':'Today\'s Signals','sig.group.btn':'Signals Group',
   'sig.empty':'No signals today','sig.loading':'Loading...','sig.error':'Load error',
@@ -166,7 +166,7 @@ en: {
   'rule.2':'Entry time: exclusively <strong>10 minutes</strong>. Place the bet immediately after the signal.',
   'rule.3':'Skip entry if <strong>price moved impulsively</strong> without pullbacks after the signal',
   'rule.4':'<strong>Strictly one bet per signal.</strong> Do not double, do not average',
-  'rule.5':'If after the signal <strong>price sharply reversed against the bet within seconds — skip the entry:</strong> the signal\'s edge is already lost',
+  'rule.5':'If after the signal <strong>price sharply reversed against the bet within seconds - skip the entry:</strong> the signal\'s edge is already lost',
   'risk.title':'⚠️ Risk Management',
   'risk.1':'Do NOT oversize risks','risk.2':'Do NOT enter a trade more than once on acceleration',
   'risk.3':'Stay calm','risk.4':'Stick to the plan',
@@ -178,7 +178,7 @@ en: {
   'psych.title':'Trading Psychology',
   'psych.1':'Discipline over profit','psych.2':'Risk control is the foundation',
   'psych.3':'Patience over the long run pays off',
-  'psych.4':'A loss is not a defeat — it\'s a working element of the process',
+  'psych.4':'A loss is not a defeat - it\'s a working element of the process',
   'psych.goal':'Goal: consistent long-term profit, not quick money',
   'psych.img':'Successful streak examples:',
   'ulinks.title':'🔗 Useful Links','ulinks.channel':'Main signals channel',
@@ -226,7 +226,7 @@ en: {
   'calc.days.mon':'Mon','calc.days.tue':'Tue','calc.days.wed':'Wed','calc.days.thu':'Thu',
   'calc.days.fri':'Fri','calc.days.sat':'Sat','calc.days.sun':'Sun',
 
-  'art.tilt.body': `<p>Everyone knows it: tilt is the trader's main enemy — losses, emotions, pointless trades. But the truth is deeper: <strong>tilt is just a symptom of fear.</strong></p>
+  'art.tilt.body': `<p>Everyone knows it: tilt is the trader's main enemy - losses, emotions, pointless trades. But the truth is deeper: <strong>tilt is just a symptom of fear.</strong></p>
 <div class="article-highlight red"><div class="insight-row"><div class="insight-icon insight-icon-red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div><strong>Fear of Losing Capital</strong></div><p><strong>You close profits too early.</strong> You're afraid to enter trades. You hold a losing position to avoid admitting a mistake. Because <strong>"being wrong is scary"</strong></p></div>
 <div class="article-highlight red"><div class="insight-row"><div class="insight-icon insight-icon-red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><strong>Fear of Missing the Opportunity</strong></div><p>You jump in without a signal. You chase price moves. You buy at the top. Because <strong>"what if it all goes without me"</strong></p></div>
 <p>These two fears grip your mind like a vice. They break your system. Tilt is just the consequence.</p>
@@ -270,7 +270,7 @@ uk: {
   'title.stats.l30d.dev':'Last 30 Days · DEV',
   'stats.dev.badge':'для розробника',
   'stats.dev.desc':'ALLsignal + BLOCKEDsignal · розрахунок із сирих даних',
-  'stats.dev.note':'Включає сигнали з BLOCKEDsignal — ті, що не потрапили у відпрацювання через ліміт 5 вікон та інші фільтри.',
+  'stats.dev.note':'Включає сигнали з BLOCKEDsignal - ті, що не потрапили у відпрацювання через ліміт 5 вікон та інші фільтри.',
   'stats.dev.src':'Сигналів за 30 днів',
   'sig.empty':'Сигналів сьогодні немає','sig.loading':'Завантаження...','sig.error':'Помилка завантаження',
   'sig.sum.total':'Всього','sig.ago.h':'г','sig.ago.m':'хв','sig.ago.s':'с','sig.ago.word':'тому',

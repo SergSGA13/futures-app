@@ -223,12 +223,12 @@ async function loadStatsPreview() {
     // K/V stats are at sheet rows 17-18 = parsed rows[16] and rows[17]
     // rows[17]: col[10]=WinRate L7D, col[21]=WinRate Total
     // rows[16]: col[10]=Signals L7D,  col[21]=Signals Total
-    const winrate7d  = rows[18]?.[10] || '—';
-    const signals7d  = rows[17]?.[10] || '—';
-    const winrateAll = rows[18]?.[21] || '—';
-    const totalAll   = rows[17]?.[21] || '—';
+    const winrate7d  = rows[18]?.[10] || '-';
+    const signals7d  = rows[17]?.[10] || '-';
+    const winrateAll = rows[18]?.[21] || '-';
+    const totalAll   = rows[17]?.[21] || '-';
 
-    const fmtWR = v => { const n = parseFloat(String(v).replace('%','')); return isNaN(n) ? '—' : n.toFixed(1) + '%'; };
+    const fmtWR = v => { const n = parseFloat(String(v).replace('%','')); return isNaN(n) ? '-' : n.toFixed(1) + '%'; };
     document.getElementById('statWinrate7d').textContent  = fmtWR(winrate7d);
     document.getElementById('statSignals7d').textContent  = signals7d;
     document.getElementById('statWinrate').textContent    = fmtWR(winrateAll);
@@ -588,7 +588,7 @@ function aggregateByIndicator(rows, indCol, daysFilter, pairFilter) {
       if (dk < cutoff) continue;
     }
     // Пустой код индикатора не выкидываем, а собираем в строку «—»
-    const ind = (rows[i][indCol] || '').trim() || '—';
+    const ind = (rows[i][indCol] || '').trim() || '-';
     if (!g[ind]) g[ind] = { ind, upW:0, upL:0, upT:0, dnW:0, dnL:0, dnT:0 };
     const o = g[ind], up = dir === 'UP';
     if (up) o.upT++; else o.dnT++;
@@ -1129,7 +1129,7 @@ function devInsightIndicatorDir(combinedRaw, pairFilter) {
   const combos = aggregateByIndicator(combinedRaw, 21, 30, pairFilter);
   const out = [];
   for (const o of combos) {
-    if (o.ind === '—') continue; // сигналы без кода индикатора отключать не предлагаем
+    if (o.ind === '-') continue; // сигналы без кода индикатора отключать не предлагаем
     out.push({ label: `${o.ind} ↑ UP`,   ind: o.ind, dir: 'UP',   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
     out.push({ label: `${o.ind} ↓ DOWN`, ind: o.ind, dir: 'DOWN', w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
   }
@@ -1154,12 +1154,12 @@ function devBuildInsights(sigs, combinedRaw) {
       .filter(x => x.dir === w.dir && x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null && x.wr < WR_BREAKEVEN)
       .sort((a, b) => a.wr - b.wr);
 
-    const lines = [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> решённых сигналах — ниже точки безубытка (${WR_BREAKEVEN}%).`];
+    const lines = [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> решённых сигналах - ниже точки безубытка (${WR_BREAKEVEN}%).`];
     if (badInd.length) {
       const names = badInd.map(x => `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided})`).join(', ');
-      lines.push(`Рекомендация: отключить или пересмотреть индикаторы ${names} — именно они тянут WR вниз в этом направлении.`);
+      lines.push(`Рекомендация: отключить или пересмотреть индикаторы ${names} - именно они тянут WR вниз в этом направлении.`);
     } else {
-      lines.push(`Слабость распределена по многим индикаторам малыми партиями — точечно отключать нечего, стоит пересмотреть направление ${w.dir} для ${w.pair} целиком.`);
+      lines.push(`Слабость распределена по многим индикаторам малыми партиями - точечно отключать нечего, стоит пересмотреть направление ${w.dir} для ${w.pair} целиком.`);
     }
     blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Слабая сторона: ${w.label}`, lines));
   });
@@ -1167,7 +1167,7 @@ function devBuildInsights(sigs, combinedRaw) {
   if (strongPairDir.length) {
     const best = strongPairDir[0];
     blocks.push(devInsightBlock('dev-insight-good', `✅ Сильная сторона: ${best.label}`,
-      [`WR <b>${best.wr.toFixed(1)}%</b> на <b>${best.decided}</b> сигналах — стабильно прибыльно, можно рассмотреть увеличение ставки.`]));
+      [`WR <b>${best.wr.toFixed(1)}%</b> на <b>${best.decided}</b> сигналах - стабильно прибыльно, можно рассмотреть увеличение ставки.`]));
   }
 
   if (!blocks.length) {
@@ -1522,7 +1522,7 @@ function todayStr() {
 
 function formatTimerAgo(timeStr) {
   // timeStr = "HH:MM:SS" or "HH:MM"
-  if (!timeStr) return '—';
+  if (!timeStr) return '-';
   const parts = timeStr.split(':');
   const h = parseInt(parts[0]) || 0;
   const m = parseInt(parts[1]) || 0;
@@ -1565,7 +1565,7 @@ async function loadTodaySignals() {
 
     if (resolvedRows.length === 0) {
       list.innerHTML = `<div class="signals-empty">${t('sig.empty')}</div>`;
-      document.getElementById('signalTimer').textContent = '—';
+      document.getElementById('signalTimer').textContent = '-';
       return;
     }
 
@@ -1584,11 +1584,11 @@ async function loadTodaySignals() {
     // Render list (newest first) — только закрытые сигналы
     const reversed = [...resolvedRows].reverse();
     list.innerHTML = reversed.map(r => {
-      const pair   = r[1]  || '—';
-      const dir    = r[2]  || '—';
+      const pair   = r[1]  || '-';
+      const dir    = r[2]  || '-';
       const price  = r[3]  || '';
       const result = r[9]  || '';
-      const time   = (r[11] || '').substring(0, 8) || '—'; // HH:MM:SS col L
+      const time   = (r[11] || '').substring(0, 8) || '-'; // HH:MM:SS col L
 
       const isUp    = dir === 'UP';
       const isWin   = result === 'WIN';
@@ -1614,7 +1614,7 @@ async function loadTodaySignals() {
         <path d="M2.5 3.8L16.2 17.5M17.5 3.8L3.2 17.2" stroke="#FF3B6B" stroke-width="0.8" stroke-linecap="round" stroke-opacity="0.4"/>
       </svg>`;
       const resIcon   = isWin ? WIN_ICON : isLose ? LOSE_ICON : '';
-      const resText   = isWin ? 'WIN' : isLose ? 'LOSE' : isHalf ? '50/50' : '—';
+      const resText   = isWin ? 'WIN' : isLose ? 'LOSE' : isHalf ? '50/50' : '-';
 
       return `<div class="signal-row">
         <span class="sig-time">${time}</span>
@@ -1802,7 +1802,7 @@ async function renderSignalChart(force) {
 
     if (statEl) {
       const s = sigCoinStat(rows, coin);
-      const wrTxt = s.wr == null ? '—' : s.wr + '%';
+      const wrTxt = s.wr == null ? '-' : s.wr + '%';
       statEl.innerHTML = `${coin} сегодня: <b>${s.resolved}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${s.wins}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${s.losses}</b> &nbsp;·&nbsp; WR <b>${wrTxt}</b>`;
     }
     SIG_CHART.rendered = true;

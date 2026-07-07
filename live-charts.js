@@ -80,7 +80,7 @@
 
   function renderInto(el, opts) {
     const LW = window.LightweightCharts;
-    if (!LW) { el.innerHTML = '<div style="color:#7B84B0;text-align:center;padding:30px;font-size:13px">График недоступен — библиотека не загрузилась</div>'; return null; }
+    if (!LW) { el.innerHTML = '<div style="color:#7B84B0;text-align:center;padding:30px;font-size:13px">График недоступен - библиотека не загрузилась</div>'; return null; }
     if (el.__lc) { try { el.__lc.remove(); } catch (e) {} el.__lc = null; }
     el.innerHTML = '';
     const chart = LW.createChart(el, {

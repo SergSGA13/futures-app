@@ -284,7 +284,7 @@
       sets.push({ pnl: eqOpen ? setPnl / eqOpen * 100 : 0, t0: pos.t0, t1: candles[i].time, entryAvg: totQ ? totCost / totQ : 0, exitPrice: price, side: pos.side, entries: pos.lots.map(l => l.p) });
       openPos(s.side, i);
     }
-    let pside = '—', plots = 0, pavg = 0, entries = [], unreal = 0, pt0 = null;
+    let pside = '-', plots = 0, pavg = 0, entries = [], unreal = 0, pt0 = null;
     if (pos) {
       const last = close[close.length - 1]; let totQ = 0, totCost = 0;
       for (const { p, q } of pos.lots) { unreal += pos.side === 'long' ? q * (last - p) : q * (p - last); totQ += q; totCost += p * q; entries.push(p); }
@@ -423,7 +423,7 @@
     const isPf = d.mode === 'portfolio';
     const hasAxis = isTime || isPf;
     const title = isPf ? 'Накопленный PNL портфеля' : isTime ? 'Накопленный PNL по дням' : 'Накопленный PNL по парам';
-    const totTxt = d.cum.length ? fmtPct(d.total) : '—';
+    const totTxt = d.cum.length ? fmtPct(d.total) : '-';
     let metrics = '';
     if (isPf) {
       const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
@@ -455,7 +455,7 @@
       ? `Прикидка «среднее по парам» (вход 25% сленва на сигнал). Точная модель депозита - переключи, когда заполнена вкладка ${(RUNS.find(r => r.key === S.run) || {}).tab || ''}_PF.`
       : `накоплено по ${d.labels.length} парам · ось появится по датам, когда в данных есть метки времени сделок`;
     const dep = isPf
-      ? `<div class="fs-pnl-dep">Общий депозит: <b>$${d.deposit ? (+d.deposit).toLocaleString('ru-RU') : '—'}</b> · вход 0.25% на сигнал</div>`
+      ? `<div class="fs-pnl-dep">Общий депозит: <b>$${d.deposit ? (+d.deposit).toLocaleString('ru-RU') : '-'}</b> · вход 0.25% на сигнал</div>`
       : isTime ? `<div class="fs-pnl-dep">Вложено всего: <b>$${(d.coins * 100).toLocaleString('ru-RU')}</b> · по $100 на каждую из ${d.coins} пар</div>` : '';
     return `
       <div class="fs-pnlcard-top"><span class="fs-pnlcard-t">${title}${filtered ? ' (по фильтру)' : ''}</span><span class="fs-pnlcard-v" style="color:${pnlHex(d.total)}">${totTxt}</span></div>

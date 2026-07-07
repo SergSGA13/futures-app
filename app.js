@@ -1131,6 +1131,14 @@ function devWrOf(w, l) {
   return dec > 0 ? (w / dec * 100) : null;
 }
 
+// Ожидаемый результат ОДНОГО сигнала при данном WR% (в USDT, модель WIN +100 / LOSE -125).
+// Используется, чтобы перевести любую находку (тренд, калибровка, волатильность, BLOCKED)
+// в одну и ту же валюту — "сколько это стоит в деньгах за месяц" — и ранжировать по этому.
+function devEvPerSignal(wrPct) {
+  const p = wrPct / 100;
+  return p * 100 - (1 - p) * 125;
+}
+
 // [{label:'ETH ↑ UP', pair, dir, w, l, decided, wr}, ...] по всем 4 комбинациям пара×направление
 function devInsightPairDir(sigs) {
   const g = { ETH: { upW: 0, upL: 0, dnW: 0, dnL: 0 }, BTC: { upW: 0, upL: 0, dnW: 0, dnL: 0 } };
@@ -1497,7 +1505,7 @@ function devComputeDrawdown(sigs) {
     labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
     ddData.push(Math.round((dd / 5000) * 100));
   }
-  return { labels, ddData, maxDdPct: Math.round((maxDd / 5000) * 100), maxDdStart, maxDdEnd };
+  return { labels, ddData, maxDdUsdt: maxDd, maxDdPct: Math.round((maxDd / 5000) * 100), maxDdStart, maxDdEnd };
 }
 
 function devRenderDrawdownChart(sigs) {
@@ -1610,78 +1618,136 @@ function devBuildVolatilitySection(sigs, ethPriceMap, btcPriceMap, dateKeys) {
   return blocks.join('');
 }
 
-function devBuildInsights(sigs, combinedRaw) {
-  const pairDir = devInsightPairDir(sigs);
-  const pairDirScored = pairDir.filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
-  const weakPairDir   = pairDirScored.filter(x => x.wr < WR_BREAKEVEN).sort((a, b) => a.wr - b.wr);
-  const strongPairDir = pairDirScored.filter(x => x.wr >= WR_GREEN).sort((a, b) => b.wr - a.wr);
+function devFmtUsdt(v) {
+  const r = Math.round(v);
+  return `${r >= 0 ? '+' : ''}${r} USDT`;
+}
+
+const DEV_INSIGHTS_TOP_N = 10;
+
+// Единый рейтинг находок из ВСЕХ блоков (пары/индикаторы, тренд, BLOCKED, калибровка,
+// серии, просадка, волатильность), отсортированный по расчётному влиянию на PNL —
+// сколько это стоит в USDT за месяц (или период сравнения), без разбивки по категориям.
+// Отрицательное влияние = находка в убыток, положительное = находка в плюс/потенциал.
+function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys) {
+  const findings = [];
+
+  // ── Пары×направления и индикаторы×направления ──────────────────────────
+  const pairDir = devInsightPairDir(sigs).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
+  const pairDirMap = {};
+  pairDir.forEach(x => { pairDirMap[`${x.pair}|${x.dir}`] = x; });
 
   const cells = devInsightIndicatorCells(combinedRaw).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
-  // Вес серьёзности = разрыв до безубытка × объём — большой минус на малом объёме
-  // менее важен, чем стабильный минус на большом объёме.
-  const badCells = cells
-    .filter(x => x.wr < WR_BREAKEVEN)
-    .map(x => ({ ...x, critical: x.wr < DEV_INSIGHT_CRITICAL_WR, severity: (WR_BREAKEVEN - x.wr) * x.decided }))
-    .sort((a, b) => b.severity - a.severity);
+  const badCells = cells.filter(x => x.wr < WR_BREAKEVEN);
 
-  const blocks = [];
-
-  // 1. Критично: систематически убыточные индикаторы (WR ниже DEV_INSIGHT_CRITICAL_WR)
-  const critical = badCells.filter(x => x.critical);
-  if (critical.length) {
-    const lines = critical.slice(0, 6).map(x =>
-      `<b>${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}</b>: WR ${x.wr.toFixed(0)}% на <b>${x.decided}</b> сигналах - систематически убыточен при значимом объёме, отключить.`);
-    blocks.push(devInsightBlock('dev-insight-bad',
-      `🔴 Критично: ${critical.length} ${devPluralRu(critical.length, 'индикатор гниёт', 'индикатора гниют', 'индикаторов гниют')}`, lines));
-  }
-
-  // 2. Ниже безубытка, но не критично — тоже кандидаты на пересмотр
-  const weak = badCells.filter(x => !x.critical);
-  if (weak.length) {
-    const lines = weak.slice(0, 6).map(x =>
-      `<b>${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}</b>: WR ${x.wr.toFixed(0)}% на <b>${x.decided}</b> сигналах.`);
-    blocks.push(devInsightBlock('dev-insight-bad',
-      `⚠️ Ниже безубытка: ${weak.length} ${devPluralRu(weak.length, 'индикатор', 'индикатора', 'индикаторов')}`, lines));
-  }
-
-  // 3. Пары×направления, где агрегат выглядит сильным, но внутри него сидит
-  // гнилой индикатор, замаскированный другими кодами — самое важное для критичного взгляда.
-  strongPairDir.forEach(s => {
-    const hidden = badCells.filter(x => x.pair === s.pair && x.dir === s.dir);
-    if (hidden.length) {
-      const names = hidden.map(x => {
-        const without = devWrWithout(s, x);
-        const afterTxt = without != null ? `, без него было бы ${without.toFixed(1)}%` : '';
-        return `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided}${afterTxt})`;
-      }).join('; ');
-      blocks.push(devInsightBlock('dev-insight-bad',
-        `🎭 ${s.label} маскирует слабые индикаторы под общим WR ${s.wr.toFixed(1)}%`,
-        [`${names}. Общий показатель хороший только за счёт других кодов — эти конкретные стоит отключить, а не полагаться на среднее.`]));
+  badCells.forEach(x => {
+    const impact = x.w * 100 - x.l * 125;
+    const label = `${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`;
+    const parent = pairDirMap[`${x.pair}|${x.dir}`];
+    if (parent && parent.wr >= WR_GREEN) {
+      const without = devWrWithout(parent, x);
+      const afterTxt = without != null ? `, без него WR направления был бы ${without.toFixed(1)}%` : '';
+      findings.push({ impact, cls: 'dev-insight-bad',
+        title: `🎭 ${label} маскируется внутри сильного ${parent.pair} ${parent.dir === 'UP' ? '↑ UP' : '↓ DOWN'} (${parent.wr.toFixed(1)}%)`,
+        body: [`WR <b>${x.wr.toFixed(0)}%</b> на <b>${x.decided}</b> сигналах${afterTxt}. Влияние на PNL: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
     } else {
-      blocks.push(devInsightBlock('dev-insight-good', `✅ Сильная сторона: ${s.label}`,
-        [`WR <b>${s.wr.toFixed(1)}%</b> на <b>${s.decided}</b> сигналах - стабильно прибыльно и без слабых индикаторов внутри, можно рассмотреть увеличение ставки.`]));
+      const critical = x.wr < DEV_INSIGHT_CRITICAL_WR;
+      findings.push({ impact, cls: 'dev-insight-bad',
+        title: `${critical ? '🔴' : '⚠️'} ${label}${critical ? ' систематически убыточен' : ' ниже безубытка'}`,
+        body: [`WR <b>${x.wr.toFixed(0)}%</b> на <b>${x.decided}</b> сигналах. Влияние на PNL: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
     }
   });
 
-  // 4. Слабые пары×направления целиком (если такие есть)
-  weakPairDir.forEach(w => {
-    const badInd = badCells.filter(x => x.pair === w.pair && x.dir === w.dir);
-    const lines = [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> решённых сигналах - ниже точки безубытка (${WR_BREAKEVEN}%).`];
-    if (badInd.length) {
-      const names = badInd.map(x => `<b>${x.ind}</b> (${x.wr.toFixed(0)}%, n=${x.decided})`).join(', ');
-      lines.push(`Отключить: ${names} - именно они тянут направление вниз.`);
-    } else {
-      lines.push(`Слабость распределена по многим индикаторам малыми партиями - точечно отключать нечего, стоит пересмотреть направление ${w.dir} для ${w.pair} целиком.`);
-    }
-    blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Слабая сторона целиком: ${w.label}`, lines));
+  pairDir.filter(x => x.wr >= WR_GREEN && !badCells.some(c => c.pair === x.pair && c.dir === x.dir)).forEach(s => {
+    const impact = s.w * 100 - s.l * 125;
+    findings.push({ impact, cls: 'dev-insight-good',
+      title: `✅ ${s.label} - чистая сильная сторона`,
+      body: [`WR <b>${s.wr.toFixed(1)}%</b> на <b>${s.decided}</b> сигналах, без слабых индикаторов внутри. Вклад в PNL: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
   });
 
-  if (!blocks.length) {
-    blocks.push(devInsightBlock('', 'Явных перекосов не найдено',
-      [`Все срезы пара×направление и индикатор×направление либо в пределах нормы, либо выборка меньше ${DEV_INSIGHT_MIN_SAMPLE} решённых сигналов для уверенного вывода.`]));
+  pairDir.filter(x => x.wr < WR_BREAKEVEN).forEach(w => {
+    const impact = w.w * 100 - w.l * 125;
+    findings.push({ impact, cls: 'dev-insight-bad',
+      title: `⚠️ ${w.label} - слабое направление целиком`,
+      body: [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> сигналах - ниже безубытка (${WR_BREAKEVEN}%). Итог направления: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
+  });
+
+  // ── Тренд по неделям ─────────────────────────────────────────────────
+  const TREND_DELTA = 15;
+  devTrendCells(sigs).filter(x => Math.abs(x.delta) >= TREND_DELTA).forEach(x => {
+    const impact = x.secondDec * (devEvPerSignal(x.secondWr) - devEvPerSignal(x.firstWr));
+    const worsening = x.delta < 0;
+    findings.push({ impact, cls: worsening ? 'dev-insight-bad' : 'dev-insight-good',
+      title: `${worsening ? '📉' : '📈'} ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${worsening ? 'слабеет' : 'набирает силу'}`,
+      body: [`Было <b>${x.firstWr.toFixed(0)}%</b> (n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (n=${x.secondDec}). Влияние тренда на PNL: <b>${devFmtUsdt(impact)}</b> за вторую половину месяца.`] });
+  });
+
+  // ── BLOCKED vs исполненные: только явные кандидаты на повышение приоритета ──
+  const { byCell: blockedByCell } = devBlockedVsExecuted(sigs);
+  Object.values(blockedByCell).forEach(c => {
+    const bDec = c.blocked.w + c.blocked.l, eDec = c.exec.w + c.exec.l;
+    if (bDec < DEV_BLOCKED_MIN_SAMPLE || eDec < DEV_BLOCKED_MIN_SAMPLE) return;
+    const bWr = devWrOf(c.blocked.w, c.blocked.l), eWr = devWrOf(c.exec.w, c.exec.l);
+    if (bWr - eWr < 10) return;
+    const impact = bDec * (devEvPerSignal(bWr) - devEvPerSignal(eWr));
+    findings.push({ impact, cls: 'dev-insight-good',
+      title: `⬆️ ${c.pair} ${c.ind} ${c.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: повысить приоритет на вход`,
+      body: [`В заблокированных WR <b>${bWr.toFixed(0)}%</b> (n=${bDec}) выше, чем у исполненных <b>${eWr.toFixed(0)}%</b> (n=${eDec}). Оценочный потенциал: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
+  });
+
+  // ── Калибровка уверенности ───────────────────────────────────────────
+  devConfidenceBins(sigs).forEach(b => {
+    const gap = b.realizedWr - b.avgDeclared;
+    if (Math.abs(gap) < DEV_CONF_GAP) return;
+    const impact = b.w * 100 - b.l * 125;
+    findings.push({ impact, cls: impact < 0 ? 'dev-insight-bad' : 'dev-insight-good',
+      title: `${gap < 0 ? '⚠️' : '👀'} Бакет уверенности ${b.key}: модель ${gap < 0 ? 'завышает' : 'занижает'} уверенность`,
+      body: [`Заявлено <b>${b.avgDeclared.toFixed(0)}%</b>, реальный WR <b>${b.realizedWr.toFixed(0)}%</b> на ${b.decided} сигналах. Фактический результат бакета: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
+  });
+
+  // ── Серии побед/проигрышей ───────────────────────────────────────────
+  devStreaksOfType(sigs, 'LOSE').forEach(x => {
+    const impact = -(x.maxStreak * 125);
+    findings.push({ impact, cls: 'dev-insight-bad',
+      title: `🔥 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} проигрышей подряд`,
+      body: [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}. Прямой убыток от серии: <b>${devFmtUsdt(impact)}</b>.`] });
+  });
+  devStreaksOfType(sigs, 'WIN').forEach(x => {
+    const impact = x.maxStreak * 100;
+    findings.push({ impact, cls: 'dev-insight-good',
+      title: `🏆 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} побед подряд`,
+      body: [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}. Прямая прибыль от серии: <b>${devFmtUsdt(impact)}</b>.`] });
+  });
+
+  // ── Просадка ──────────────────────────────────────────────────────────
+  const dd = devComputeDrawdown(sigs);
+  if (dd && dd.maxDdUsdt < 0) {
+    findings.push({ impact: dd.maxDdUsdt, cls: 'dev-insight-bad',
+      title: '📉 Максимальная просадка за месяц',
+      body: [`${devFmtDk(dd.maxDdStart)}-${devFmtDk(dd.maxDdEnd)}. Глубина от локального пика: <b>${devFmtUsdt(dd.maxDdUsdt)}</b>.`] });
   }
 
-  return blocks.join('');
+  // ── Волатильность цены vs WR ─────────────────────────────────────────
+  if (ethPriceMap && btcPriceMap && dateKeys) {
+    [['ETH', ethPriceMap], ['BTC', btcPriceMap]].forEach(([pair, priceMap]) => {
+      const volMap = devDailyVolatility(priceMap, dateKeys);
+      const s = devVolatilitySplit(sigs, pair, volMap);
+      if (!s || s.loWr == null || s.hiWr == null || s.loDec < 10 || s.hiDec < 10) return;
+      if (Math.abs(s.hiWr - s.loWr) < 10) return;
+      const impact = s.hiDec * (devEvPerSignal(s.hiWr) - devEvPerSignal(s.loWr));
+      findings.push({ impact, cls: impact < 0 ? 'dev-insight-bad' : 'dev-insight-good',
+        title: `〰️ ${pair}: результат заметно ${impact < 0 ? 'хуже' : 'лучше'} на волатильных днях`,
+        body: [`Спокойные: WR ${s.loWr.toFixed(0)}% (n=${s.loDec}). Волатильные: WR ${s.hiWr.toFixed(0)}% (n=${s.hiDec}). Влияние: <b>${devFmtUsdt(impact)}</b> за волатильные дни в выборке.`] });
+    });
+  }
+
+  if (!findings.length) {
+    return devInsightBlock('', 'Явных перекосов не найдено',
+      [`Все срезы либо в пределах нормы, либо выборка меньше минимума для уверенного вывода.`]);
+  }
+
+  findings.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
+  return findings.slice(0, DEV_INSIGHTS_TOP_N).map(f => devInsightBlock(f.cls, f.title, f.body)).join('');
 }
 
 async function renderDevL30d() {
@@ -1773,7 +1839,7 @@ async function renderDevL30d() {
       const insightsEl = document.getElementById('devInsights');
       const insightsCard = document.getElementById('devInsightsCard');
       if (insightsEl && insightsCard) {
-        insightsEl.innerHTML = devBuildInsights(sigs, combinedRaw);
+        insightsEl.innerHTML = devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys);
         insightsCard.style.display = 'block';
       }
     } catch (e) { console.log('DEV insights error:', e); }

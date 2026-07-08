@@ -1264,6 +1264,52 @@ function devBuildTrendSection(sigs) {
   return blocks.join('');
 }
 
+// ===== СПИСОК "ТРЕБУЮТ ПЕРЕСМОТРА ПРЯМО СЕЙЧАС" (под основным графиком PNL DEV) =====
+// Индикаторы стареют на новых рыночных уровнях — их нужно периодически пересобирать.
+// Список = объединение двух сигналов тревоги (может пересекаться по одному индикатору):
+//   🔴 критично — WR уже глубоко ниже безубытка при значимом объёме, действовать сейчас;
+//   ⏳ на очереди — абсолютный WR ещё не критичен, но за последние 2 недели заметно просел
+//      (та самая ранняя порча индикатора под новые рыночные уровни, до того как это
+//      утонет в месячном агрегате).
+function devBuildUrgentSection(sigs, combinedRaw) {
+  const items = {};
+  const getItem = (pair, ind, dir) => {
+    const key = `${pair}|${ind}|${dir}`;
+    if (!items[key]) items[key] = { pair, ind, dir, critical: false, reasons: [] };
+    return items[key];
+  };
+
+  const cells = devInsightIndicatorCells(combinedRaw).filter(x => x.decided >= DEV_INSIGHT_MIN_SAMPLE && x.wr != null);
+  cells.filter(x => x.wr < DEV_INSIGHT_CRITICAL_WR).forEach(x => {
+    const it = getItem(x.pair, x.ind, x.dir);
+    it.critical = true;
+    it.reasons.push(`WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах — глубоко ниже безубытка.`);
+  });
+
+  const TREND_DELTA = 15;
+  devTrendCells(sigs).filter(x => x.delta <= -TREND_DELTA).forEach(x => {
+    const it = getItem(x.pair, x.ind, x.dir);
+    it.reasons.push(`WR упал с ${x.firstWr.toFixed(0)}% до ${x.secondWr.toFixed(0)}% за последние 2 недели — похоже, индикатор устарел под текущие уровни рынка.`);
+  });
+
+  const list = Object.values(items).sort((a, b) => (b.critical - a.critical) || (a.pair + a.ind + a.dir).localeCompare(b.pair + b.ind + b.dir));
+  if (!list.length) {
+    return '<div class="dev-urgent-empty">Явных кандидатов на пересборку нет — все индикаторы либо стабильны, либо выборка ещё мала для вывода.</div>';
+  }
+
+  return list.map(x => {
+    const label = `${x.pair} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${x.ind}`;
+    const verdict = x.critical ? 'срочно к пересмотру' : 'на очереди к пересмотру';
+    return `<div class="dev-urgent-item ${x.critical ? 'dev-urgent-critical' : ''}">
+      <span class="dev-urgent-icon">${x.critical ? '🔴' : '⏳'}</span>
+      <div class="dev-urgent-text">
+        <div class="dev-urgent-label">${label} — ${verdict}</div>
+        <div class="dev-urgent-reason">${x.reasons.join(' ')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ===== 2. BLOCKED vs ИСПОЛНЕННЫЕ: кому отдавать приоритет на вход в лимит 5 окон =====
 // Лимит "5 одновременных входов в 10-минутное окно" — ограничение биржи, его не обойти.
 // Но какой сигнал из нескольких претендентов займёт свободный слот — решается приоритетом,
@@ -1772,6 +1818,7 @@ async function renderDevL30d() {
 
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
+    try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
     try {
       devRenderDrawdownChart(sigs);
       const ddCard = document.getElementById('devDrawdownCard');

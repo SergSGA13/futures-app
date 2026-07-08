@@ -623,23 +623,26 @@
           <p class="pnl-chart-footnote">Расчёт на стартовом депозите 5000 USDT, фиксированная ставка на сигнал 125 USDT.</p>
         </div>
 
+        <div class="pnl-chart-card dev-urgent-card" id="devUrgentCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>Требуют пересмотра прямо сейчас <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:10px">Индикаторы стареют на новых рыночных уровнях - в среднем каждые 7-14 дней им нужна пересборка. Ниже - конкретные кандидаты: те, что уже критично слабы, и те, что только начали слабеть за последние 2 недели.</p>
+          <div id="devUrgentBlock" class="dev-urgent-list"></div>
+        </div>
+
         <div class="pnl-chart-card" id="devDrawdownCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="1 6 8 6 12 18 16 6 23 6"/></svg>Просадка (Drawdown) - Last 30 Days <span class="dev-chip">DEV</span></div>
           <p class="dev-note" id="devDrawdownNote" style="margin-bottom:8px"></p>
           <div class="pnl-chart-wrap" style="height:140px"><canvas id="devDrawdownChart"></canvas></div>
-          <p class="pnl-chart-footnote">Расчёт на стартовом депозите 5000 USDT, фиксированная ставка на сигнал 125 USDT.</p>
         </div>
 
         <div class="pnl-chart-card" id="devPnlEthCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL vs Price · ETH - Last 30 Days <span class="dev-chip">DEV</span></div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartL30dDevEth"></canvas></div>
-          <p class="pnl-chart-footnote">PNL - расчёт на стартовом депозите 5000 USDT, фиксированная ставка на сигнал 125 USDT.</p>
         </div>
 
         <div class="pnl-chart-card" id="devPnlBtcCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F7931A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL vs Price · BTC - Last 30 Days <span class="dev-chip">DEV</span></div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartL30dDevBtc"></canvas></div>
-          <p class="pnl-chart-footnote">PNL - расчёт на стартовом депозите 5000 USDT, фиксированная ставка на сигнал 125 USDT.</p>
         </div>
 
         <div class="pnl-chart-card dev-insights-card" id="devVolatilityCard" style="display:none">

@@ -1167,6 +1167,19 @@ html, body {
 .dev-urgent-label { font-size: 13px; font-weight: 700; color: var(--text); }
 .dev-urgent-reason { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .dev-urgent-empty { font-size: 12px; color: var(--text-muted); padding: 4px 2px; }
+.dev-urgent-fix-btn {
+  margin-top: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #4EFFA0;
+  background: rgba(78, 255, 160, 0.1);
+  border: 1px solid rgba(78, 255, 160, 0.4);
+  border-radius: 20px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dev-urgent-fix-btn:active { background: rgba(78, 255, 160, 0.22); }
 
 /* ===== REFRESH BUTTON ===== */
 .refresh-btn {

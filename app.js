@@ -1264,6 +1264,55 @@ function devBuildTrendSection(sigs) {
   return blocks.join('');
 }
 
+// ===== АДМИН-ГЕЙТ: кнопку "Исправлено" видит только владелец мини-аппа =====
+// initDataUnsafe — данные со стороны клиента, без криптографической проверки подписи
+// (для этого нужен бэкенд с токеном бота, которого у статического приложения нет).
+// Для угрозы "случайный пользователь потыкал чек-лист" достаточно и этого — кнопку
+// просто не увидит никто, кроме владельца с этим Telegram ID.
+const DEV_ADMIN_TG_ID = 431358856;
+function isDevAdmin() {
+  return !!(tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id === DEV_ADMIN_TG_ID);
+}
+
+// ===== ОТМЕТКИ "ИСПРАВЛЕНО" (localStorage этого устройства) =====
+const DEV_DISMISS_KEY = 'fp_dev_dismissed';
+const DEV_DISMISS_MIN_SAMPLE = 8; // сколько свежих (после отметки) решённых сигналов нужно для вывода о регрессии
+
+function devGetDismissed() {
+  try { return JSON.parse(localStorage.getItem(DEV_DISMISS_KEY) || '{}'); } catch (e) { return {}; }
+}
+function devSetDismissed(map) {
+  try { localStorage.setItem(DEV_DISMISS_KEY, JSON.stringify(map)); } catch (e) {}
+}
+function devTodayDk() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// WR ТОЛЬКО по сигналам после даты отметки — это и есть проверка "а что показывает
+// отработка начиная с завтра", без учёта старых (уже исправленных) данных.
+function devFreshWrSince(sigs, pair, ind, dir, sinceDk) {
+  let w = 0, l = 0;
+  for (const s of sigs) {
+    if (s.pair !== pair || s.ind !== ind || s.dir !== dir) continue;
+    if (s.dk <= sinceDk) continue;
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
+  }
+  return { w, l, decided: w + l, wr: devWrOf(w, l) };
+}
+
+let devLastSigs = null, devLastCombinedRaw = null;
+
+function devMarkFixed(pair, ind, dir) {
+  if (!isDevAdmin()) return; // защита и на случай прямого вызова из консоли не-админом
+  const map = devGetDismissed();
+  map[`${pair}|${ind}|${dir}`] = devTodayDk();
+  devSetDismissed(map);
+  if (tg) tg.HapticFeedback?.notificationOccurred?.('success');
+  if (devLastSigs && devLastCombinedRaw) {
+    devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(devLastSigs, devLastCombinedRaw));
+  }
+}
+
 // ===== СПИСОК "ТРЕБУЮТ ПЕРЕСМОТРА ПРЯМО СЕЙЧАС" (под основным графиком PNL DEV) =====
 // Индикаторы стареют на новых рыночных уровнях — их нужно периодически пересобирать.
 // Список = объединение двух сигналов тревоги (может пересекаться по одному индикатору):
@@ -1271,7 +1320,11 @@ function devBuildTrendSection(sigs) {
 //   ⏳ на очереди — абсолютный WR ещё не критичен, но за последние 2 недели заметно просел
 //      (та самая ранняя порча индикатора под новые рыночные уровни, до того как это
 //      утонет в месячном агрегате).
+// Отмеченные "исправлено" (владельцем) молчат, пока свежих сигналов мало; если после
+// набора свежих данных WR снова ниже безубытка — пункт возвращается с пометкой "регрессия".
 function devBuildUrgentSection(sigs, combinedRaw) {
+  devLastSigs = sigs; devLastCombinedRaw = combinedRaw;
+
   const items = {};
   const getItem = (pair, ind, dir) => {
     const key = `${pair}|${ind}|${dir}`;
@@ -1292,19 +1345,48 @@ function devBuildUrgentSection(sigs, combinedRaw) {
     it.reasons.push(`WR упал с ${x.firstWr.toFixed(0)}% до ${x.secondWr.toFixed(0)}% за последние 2 недели — похоже, индикатор устарел под текущие уровни рынка.`);
   });
 
-  const list = Object.values(items).sort((a, b) => (b.critical - a.critical) || (a.pair + a.ind + a.dir).localeCompare(b.pair + b.ind + b.dir));
+  const dismissed = devGetDismissed();
+  const list = [];
+  Object.values(items).forEach(it => {
+    const key = `${it.pair}|${it.ind}|${it.dir}`;
+    const dismissedAt = dismissed[key];
+    if (dismissedAt) {
+      const fresh = devFreshWrSince(sigs, it.pair, it.ind, it.dir, dismissedAt);
+      if (fresh.decided < DEV_DISMISS_MIN_SAMPLE) return;       // ждём свежих данных после отметки — молчим
+      if (fresh.wr == null || fresh.wr >= WR_BREAKEVEN) return; // фикс сработал — молчим
+      it.regressed = true;
+      it.dismissedAt = dismissedAt;
+      it.freshWr = fresh.wr;
+      it.freshDecided = fresh.decided;
+    }
+    list.push(it);
+  });
+
+  list.sort((a, b) => (b.critical - a.critical) || (a.pair + a.ind + a.dir).localeCompare(b.pair + b.ind + b.dir));
+
   if (!list.length) {
     return '<div class="dev-urgent-empty">Явных кандидатов на пересборку нет — все индикаторы либо стабильны, либо выборка ещё мала для вывода.</div>';
   }
 
+  const admin = isDevAdmin();
   return list.map(x => {
     const label = `${x.pair} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${x.ind}`;
-    const verdict = x.critical ? 'срочно к пересмотру' : 'на очереди к пересмотру';
-    return `<div class="dev-urgent-item ${x.critical ? 'dev-urgent-critical' : ''}">
-      <span class="dev-urgent-icon">${x.critical ? '🔴' : '⏳'}</span>
+    let verdict = x.critical ? 'срочно к пересмотру' : 'на очереди к пересмотру';
+    let reasonText = x.reasons.join(' ');
+    if (x.regressed) {
+      verdict = 'регрессия после правки';
+      reasonText = `Отмечено исправленным ${devFmtDk(x.dismissedAt)}, но свежие сигналы снова слабые: WR ${x.freshWr.toFixed(0)}% на ${x.freshDecided} сигналах после фикса.`;
+    }
+    const icon = x.regressed ? '⚠️' : (x.critical ? '🔴' : '⏳');
+    const btn = admin
+      ? `<button class="dev-urgent-fix-btn" onclick="devMarkFixed('${x.pair}','${x.ind}','${x.dir}')">✓ Исправлено</button>`
+      : '';
+    return `<div class="dev-urgent-item ${x.critical || x.regressed ? 'dev-urgent-critical' : ''}">
+      <span class="dev-urgent-icon">${icon}</span>
       <div class="dev-urgent-text">
         <div class="dev-urgent-label">${label} — ${verdict}</div>
-        <div class="dev-urgent-reason">${x.reasons.join(' ')}</div>
+        <div class="dev-urgent-reason">${reasonText}</div>
+        ${btn}
       </div>
     </div>`;
   }).join('');

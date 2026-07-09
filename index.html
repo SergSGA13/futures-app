@@ -616,6 +616,13 @@
         <p class="dev-note" data-i18n="stats.dev.note">Включает сигналы из BLOCKEDsignal - не поступившие в отработку из-за лимита 5 окон и других фильтров.</p>
 
         <div class="dev-src-summary" id="devSrcSummary"></div>
+        <div class="dev-updated-row">
+          <span class="dev-updated-time" id="devUpdatedAt"></span>
+          <button class="dev-refresh-btn" id="devRefreshBtn" onclick="refreshDevL30d()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
+            <span data-i18n="stats.dev.refresh">Обновить анализ</span>
+          </button>
+        </div>
 
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL - Last 30 Days <span class="dev-chip">DEV</span></div>
@@ -705,7 +712,7 @@
 
         <div class="pnl-chart-card dev-insights-card" id="devTrendCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Тренд по неделям - Last 30 Days <span class="dev-chip">DEV</span></div>
-          <p class="dev-note" style="margin-bottom:12px">Первая половина месяца vs вторая — ловит деградацию индикатора до того, как она утонет в среднем WR за 30 дней.</p>
+          <p class="dev-note" style="margin-bottom:12px">Первая половина месяца vs вторая - ловит деградацию индикатора до того, как она утонет в среднем WR за 30 дней.</p>
           <div id="devTrendBlock" class="dev-insights"></div>
         </div>
 

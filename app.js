@@ -28,6 +28,7 @@ function applyTranslations() {
   });
   const headerTitle = document.getElementById('headerTitle');
   if (headerTitle) headerTitle.textContent = t(pageTitleKeys[currentPage] || 'title.fp');
+  devRenderUpdatedAt();
 }
 
 function setLanguage(lang) {
@@ -83,7 +84,7 @@ function navigate(pageId) {
 
   if (pageId === 'statistics') { loadPnlAllFromSignals('pnlChart', 'main'); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
-  if (pageId === 'stats-l30d-dev') { renderDevL30d(); }
+  if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
@@ -803,6 +804,16 @@ document.getElementById('all5minCard').style.display = 'block';
 // Правила подсчёта: Total = WIN + LOSE + «WIN & LOSE»; WR% = WIN / (WIN + LOSE);
 // PNL-модель: WIN +100, LOSE −125, «WIN & LOSE» 0.
 let devL30dRendered = false;
+let devLastUpdatedAt = null;
+
+function devRenderUpdatedAt() {
+  const el = document.getElementById('devUpdatedAt');
+  if (!el) return;
+  if (!devLastUpdatedAt) { el.textContent = ''; return; }
+  const hh = String(devLastUpdatedAt.getHours()).padStart(2, '0');
+  const mm = String(devLastUpdatedAt.getMinutes()).padStart(2, '0');
+  el.textContent = `${t('stats.dev.updatedPrefix')} ${hh}:${mm}`;
+}
 
 const DEV_RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
 
@@ -1252,14 +1263,14 @@ function devBuildTrendSection(sigs) {
   const blocks = [];
   degrading.slice(0, 5).forEach(x => {
     blocks.push(devInsightBlock('dev-insight-bad', `📉 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} слабеет`,
-      [`Было <b>${x.firstWr.toFixed(0)}%</b> (первая половина месяца, n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (вторая половина, n=${x.secondDec}) — просадка на ${Math.abs(x.delta).toFixed(0)} п.п. Деградация свежая, месячный агрегат её ещё маскирует.`]));
+      [`Было <b>${x.firstWr.toFixed(0)}%</b> (первая половина месяца, n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (вторая половина, n=${x.secondDec}) - просадка на ${Math.abs(x.delta).toFixed(0)} п.п. Деградация свежая, месячный агрегат её ещё маскирует.`]));
   });
   improving.slice(0, 5).forEach(x => {
     blocks.push(devInsightBlock('dev-insight-good', `📈 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} набирает силу`,
-      [`Было <b>${x.firstWr.toFixed(0)}%</b> (n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (n=${x.secondDec}) — рост на ${x.delta.toFixed(0)} п.п.`]));
+      [`Было <b>${x.firstWr.toFixed(0)}%</b> (n=${x.firstDec}) → стало <b>${x.secondWr.toFixed(0)}%</b> (n=${x.secondDec}) - рост на ${x.delta.toFixed(0)} п.п.`]));
   });
   if (!blocks.length) {
-    blocks.push(devInsightBlock('', 'Трендов не найдено', ['За месяц ни один индикатор не сдвинул WR больше чем на 15 п.п. между первой и второй половинами периода — динамика стабильна.']));
+    blocks.push(devInsightBlock('', 'Трендов не найдено', ['За месяц ни один индикатор не сдвинул WR больше чем на 15 п.п. между первой и второй половинами периода - динамика стабильна.']));
   }
   return blocks.join('');
 }
@@ -1336,13 +1347,13 @@ function devBuildUrgentSection(sigs, combinedRaw) {
   cells.filter(x => x.wr < DEV_INSIGHT_CRITICAL_WR).forEach(x => {
     const it = getItem(x.pair, x.ind, x.dir);
     it.critical = true;
-    it.reasons.push(`WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах — глубоко ниже безубытка.`);
+    it.reasons.push(`WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах - глубоко ниже безубытка.`);
   });
 
   const TREND_DELTA = 15;
   devTrendCells(sigs).filter(x => x.delta <= -TREND_DELTA).forEach(x => {
     const it = getItem(x.pair, x.ind, x.dir);
-    it.reasons.push(`WR упал с ${x.firstWr.toFixed(0)}% до ${x.secondWr.toFixed(0)}% за последние 2 недели — похоже, индикатор устарел под текущие уровни рынка.`);
+    it.reasons.push(`WR упал с ${x.firstWr.toFixed(0)}% до ${x.secondWr.toFixed(0)}% за последние 2 недели - похоже, индикатор устарел под текущие уровни рынка.`);
   });
 
   const dismissed = devGetDismissed();
@@ -1365,7 +1376,7 @@ function devBuildUrgentSection(sigs, combinedRaw) {
   list.sort((a, b) => (b.critical - a.critical) || (a.pair + a.ind + a.dir).localeCompare(b.pair + b.ind + b.dir));
 
   if (!list.length) {
-    return '<div class="dev-urgent-empty">Явных кандидатов на пересборку нет — все индикаторы либо стабильны, либо выборка ещё мала для вывода.</div>';
+    return '<div class="dev-urgent-empty">Явных кандидатов на пересборку нет - все индикаторы либо стабильны, либо выборка ещё мала для вывода.</div>';
   }
 
   const admin = isDevAdmin();
@@ -1384,7 +1395,7 @@ function devBuildUrgentSection(sigs, combinedRaw) {
     return `<div class="dev-urgent-item ${x.critical || x.regressed ? 'dev-urgent-critical' : ''}">
       <span class="dev-urgent-icon">${icon}</span>
       <div class="dev-urgent-text">
-        <div class="dev-urgent-label">${label} — ${verdict}</div>
+        <div class="dev-urgent-label">${label} - ${verdict}</div>
         <div class="dev-urgent-reason">${reasonText}</div>
         ${btn}
       </div>
@@ -1442,11 +1453,11 @@ function devBuildBlockedSection(sigs) {
 
   upgrade.slice(0, 4).forEach(x => {
     blocks.push(devInsightBlock('dev-insight-good', `⬆️ Повысить приоритет: ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`,
-      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) — выше, чем у исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Этот индикатор чаще проигрывает борьбу за слот более слабым сигналам — стоит дать ему приоритет при занятости 5 окон.`]));
+      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) - выше, чем у исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Этот индикатор чаще проигрывает борьбу за слот более слабым сигналам - стоит дать ему приоритет при занятости 5 окон.`]));
   });
   downgrade.slice(0, 4).forEach(x => {
     blocks.push(devInsightBlock('', `⬇️ Приоритет оправдан: ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`,
-      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) — ниже исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Здесь фильтр случайно отсекает то, что и так хуже — менять приоритет не нужно.`]));
+      [`В заблокированных WR <b>${x.bWr.toFixed(0)}%</b> (n=${x.bDec}) - ниже исполненных <b>${x.eWr.toFixed(0)}%</b> (n=${x.eDec}). Здесь фильтр случайно отсекает то, что и так хуже - менять приоритет не нужно.`]));
   });
 
   if (!upgrade.length && !downgrade.length) {
@@ -1481,7 +1492,7 @@ function devBuildConfidenceSection(sigs) {
   const bins = devConfidenceBins(sigs);
   if (!bins.length) {
     return devInsightBlock('', 'Недостаточно данных',
-      [`В заявленных сигналах не нашлось процента уверенности в тексте сообщения (или сигналов на срез меньше ${DEV_CONF_MIN_SAMPLE}) — сравнить заявленное и реальное не получилось.`]);
+      [`В заявленных сигналах не нашлось процента уверенности в тексте сообщения (или сигналов на срез меньше ${DEV_CONF_MIN_SAMPLE}) - сравнить заявленное и реальное не получилось.`]);
   }
 
   const rows = bins.map(b => {
@@ -1499,12 +1510,12 @@ function devBuildConfidenceSection(sigs) {
   if (overconfident.length) {
     const worst = overconfident[0];
     blocks.push(devInsightBlock('dev-insight-bad', `⚠️ Модель завышает уверенность в бакете ${worst.key}`,
-      [`Заявлено в среднем <b>${worst.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${worst.realizedWr.toFixed(0)}%</b> на ${worst.decided} сигналах — разрыв ${(worst.avgDeclared - worst.realizedWr).toFixed(0)} п.п. Доверять заявленному проценту в этом диапазоне не стоит.`]));
+      [`Заявлено в среднем <b>${worst.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${worst.realizedWr.toFixed(0)}%</b> на ${worst.decided} сигналах - разрыв ${(worst.avgDeclared - worst.realizedWr).toFixed(0)} п.п. Доверять заявленному проценту в этом диапазоне не стоит.`]));
   }
   if (underconfident.length) {
     const best = underconfident[0];
     blocks.push(devInsightBlock('dev-insight-good', `👀 Модель занижает уверенность в бакете ${best.key}`,
-      [`Заявлено в среднем <b>${best.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${best.realizedWr.toFixed(0)}%</b> на ${best.decided} сигналах — на деле сигналы этого бакета сильнее, чем написано.`]));
+      [`Заявлено в среднем <b>${best.avgDeclared.toFixed(0)}%</b>, по факту WR <b>${best.realizedWr.toFixed(0)}%</b> на ${best.decided} сигналах - на деле сигналы этого бакета сильнее, чем написано.`]));
   }
   return blocks.join('');
 }
@@ -1972,9 +1983,27 @@ async function renderDevL30d() {
         insightsCard.style.display = 'block';
       }
     } catch (e) { console.log('DEV insights error:', e); }
+
+    devLastUpdatedAt = new Date();
+    devRenderUpdatedAt();
   } catch (e) {
     console.log('DEV L30D error:', e);
   }
+}
+
+function refreshDevL30d() {
+  const btn = document.getElementById('devRefreshBtn');
+  btn?.classList.add('spinning');
+  allSignalRows = null;
+  blockedSignalRows = null;
+  devL30dRendered = false;
+  ['l30dDev', 'l30dDevEth', 'l30dDevBtc', 'l30dDrawdown'].forEach(k => {
+    pnlChartInstances[k]?.destroy();
+    delete pnlChartInstances[k];
+  });
+  dowChartInstances['devDowChart']?.destroy();
+  delete dowChartInstances['devDowChart'];
+  renderDevL30d().finally(() => btn?.classList.remove('spinning'));
 }
 
 // ===== DOW CHART (WinRate by Day of Week) =====

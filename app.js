@@ -1403,6 +1403,82 @@ function devBuildUrgentSection(sigs, combinedRaw) {
   }).join('');
 }
 
+// ===== СПИСОК "СТОИТ РАСШИРИТЬ" (под чек-листом "требуют пересмотра") =====
+// Обратная сторона урчент-списка: доказанно сильные индикаторы (WR ≥ WR_GREEN на значимой
+// выборке), которые сейчас недоиспользуются — двух типов:
+//   💡 «пробел» — сильный на одной паре (напр. BTC ↑ UP v.6000), но ни разу за 30 дней
+//      не встречался в этом же направлении на второй паре — кандидат на добавление туда;
+//   🌙 «замолчал» — доказанно сильный, но последний сигнал был больше DEV_OPP_SILENT_HOURS
+//      часов назад — стоит проверить, почему индикатор перестал присылать сигналы.
+const DEV_OPP_MIN_SAMPLE = 10;
+const DEV_OPP_SILENT_HOURS = 48;
+
+function devLastSignalMoment(sigs, pair, ind, dir) {
+  let last = null;
+  for (const s of sigs) {
+    if (s.pair !== pair || s.ind !== ind || s.dir !== dir) continue;
+    const [y, mo, d] = s.dk.split('-').map(Number);
+    const t = new Date(y, mo - 1, d, s.hour || 0, s.minute || 0).getTime();
+    if (last === null || t > last) last = t;
+  }
+  return last;
+}
+
+function devBuildOpportunitySection(sigs, combinedRaw) {
+  const totalsByPair = {
+    ETH: aggregateByIndicator(combinedRaw, 21, 30, 'ETH'),
+    BTC: aggregateByIndicator(combinedRaw, 21, 30, 'BTC'),
+  };
+  const strong = devInsightIndicatorCells(combinedRaw)
+    .filter(x => x.ind !== '-' && x.decided >= DEV_OPP_MIN_SAMPLE && x.wr != null && x.wr >= WR_GREEN);
+
+  const now = Date.now();
+  const items = [];
+  strong.forEach(x => {
+    const otherPair = x.pair === 'ETH' ? 'BTC' : 'ETH';
+    const otherCell = totalsByPair[otherPair].find(c => c.ind === x.ind);
+    const otherTotal = otherCell ? (x.dir === 'UP' ? otherCell.upT : otherCell.dnT) : 0;
+    if (otherTotal === 0) {
+      items.push({ type: 'gap', pair: x.pair, otherPair, ind: x.ind, dir: x.dir, wr: x.wr, decided: x.decided });
+    }
+    const lastMs = devLastSignalMoment(sigs, x.pair, x.ind, x.dir);
+    if (lastMs != null && (now - lastMs) / 3600000 >= DEV_OPP_SILENT_HOURS) {
+      items.push({ type: 'silent', pair: x.pair, ind: x.ind, dir: x.dir, wr: x.wr, decided: x.decided, lastMs });
+    }
+  });
+
+  if (!items.length) {
+    return '<div class="dev-urgent-empty">Явных возможностей для расширения нет - сильные индикаторы уже используются на обеих парах и приходят регулярно.</div>';
+  }
+
+  items.sort((a, b) => b.wr - a.wr);
+
+  return items.map(x => {
+    const label = `${x.pair} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${x.ind}`;
+    let title, reason, icon;
+    if (x.type === 'gap') {
+      icon = '💡';
+      const dirLabel = x.dir === 'UP' ? '↑ UP' : '↓ DOWN';
+      title = `${label} - стоит добавить на ${x.otherPair}`;
+      reason = `WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах на ${x.pair}, но на ${x.otherPair} ${dirLabel} этого индикатора не было ни разу за 30 дней.`;
+    } else {
+      icon = '🌙';
+      const hrsAgo = Math.floor((now - x.lastMs) / 3600000);
+      const lastDate = new Date(x.lastMs);
+      const dk = `${lastDate.getFullYear()}-${String(lastDate.getMonth() + 1).padStart(2, '0')}-${String(lastDate.getDate()).padStart(2, '0')}`;
+      title = `${label} - давно не приходил`;
+      reason = `WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах за 30 дней, но последний сигнал был ${devFmtDk(dk)} (${hrsAgo} ч назад) - стоит проверить, почему индикатор замолчал.`;
+    }
+    return `<div class="dev-urgent-item dev-opportunity-item">
+      <span class="dev-urgent-icon">${icon}</span>
+      <div class="dev-urgent-text">
+        <div class="dev-urgent-label">${title}</div>
+        <div class="dev-urgent-reason">${reason}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ===== 2. BLOCKED vs ИСПОЛНЕННЫЕ: кому отдавать приоритет на вход в лимит 5 окон =====
 // Лимит "5 одновременных входов в 10-минутное окно" — ограничение биржи, его не обойти.
 // Но какой сигнал из нескольких претендентов займёт свободный слот — решается приоритетом,
@@ -1912,6 +1988,7 @@ async function renderDevL30d() {
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
     try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
+    try { devShowTable('devOpportunityBlock', 'devOpportunityCard', devBuildOpportunitySection(sigs, combinedRaw)); } catch (e) { console.log('DEV opportunity error:', e); }
     try {
       devRenderDrawdownChart(sigs);
       const ddCard = document.getElementById('devDrawdownCard');

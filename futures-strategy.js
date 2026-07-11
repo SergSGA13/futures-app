@@ -783,6 +783,10 @@
     { key: 'base', label: 'Базовый', tab: 'FUT_STRAT' },
     { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
     { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
+    // Честный режим: funding, проскальзывание, вход по open следующей свечи,
+    // делистинг и топ-100 без знания будущего. Стоп -5% + тренд EMA200 -
+    // единственный конфиг с плюсом на двух независимых 90-дневных окнах.
+    { key: 'honest', label: 'Честный', tab: 'FUT_STRAT_H_SLT' },
   ];
   // Прогон по умолчанию — Базовый
   const DEFAULT_RUN = 'base';

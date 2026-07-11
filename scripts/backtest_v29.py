@@ -59,6 +59,12 @@ CFG = dict(
     take_profit_pct=0.0,     # тейк: закрыть сделку при прибыли X% депо (напр. 8.0)
     use_trend_filter=False,  # фильтр тренда: лонг только выше EMA, шорт только ниже
     trend_len=200,           # длина EMA для фильтра тренда
+    # ── режим честности: убирает известные приукрашивания бэктеста ────────
+    honest_fills=False,      # исполнение по open СЛЕДУЮЩЕЙ свечи (сигнал виден только по закрытию)
+    slippage_pct=0.0,        # проскальзывание, % за сторону, всегда против нас (напр. 0.05)
+    funding=False,           # учитывать funding перпетуалов (long платит при ставке > 0)
+    rolling_delist=False,    # делистинг скользящим правилом (без знания будущего PNL)
+    rank_at_start=False,     # топ-N по объёму на НАЧАЛО периода (без ошибки выжившего)
 )
 
 # Параметры сигналов v.29.1 (дефолты Pine — те же, что в live-charts.js)
@@ -160,12 +166,33 @@ def _ema(arr, length):
     return out
 
 
-def simulate(close, signals, cfg, times=None):
+def simulate(close, signals, cfg, times=None, opens=None, funding=None):
     eq = cfg["capital"]; fee = cfg["fee_per_side"]; lev = cfg["leverage"]; cap = cfg["max_lots"]
     sl = cfg.get("stop_loss_pct", 0.0) or 0.0
     tp = cfg.get("take_profit_pct", 0.0) or 0.0
     use_trend = bool(cfg.get("use_trend_filter"))
     trend = _ema(close, int(cfg.get("trend_len", 200))) if use_trend else None
+
+    # ── режим честности ──────────────────────────────────────────────────
+    honest = bool(cfg.get("honest_fills")) and opens is not None
+    slip = (cfg.get("slippage_pct", 0.0) or 0.0) / 100.0
+
+    def adj(price, side, entering):
+        """Проскальзывание всегда против нас: покупаем дороже, продаём дешевле."""
+        if not slip:
+            return price
+        buying = (side == "long") == entering       # вход в лонг / выход из шорта = покупка
+        return price * (1 + slip) if buying else price * (1 - slip)
+
+    # funding: [(ts_ms, rate)] → индекс свечи, на которой начисляется
+    fund_by_bar = {}
+    fund_paid = 0.0
+    if funding and times is not None and cfg.get("funding"):
+        tarr = np.asarray(times)
+        for ts_ms, rate in funding:
+            b = int(np.searchsorted(tarr, ts_ms // 1000, side="right")) - 1
+            if 0 <= b < len(tarr):
+                fund_by_bar.setdefault(b, []).append(rate)
 
     pos = None; set_pnl = 0.0; eq_open = eq
     sets_pct = []; sets_ts = []
@@ -173,15 +200,23 @@ def simulate(close, signals, cfg, times=None):
     peak_eq = eq; max_dd = 0.0
     sig = {}
     for (i, side) in signals:
-        sig[i] = side
+        # честный режим: сигнал виден только по закрытию свечи i,
+        # исполнение - на открытии свечи i+1 (сигнал на последней свече пропадает)
+        j = i + 1 if honest else i
+        if j < len(close):
+            sig[j] = side
     n = len(close)
+
+    def exec_price(bar):
+        return opens[bar] if honest else close[bar]
 
     def lot_notional():
         base = eq if cfg["reinvest"] else cfg["capital"]
         return cfg["lot_frac"] * base * lev
 
-    def open_pos(side, price, t=None):
+    def open_pos(side, raw_price, t=None):
         nonlocal eq, set_pnl, pos, eq_open, cur_trade
+        price = adj(raw_price, side, entering=True)
         eq_open = eq
         note = lot_notional(); qty = note / price
         eq -= note * fee; set_pnl = -note * fee
@@ -196,8 +231,9 @@ def simulate(close, signals, cfg, times=None):
             g += q * (price - p) if pos["side"] == "long" else q * (p - price)
         return (set_pnl + g) / eq_open * 100.0
 
-    def close_pos(price, t):
+    def close_pos(raw_price, t):
         nonlocal eq, set_pnl, pos, peak_eq, max_dd, cur_trade
+        price = adj(raw_price, pos["side"], entering=False)
         realized = 0.0; close_note = 0.0
         for (p, q) in pos["lots"]:
             realized += q * (price - p) if pos["side"] == "long" else q * (p - price)
@@ -220,6 +256,12 @@ def simulate(close, signals, cfg, times=None):
     for i in range(n):
         price = close[i]
         t_i = times[i] if times is not None else None
+        # funding: начисляется на открытую позицию (long платит при ставке > 0)
+        if pos is not None and i in fund_by_bar:
+            notional = sum(q * price for (_p, q) in pos["lots"])
+            for rate in fund_by_bar[i]:
+                cost = notional * rate if pos["side"] == "long" else -notional * rate
+                eq -= cost; set_pnl -= cost; fund_paid += cost
         # интрабар стоп/тейк по текущему результату сделки
         if pos is not None and (sl or tp):
             c = cur_set_pct(price)
@@ -230,31 +272,33 @@ def simulate(close, signals, cfg, times=None):
         side = sig.get(i)
         if side is None:
             continue
+        px = exec_price(i)   # честный режим: open этой свечи (сигнал был на прошлой)
         # фильтр тренда: вход только по сторонам EMA
         if use_trend:
             ok = (price > trend[i]) if side == "long" else (price < trend[i])
             if not ok:
                 if pos is not None and pos["side"] != side:
-                    close_pos(price, t_i)   # против тренда новый вход не открываем, но разворотом фиксируем
+                    close_pos(px, t_i)   # против тренда новый вход не открываем, но разворотом фиксируем
                 continue
         if pos is None:
-            open_pos(side, price, t_i)
+            open_pos(side, px, t_i)
         elif pos["side"] == side:
             if len(pos["lots"]) < cap:                       # усреднение
-                note = lot_notional(); qty = note / price
+                apx = adj(px, side, entering=True)
+                note = lot_notional(); qty = note / apx
                 eq -= note * fee; set_pnl -= note * fee
-                pos["lots"].append((price, qty))
+                pos["lots"].append((apx, qty))
                 if cur_trade is not None:
-                    cur_trade["entries"].append((float(price), int(t_i) if t_i is not None else 0))
+                    cur_trade["entries"].append((float(apx), int(t_i) if t_i is not None else 0))
         else:
-            close_pos(price, t_i)                            # переворот
-            open_pos(side, price, t_i)
+            close_pos(px, t_i)                            # переворот
+            open_pos(side, px, t_i)
 
     # незакрытая позиция → unrealized + детали
     unreal = 0.0
     pos_side = "—"; pos_lots = 0; pos_avg = 0.0; lot_entries = []
     if pos is not None:
-        last = close[-1]
+        last = adj(close[-1], pos["side"], entering=False)   # доводка с учётом проскальзывания
         tot_qty = tot_cost = 0.0
         for (p, q) in pos["lots"]:
             unreal += q * (last - p) if pos["side"] == "long" else q * (p - last)
@@ -282,6 +326,7 @@ def simulate(close, signals, cfg, times=None):
         last_side=(signals[-1][1] if signals else "—"),
         max_dd=round(max_dd, 2), expectancy=round(expectancy, 3),
         sets_detail=sets_detail,
+        funding_pct=round(fund_paid / cfg["capital"] * 100.0, 3),
     )
 
 # ═══════════════════════════════ BINANCE ════════════════════════════════
@@ -306,17 +351,20 @@ _VISION_BASE = None      # выбранное рабочее зеркало
 _USE_VISION = False      # переключились ли с fapi на архив
 _VISION_SYMBOLS = None   # символы, по которым в архиве есть свечи
 
-def _vision_get(path):
+def _vision_get(path, attempts=4):
+    """GET с ретраями: транзиентные обрывы соединения не должны ронять весь прогон."""
     global _VISION_BASE
-    bases = [_VISION_BASE] if _VISION_BASE else VISION_BASES
+    bases = ([_VISION_BASE] + [b for b in VISION_BASES if b != _VISION_BASE]) if _VISION_BASE else list(VISION_BASES)
     last_exc = None
-    for base in bases:
+    for attempt in range(attempts):
+        base = bases[attempt % len(bases)]
         try:
             r = requests.get(base + path, timeout=60)
             _VISION_BASE = base          # любой HTTP-ответ = зеркало доступно
             return r
         except requests.exceptions.RequestException as e:
             last_exc = e
+            time.sleep(1.0 + attempt)
     raise last_exc
 
 def _vision_zip_rows(content):
@@ -350,28 +398,29 @@ def _vision_symbols():
     _VISION_SYMBOLS = set(syms)
     return _VISION_SYMBOLS
 
-def _vision_top_symbols(n):
-    """Ранжирование по объёму без живого API: quote_volume последней дневной
-    1d-свечи из архива (крошечный zip на символ)."""
+def _vision_top_symbols(n, on_date=None):
+    """Ранжирование по объёму без живого API: quote_volume дневной 1d-свечи
+    из архива (крошечный zip на символ). on_date - ранжировать по объёму
+    конкретного дня (для честного отбора топа на начало периода)."""
     try:
         syms = sorted(_vision_symbols())
     except Exception as e:
         raise RuntimeError(f"Не удалось получить список символов из архива: {e}")
-    today = dt.datetime.now(dt.timezone.utc).date()
-    days_try = [today - dt.timedelta(days=k) for k in (1, 2, 3)]
+    base_day = on_date or (dt.datetime.now(dt.timezone.utc).date())
+    days_try = [base_day - dt.timedelta(days=k) for k in (1, 2, 3)]
     vols = []
     for i, sym in enumerate(syms, 1):
         vol = 0.0
-        for d in days_try:
-            r = _vision_get(f"/data/futures/um/daily/klines/{sym}/1d/{sym}-1d-{d:%Y-%m-%d}.zip")
-            if r.status_code != 200:
-                continue
-            try:
+        try:
+            for d in days_try:
+                r = _vision_get(f"/data/futures/um/daily/klines/{sym}/1d/{sym}-1d-{d:%Y-%m-%d}.zip")
+                if r.status_code != 200:
+                    continue
                 for p in _vision_zip_rows(r.content):
                     vol += float(p[7])               # quote_volume
-            except Exception:
-                pass
-            break
+                break
+        except Exception:
+            pass                                     # символ без данных не роняет ранжирование
         vols.append((sym, vol))
         if i % 100 == 0:
             print(f"  ранжирование по объёму: {i}/{len(syms)}", file=sys.stderr)
@@ -437,10 +486,13 @@ def _switch_to_vision(reason):
         print(f"fapi.binance.com недоступен ({reason}) - переключаюсь на архив "
               f"data.binance.vision (лаг данных ~1 день)", file=sys.stderr)
 
-def top_symbols(n):
-    if n in _TOP_CACHE:
-        return _TOP_CACHE[n]
-    if not _USE_VISION:
+def top_symbols(n, on_date=None):
+    """on_date=None - топ по текущему 24h-объёму; иначе - по объёму на дату
+    (исторический отбор всегда идёт через архив, даже при живом fapi)."""
+    key = (n, on_date)
+    if key in _TOP_CACHE:
+        return _TOP_CACHE[key]
+    if on_date is None and not _USE_VISION:
         try:
             r = requests.get(f"{BINANCE_FAPI}/fapi/v1/ticker/24hr", timeout=20)
             if r.status_code in (403, 451):
@@ -449,12 +501,12 @@ def top_symbols(n):
                 r.raise_for_status()
                 data = [d for d in r.json() if d["symbol"].endswith("USDT")]
                 data.sort(key=lambda d: float(d.get("quoteVolume", 0)), reverse=True)
-                _TOP_CACHE[n] = [(d["symbol"], float(d["quoteVolume"])) for d in data[:n]]
-                return _TOP_CACHE[n]
+                _TOP_CACHE[key] = [(d["symbol"], float(d["quoteVolume"])) for d in data[:n]]
+                return _TOP_CACHE[key]
         except requests.exceptions.ProxyError:
             _switch_to_vision("прокси запретил соединение")
-    _TOP_CACHE[n] = _vision_top_symbols(n)
-    return _TOP_CACHE[n]
+    _TOP_CACHE[key] = _vision_top_symbols(n, on_date)
+    return _TOP_CACHE[key]
 
 def _fapi_fetch_klines(symbol, interval, days):
     end = int(time.time() * 1000)
@@ -501,6 +553,87 @@ def fetch_klines(symbol, interval, days):
     _KLINE_CACHE[cache_key] = result
     return result
 
+# ─────────────────────────── FUNDING (перпетуалы) ───────────────────────────
+_FUNDING_CACHE = {}
+DEFAULT_FUNDING_RATE = 0.0001   # стандартная базовая ставка Binance 0.01% / 8ч
+
+def _fapi_funding(symbol, days):
+    end = int(time.time() * 1000)
+    start = end - days * 24 * 60 * 60 * 1000
+    out = []
+    cur = start
+    while cur < end:
+        r = requests.get(f"{BINANCE_FAPI}/fapi/v1/fundingRate",
+                         params=dict(symbol=symbol, startTime=cur, limit=1000),
+                         timeout=20)
+        r.raise_for_status()
+        chunk = r.json()
+        if not chunk:
+            break
+        out += [(int(x["fundingTime"]), float(x["fundingRate"])) for x in chunk]
+        cur = int(chunk[-1]["fundingTime"]) + 1
+        if len(chunk) < 1000:
+            break
+        time.sleep(0.2)
+    return out
+
+def _vision_funding(symbol, days):
+    """[(ts_ms, rate), ...]. Подневного архива фандинга не существует, поэтому
+    хвост после последнего архивного месяца оценивается средней ставкой этого
+    месяца с его же интервалом начислений - честнее, чем не учитывать вовсе."""
+    now = dt.datetime.now(dt.timezone.utc)
+    start = now - dt.timedelta(days=days)
+    events = []
+    interval_h = 8
+    m = dt.date(start.year, start.month, 1)
+    today = now.date()
+    while m <= today:
+        r = _vision_get(f"/data/futures/um/monthly/fundingRate/{symbol}/"
+                        f"{symbol}-fundingRate-{m:%Y-%m}.zip")
+        if r.status_code == 200:
+            for p in _vision_zip_rows(r.content):
+                events.append((int(p[0]), float(p[2])))
+                try:
+                    interval_h = int(float(p[1])) or interval_h
+                except (ValueError, IndexError):
+                    pass
+        m = (m.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    events.sort()
+    # оценка хвоста без архива (текущий месяц): средняя ставка последних ~30 дней
+    now_ms = int(now.timestamp() * 1000)
+    if events:
+        tail = [rate for ts, rate in events[-31 * 24 // interval_h:]]
+        est_rate = sum(tail) / len(tail)
+        cur_ts = events[-1][0] + interval_h * 3600 * 1000
+    else:
+        est_rate = DEFAULT_FUNDING_RATE
+        cur_ts = int(start.timestamp() * 1000)
+    while cur_ts <= now_ms:
+        events.append((cur_ts, est_rate))
+        cur_ts += interval_h * 3600 * 1000
+    cut = int(start.timestamp() * 1000)
+    return [(ts, rate) for ts, rate in events if ts >= cut]
+
+def fetch_funding(symbol, days):
+    cache_key = (symbol, days)
+    if cache_key in _FUNDING_CACHE:
+        return _FUNDING_CACHE[cache_key]
+    result = None
+    if not _USE_VISION:
+        try:
+            result = _fapi_funding(symbol, days)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code in (403, 451):
+                _switch_to_vision(f"HTTP {e.response.status_code}")
+            else:
+                raise
+        except requests.exceptions.ProxyError:
+            _switch_to_vision("прокси запретил соединение")
+    if result is None:
+        result = _vision_funding(symbol, days)
+    _FUNDING_CACHE[cache_key] = result
+    return result
+
 # ═══════════════════════════════ ВЫВОД ══════════════════════════════════
 HEADERS = ["symbol", "tf", "signals", "sets", "wins", "losses", "winrate",
            "pnl_pct", "realized_pct", "unreal_pct", "pos_side", "pos_lots", "pos_avg",
@@ -508,11 +641,26 @@ HEADERS = ["symbol", "tf", "signals", "sets", "wins", "losses", "winrate",
 
 # Готовые наборы правил. Запуск: python backtest_v29.py <ключ>
 # Каждый пишет свой CSV — вставь его в одноимённую вкладку Google Sheets.
+_HONEST_RULES = dict(
+    honest_fills=True,     # вход по open следующей свечи
+    slippage_pct=0.05,     # 0.05% проскальзывание за сторону
+    funding=True,          # funding перпетуалов из архива/API
+    rolling_delist=True,   # делистинг без знания будущего
+    rank_at_start=True,    # топ по объёму на начало периода
+)
+
 PRESETS = {
     "base":    dict(rules={}, out="fut_strat.csv", tab="FUT_STRAT", label="Базовый (без правил)"),
     "sl":      dict(rules=dict(stop_loss_pct=5.0), out="fut_strat_sl.csv", tab="FUT_STRAT_SL", label="Стоп -5%"),
     "sltrend": dict(rules=dict(stop_loss_pct=5.0, use_trend_filter=True, trend_len=200),
                     out="fut_strat_slt.csv", tab="FUT_STRAT_SLT", label="Стоп -5% + фильтр тренда"),
+    # Честный режим: убраны look-ahead делистинга, ошибка выжившего, идеальное
+    # исполнение; добавлены funding и проскальзывание. Ожидаемо хуже базовых -
+    # зато ближе к тому, что покажет реальная торговля.
+    "honest":    dict(rules=dict(_HONEST_RULES), out="fut_strat_h.csv", tab="FUT_STRAT_H",
+                      label="Честный (без правил)"),
+    "honest_sl": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0), out="fut_strat_h_sl.csv",
+                      tab="FUT_STRAT_H_SL", label="Честный + стоп -5%"),
 }
 
 
@@ -550,14 +698,31 @@ def simulate_portfolio(coins, cfg):
     risk = cfg["port_risk_pct"] / 100.0
     fee = cfg["fee_per_side"]; lev = cfg["leverage"]
     delist = cfg.get("delist_pct", -5.0)
+    rolling = bool(cfg.get("rolling_delist"))
 
     kept, dropped = [], []
-    for c in coins:
-        (dropped if c["standalone_pnl"] < delist else kept).append(c["sym"])
-    keep_set = set(kept)
+    blocked_at = {}                 # sym -> ts, с которого новые входы запрещены
+    if rolling:
+        # ЧЕСТНЫЙ делистинг: без знания будущего. Монета блокируется с момента,
+        # когда её НАКОПЛЕННЫЙ реализованный PNL (по её же таймлайну сетов)
+        # впервые опустился ниже delist_pct - ровно то, что видно в моменте.
+        for c in coins:
+            kept.append(c["sym"])
+            cum = 0.0
+            for ts, pct in sorted(c.get("sets_tpnl") or []):
+                cum += pct
+                if cum < delist:
+                    blocked_at[c["sym"]] = int(ts)
+                    dropped.append(c["sym"])
+                    break
+        keep_set = set(kept)
+    else:
+        for c in coins:
+            (dropped if c["standalone_pnl"] < delist else kept).append(c["sym"])
+        keep_set = set(kept)
 
-    # события входов/выходов по всем монетам в единой ленте времени
-    EV_X, EV_E = 0, 1               # выход обрабатываем раньше входа в ту же метку (реверс)
+    # события входов/выходов/фандинга по всем монетам в единой ленте времени
+    EV_X, EV_F, EV_E = 0, 1, 2      # выход раньше фандинга и входа в ту же метку (реверс)
     events = []
     last_px = {}                    # sym -> (last_price, last_t) для MTM открытых
     for c in coins:
@@ -570,6 +735,8 @@ def simulate_portfolio(coins, cfg):
             if tr["exit"] is not None:
                 ex_p, ex_t = tr["exit"]
                 events.append((int(ex_t), EV_X, c["sym"], tr["side"], float(ex_p)))
+        for (t, rate, mark) in c.get("funding") or []:
+            events.append((int(t), EV_F, c["sym"], rate, float(mark)))
     events.sort(key=lambda e: (e[0], e[1]))
 
     eq = D0
@@ -584,6 +751,8 @@ def simulate_portfolio(coins, cfg):
 
     for (t, kind, sym, side, price) in events:
         if kind == EV_E:
+            if rolling and sym in blocked_at and t >= blocked_at[sym]:
+                continue                        # монета уже "делистнута" в моменте - вход пропущен
             note = risk * eq * lev
             qty = note / price
             eq -= note * fee
@@ -592,6 +761,12 @@ def simulate_portfolio(coins, cfg):
                 pos[sym] = {"side": side, "lots": [(price, qty)]}
             else:
                 p["lots"].append((price, qty))
+        elif kind == EV_F:                      # funding: side=ставка, price=марк-цена
+            p = pos.get(sym)
+            if p is not None:
+                rate = side
+                notional = sum(qq * price for (_pp, qq) in p["lots"])
+                eq -= notional * rate if p["side"] == "long" else -notional * rate
         else:                                   # EV_X - закрыть все доли монеты
             p = pos.pop(sym, None)
             if p is not None:
@@ -641,7 +816,8 @@ def simulate_portfolio(coins, cfg):
     return dict(
         final_pct=(final_eq - D0) / D0 * 100.0, max_dd=max_dd,
         peak_positions=peak_conc, peak_exposure=peak_expo,
-        n_signals=len(events), n_coins=len(kept), dropped=dropped,
+        n_signals=sum(1 for e in events if e[1] != EV_F),
+        n_coins=len(kept), dropped=dropped,
         curve=out_curve,
     )
 
@@ -690,26 +866,42 @@ def run_backtest(config=None, progress=None):
     updated = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     if cfg["symbols"]:
         syms = [((s if s.upper().endswith("USDT") else s.upper() + "USDT"), 0.0) for s in cfg["symbols"]]
+    elif cfg.get("rank_at_start"):
+        # честный отбор: топ по объёму на НАЧАЛО тестового периода, а не сегодня
+        start_date = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=cfg["history_days"])
+        log(f"Отбор топ-{cfg['top_n']} по объёму на {start_date} (без ошибки выжившего)")
+        syms = top_symbols(cfg["top_n"], on_date=start_date)
     else:
         syms = top_symbols(cfg["top_n"])
 
+    use_funding = bool(cfg.get("funding"))
     rows = []
     coins_pf = []
     for k, (sym, qvol) in enumerate(syms, 1):
         try:
-            _o, h, l, c, t = fetch_klines(sym, cfg["interval"], cfg["history_days"])
+            o, h, l, c, t = fetch_klines(sym, cfg["interval"], cfg["history_days"])
             if len(c) < IND["len"] + 50:
                 log(f"[{k}/{len(syms)}] {sym}: not enough data, skipped")
                 continue
 
+            fund = fetch_funding(sym, cfg["history_days"]) if use_funding else None
             sigs = compute_signals(c, h, l, cfg["tf_min"])
-            res = simulate(c, sigs, cfg, times=t)
+            res = simulate(c, sigs, cfg, times=t, opens=o, funding=fund)
+            # funding для портфельной модели: (t_сек, ставка, марк-цена ближайшей свечи)
+            fund_pf = []
+            if fund:
+                for ts_ms, rate in fund:
+                    b = int(np.searchsorted(t, ts_ms // 1000, side="right")) - 1
+                    if 0 <= b < len(c):
+                        fund_pf.append((int(t[b]), rate, float(c[b])))
             coins_pf.append(dict(
                 sym=sym,
                 sets_detail=res["sets_detail"],
                 last_price=float(c[-1]),
                 last_t=int(t[-1]),
                 standalone_pnl=res["pnl_pct"],
+                sets_tpnl=res["sets_tpnl"],
+                funding=fund_pf,
             ))
 
             if res["sets"] < cfg["write_min_sets"]:

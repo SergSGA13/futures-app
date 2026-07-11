@@ -165,7 +165,12 @@ def main(argv=None):
     parser.add_argument("--sleep", type=float, default=2.0, help="Delay between presets when --preset all is used.")
     args = parser.parse_args(argv)
 
-    presets = list(PRESETS.keys()) if args.preset == "all" else [args.preset]
+    # "all" = классические пресеты; честные (honest*) запускаются только явно,
+    # пока их не решено включить в регулярное расписание.
+    if args.preset == "all":
+        presets = [k for k in PRESETS.keys() if not k.startswith("honest")]
+    else:
+        presets = [args.preset]
     spreadsheet = None
     if not args.dry_run:
         spreadsheet = open_spreadsheet(args.spreadsheet_id, args.credentials_file)

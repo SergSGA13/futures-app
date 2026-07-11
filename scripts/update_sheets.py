@@ -165,11 +165,11 @@ def main(argv=None):
     parser.add_argument("--sleep", type=float, default=2.0, help="Delay between presets when --preset all is used.")
     args = parser.parse_args(argv)
 
-    # "all" = только forward: приложение показывает один прогон - якорный
-    # форвард-тест. Классические и honest-пресеты запускаются только явно
-    # (--preset base и т.д.), в регулярном расписании они не нужны.
+    # "all" = форвард-тесты всех трёх таймфреймов: приложение показывает
+    # якорный форвард с переключателем 15m/1H/4H. Классические и honest-пресеты
+    # запускаются только явно (--preset base и т.д.).
     if args.preset == "all":
-        presets = ["forward"]
+        presets = ["forward", "forward_1h", "forward_4h"]
     else:
         presets = [args.preset]
     spreadsheet = None

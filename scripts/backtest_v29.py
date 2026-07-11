@@ -676,17 +676,35 @@ PRESETS = {
     # сделки считаются только после якоря; кривая только накапливается вперёд -
     # прошлые точки не перерисовываются при каждом пересчёте. Число выбывших
     # по делистингу монет растёт со временем, как в реальной торговле.
+    # Три таймфрейма - три независимых прогона в своих вкладках.
     "forward": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
                                use_trend_filter=True, trend_len=200,
                                port_risk_pct=2.0,
                                forward_anchor="2026-07-11"),
                     out="fut_strat_fwd.csv", tab="FUT_STRAT_FWD",
-                    label="Форвард-тест с 2026-07-11 (2%/сигнал)"),
+                    label="Форвард-тест 15m с 2026-07-11 (2%/сигнал)"),
+    "forward_1h": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
+                                  use_trend_filter=True, trend_len=200,
+                                  port_risk_pct=2.0,
+                                  forward_anchor="2026-07-11",
+                                  interval="1h", tf_min=60),
+                       out="fut_strat_fwd_1h.csv", tab="FUT_STRAT_FWD_1H",
+                       label="Форвард-тест 1H с 2026-07-11 (2%/сигнал)"),
+    "forward_4h": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
+                                  use_trend_filter=True, trend_len=200,
+                                  port_risk_pct=2.0,
+                                  forward_anchor="2026-07-11",
+                                  interval="4h", tf_min=240),
+                       out="fut_strat_fwd_4h.csv", tab="FUT_STRAT_FWD_4H",
+                       label="Форвард-тест 4H с 2026-07-11 (2%/сигнал)"),
 }
 
-# Дней истории ПЕРЕД якорем для прогрева индикаторов (гауссов канал и EMA200
-# на 15m требуют ~2.1 дня; берём с запасом). Сделки до якоря не учитываются.
-FORWARD_WARMUP_DAYS = 5
+# Прогрев индикаторов перед якорем: гауссову каналу и EMA нужно 200 свечей
+# + запас на проверку минимума данных (len+50). Зависит от таймфрейма:
+# 15m ≈ 5 дней, 1H ≈ 12 дней, 4H ≈ 45 дней. Сделки до якоря не учитываются.
+def forward_warmup_days(tf_min):
+    import math
+    return max(5, math.ceil((IND["len"] + 60) * tf_min / 1440) + 1)
 
 
 def build_config(preset="base", overrides=None):
@@ -896,9 +914,9 @@ def run_backtest(config=None, progress=None):
     if cfg.get("forward_anchor"):
         a = dt.date.fromisoformat(cfg["forward_anchor"])
         anchor_ts = int(dt.datetime(a.year, a.month, a.day, tzinfo=dt.timezone.utc).timestamp())
+        warmup = forward_warmup_days(cfg["tf_min"])
         cfg["history_days"] = max(
-            (dt.datetime.now(dt.timezone.utc).date() - a).days + FORWARD_WARMUP_DAYS,
-            FORWARD_WARMUP_DAYS)
+            (dt.datetime.now(dt.timezone.utc).date() - a).days + warmup, warmup)
 
     if cfg["symbols"]:
         syms = [((s if s.upper().endswith("USDT") else s.upper() + "USDT"), 0.0) for s in cfg["symbols"]]

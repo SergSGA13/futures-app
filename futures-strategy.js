@@ -342,7 +342,7 @@
   function fmtDate(unixSec) { const d = new Date(unixSec * 1000); return ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2); }
   // кривая PNL: по датам (равновзвешенный портфель) либо по парам; с «что-если» стоп/тейк
   function pfOpts(S) {
-    const pf = S._pfCache && S._pfCache[S.run];
+    const pf = S._pfCache && S._pfCache[`${S.run}|${S.tf}`];
     return pf ? { pf: pf.points, pfDeposit: pf.deposit } : {};
   }
   function pnlSeries(rows, opts) {
@@ -450,7 +450,7 @@
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
     const base = isPf
-      ? `Реальная портфельная модель: общий депозит, вход 0.25% на сигнал, компаундинг, плечо 1x. Ось снизу - даты за 90 дней.`
+      ? `Реальная портфельная модель: общий депозит, вход 2% на сигнал, компаундинг, плечо 1x. Ось снизу - даты форвард-теста.`
       : isTime
       ? `Прикидка «среднее по парам» (вход 25% сленва на сигнал). Точная модель депозита - переключи, когда заполнена вкладка ${(RUNS.find(r => r.key === S.run) || {}).tab || ''}_PF.`
       : `накоплено по ${d.labels.length} парам · ось появится по датам, когда в данных есть метки времени сделок`;
@@ -544,13 +544,13 @@
         const t = TFS.find(x => x.key === b.dataset.tf);
         if (!t || S.tf === t.key) return;
         if (!t.ready) { flashTfHint(host, t.label); return; }
-        S.tf = t.key; renderList(host, S);
+        S.tf = t.key; loadRun(host, S, S.run);   // каждый TF - своя вкладка данных
       }));
       const g = host.querySelector('[data-guide]'); if (g) g.addEventListener('click', () => renderGuide(0));
     };
     if (S.runError) {
       host.innerHTML = `
-        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · 15m · 90 дней</div></div></div>
+        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · 15m · с 11.07.2026</div></div></div>
         ${controls}
         <div class="fs-runerr">Прогон не найден: вкладка <b>${S.runError}</b> пуста или отсутствует.<br><br>Сделай бэктест с нужными правилами и вставь результат в эту вкладку. В терминале:<br><code>python backtest_v29.py ${S.run}</code></div>`;
       wireCommon();
@@ -566,7 +566,7 @@
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub"><span class="fs-backtest-neon">Бэктест</span> 🟣 v.29.1 · ${S.tf} · 90 дней${srcNote}${progNote}${delistNote}</div>
+          <div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · ${S.tf} · с 11.07.2026${srcNote}${progNote}${delistNote}</div>
           <div class="fs-guide-inline"><button class="fs-chip guide fs-guide-top" data-guide>🎓 Гайд</button></div>
         </div>
       </div>
@@ -590,8 +590,8 @@
     host.querySelectorAll('[data-tf]').forEach(b => b.addEventListener('click', () => {
       const t = TFS.find(x => x.key === b.dataset.tf);
       if (!t || S.tf === t.key) return;
-      if (!t.ready) { flashTfHint(host, t.label); return; } // 4H/1H - только дизайн, данные пока 15m
-      S.tf = t.key; renderList(host, S);
+      if (!t.ready) { flashTfHint(host, t.label); return; }
+      S.tf = t.key; loadRun(host, S, S.run);   // каждый TF - своя вкладка данных
     }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
@@ -792,35 +792,40 @@
   ];
   const DEFAULT_RUN = 'forward';
   // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
+  // Каждый таймфрейм - собственный форвард-прогон в своей вкладке
+  // (суффикс добавляется к вкладке прогона: FUT_STRAT_FWD + _4H и т.д.)
   const TFS = [
-    { key: '4h', label: '4H', ready: false },
-    { key: '1h', label: '1H', ready: false },
-    { key: '15m', label: '15m', ready: true },
+    { key: '4h', label: '4H', ready: true, tabSuffix: '_4H' },
+    { key: '1h', label: '1H', ready: true, tabSuffix: '_1H' },
+    { key: '15m', label: '15m', ready: true, tabSuffix: '' },
   ];
   const DEFAULT_TF = '15m';
+  const tfTab = (run, tfKey) => run.tab + ((TFS.find(t => t.key === tfKey) || {}).tabSuffix || '');
 
   async function loadRun(host, S, runKey) {
     const run = RUNS.find(r => r.key === runKey) || RUNS[0];
     S.run = run.key; S.runError = false; S.computing = false; S._chart = null;
     S._runCache = S._runCache || {};
     S._pfCache = S._pfCache || {};
+    const tab = tfTab(run, S.tf);
+    const cacheKey = `${run.key}|${S.tf}`;
     // кривая портфеля (вкладка <TAB>_PF) — догружаем в фоне, не блокируя список
     const ensurePf = () => {
-      if (S._pfCache[run.key] !== undefined) return;
-      readPfCurve(run.tab).then(pf => {
-        S._pfCache[run.key] = pf;
+      if (S._pfCache[cacheKey] !== undefined) return;
+      readPfCurve(tab).then(pf => {
+        S._pfCache[cacheKey] = pf;
         // обновляем ТОЛЬКО карточку PNL (refreshPnlCard сам no-op, если карточки ещё нет),
         // чтобы не перерисовывать список на возможно ещё не загруженных строках
         if (S.run === run.key && !S.computing) refreshPnlCard(host, S);
       });
     };
     ensurePf();
-    if (S._runCache[run.key]) { const c = S._runCache[run.key]; S.rows = c.rows; S.source = c.source; renderList(host, S); return; }
-    host.innerHTML = `<div class="fs-loading">Загрузка прогона «${run.label}»…</div>`;
-    const data = await readSheet(run.tab, run.key === 'base');
+    if (S._runCache[cacheKey]) { const c = S._runCache[cacheKey]; S.rows = c.rows; S.source = c.source; renderList(host, S); return; }
+    host.innerHTML = `<div class="fs-loading">Загрузка прогона «${run.label} · ${S.tf}»…</div>`;
+    const data = await readSheet(tab, run.key === 'base');
     if (data.mode === 'stats') {
       S.rows = data.rows; S.source = data.source; S.total = data.rows.length; S.progress = data.rows.length;
-      S._runCache[run.key] = { rows: data.rows, source: data.source };
+      S._runCache[cacheKey] = { rows: data.rows, source: data.source };
       renderList(host, S);
     } else if (data.mode === 'compute') {
       const symbols = data.symbols;
@@ -828,10 +833,10 @@
       renderList(host, S);
       computeAll(symbols, (i, row, done, total) => {
         S.rows[i] = row; S.progress = done; updateCard(host, row); updateProgress(host, S);
-        if (done === total) { S.computing = false; S._runCache[run.key] = { rows: S.rows, source: S.source }; renderList(host, S); }
+        if (done === total) { S.computing = false; S._runCache[cacheKey] = { rows: S.rows, source: S.source }; renderList(host, S); }
       }, 3);
     } else {
-      S.rows = []; S.runError = run.tab; renderList(host, S);
+      S.rows = []; S.runError = tab; renderList(host, S);
     }
   }
 

@@ -661,6 +661,13 @@ PRESETS = {
                       label="Честный (без правил)"),
     "honest_sl": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0), out="fut_strat_h_sl.csv",
                       tab="FUT_STRAT_H_SL", label="Честный + стоп -5%"),
+    # Единственный конфиг, прошедший заранее зафиксированный критерий на двух
+    # независимых 90-дневных окнах (in-sample +1.3%, out-of-sample +1.85%,
+    # просадка <1%): стоп -5% + фильтр тренда EMA200 в честном режиме.
+    "honest_sltrend": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
+                                      use_trend_filter=True, trend_len=200),
+                           out="fut_strat_h_slt.csv", tab="FUT_STRAT_H_SLT",
+                           label="Честный + стоп -5% + тренд"),
 }
 
 

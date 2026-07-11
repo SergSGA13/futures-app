@@ -290,20 +290,173 @@ def simulate(close, signals, cfg, times=None):
 _TOP_CACHE = {}
 _KLINE_CACHE = {}
 
+# ─────── Архив data.binance.vision: fallback при гео-блокировке fapi ────────
+# US-хостинги (например, раннеры GitHub Actions) получают от fapi.binance.com
+# HTTP 451. Официальный архив исторических данных Binance доступен отовсюду и
+# содержит те же 15m свечи USDT-M фьючерсов с лагом ~1 день: полные прошедшие
+# месяцы - помесячные zip, текущий месяц - подневные zip. Переключение
+# происходит автоматически при первом 451/403 от fapi; с домашнего ПК
+# всё работает по живому API, как раньше.
+VISION_BASES = [
+    "https://data.binance.vision",
+    "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision",
+]
+VISION_S3_LIST = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+_VISION_BASE = None      # выбранное рабочее зеркало
+_USE_VISION = False      # переключились ли с fapi на архив
+_VISION_SYMBOLS = None   # символы, по которым в архиве есть свечи
+
+def _vision_get(path):
+    global _VISION_BASE
+    bases = [_VISION_BASE] if _VISION_BASE else VISION_BASES
+    last_exc = None
+    for base in bases:
+        try:
+            r = requests.get(base + path, timeout=60)
+            _VISION_BASE = base          # любой HTTP-ответ = зеркало доступно
+            return r
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+    raise last_exc
+
+def _vision_zip_rows(content):
+    import io, zipfile
+    with zipfile.ZipFile(io.BytesIO(content)) as z:
+        for name in z.namelist():
+            for line in z.read(name).decode("utf-8", "replace").splitlines():
+                if line and not line[0].isalpha():   # пропускаем заголовок open_time,...
+                    yield line.split(",")
+
+def _vision_symbols():
+    """Все USDT-перпетуалы, по которым в архиве есть свечи (листинг S3-бакета)."""
+    global _VISION_SYMBOLS
+    if _VISION_SYMBOLS is not None:
+        return _VISION_SYMBOLS
+    import xml.etree.ElementTree as ET
+    syms, marker = [], ""
+    prefix = "data/futures/um/monthly/klines/"
+    while True:
+        url = f"{VISION_S3_LIST}?delimiter=/&prefix={prefix}" + (f"&marker={marker}" if marker else "")
+        r = requests.get(url, timeout=60)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+        ns = root.tag.split("}")[0] + "}" if root.tag.startswith("{") else ""
+        page = [p.find(ns + "Prefix").text.rstrip("/").split("/")[-1]
+                for p in root.findall(ns + "CommonPrefixes")]
+        syms += [s for s in page if s.endswith("USDT")]
+        if (root.findtext(ns + "IsTruncated") or "false") != "true" or not page:
+            break
+        marker = root.findtext(ns + "NextMarker") or (prefix + page[-1] + "/")
+    _VISION_SYMBOLS = set(syms)
+    return _VISION_SYMBOLS
+
+def _vision_top_symbols(n):
+    """Ранжирование по объёму без живого API: quote_volume последней дневной
+    1d-свечи из архива (крошечный zip на символ)."""
+    try:
+        syms = sorted(_vision_symbols())
+    except Exception as e:
+        raise RuntimeError(f"Не удалось получить список символов из архива: {e}")
+    today = dt.datetime.now(dt.timezone.utc).date()
+    days_try = [today - dt.timedelta(days=k) for k in (1, 2, 3)]
+    vols = []
+    for i, sym in enumerate(syms, 1):
+        vol = 0.0
+        for d in days_try:
+            r = _vision_get(f"/data/futures/um/daily/klines/{sym}/1d/{sym}-1d-{d:%Y-%m-%d}.zip")
+            if r.status_code != 200:
+                continue
+            try:
+                for p in _vision_zip_rows(r.content):
+                    vol += float(p[7])               # quote_volume
+            except Exception:
+                pass
+            break
+        vols.append((sym, vol))
+        if i % 100 == 0:
+            print(f"  ранжирование по объёму: {i}/{len(syms)}", file=sys.stderr)
+    vols.sort(key=lambda x: x[1], reverse=True)
+    return vols[:n]
+
+def _vision_fetch_klines(symbol, interval, days):
+    syms = None
+    try:
+        syms = _vision_symbols()
+    except Exception:
+        pass                                          # без списка - просто пробуем качать
+    if syms is not None and symbol not in syms:
+        e = np.array([])
+        return e, e, e, e, np.array([], dtype=int)
+
+    today = dt.datetime.now(dt.timezone.utc).date()
+    start = today - dt.timedelta(days=days)
+    recs = {}
+    m = dt.date(start.year, start.month, 1)
+    while m <= today:
+        next_m = (m.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+        month_end = next_m - dt.timedelta(days=1)
+        got_month = False
+        if month_end < today:                         # полностью прошедший месяц
+            r = _vision_get(f"/data/futures/um/monthly/klines/{symbol}/{interval}/"
+                            f"{symbol}-{interval}-{m:%Y-%m}.zip")
+            if r.status_code == 200:
+                for p in _vision_zip_rows(r.content):
+                    ts = int(p[0])
+                    if ts > 10 ** 15:
+                        ts //= 1000                   # µs → ms (формат менялся в спот-архиве)
+                    recs[ts] = (ts, float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                got_month = True
+        if not got_month:                             # текущий месяц или нет помесячного zip
+            d = max(m, start)
+            last_d = min(month_end, today)
+            while d <= last_d:
+                r = _vision_get(f"/data/futures/um/daily/klines/{symbol}/{interval}/"
+                                f"{symbol}-{interval}-{d:%Y-%m-%d}.zip")
+                if r.status_code == 200:
+                    for p in _vision_zip_rows(r.content):
+                        ts = int(p[0])
+                        if ts > 10 ** 15:
+                            ts //= 1000
+                        recs[ts] = (ts, float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                d += dt.timedelta(days=1)
+        m = next_m
+    cut_ms = int(dt.datetime(start.year, start.month, start.day,
+                             tzinfo=dt.timezone.utc).timestamp() * 1000)
+    rows = sorted(v for k, v in recs.items() if k >= cut_ms)
+    o = np.array([r[1] for r in rows])
+    h = np.array([r[2] for r in rows])
+    l = np.array([r[3] for r in rows])
+    c = np.array([r[4] for r in rows])
+    t = np.array([r[0] // 1000 for r in rows], dtype=int)
+    return o, h, l, c, t
+
+def _switch_to_vision(reason):
+    global _USE_VISION
+    if not _USE_VISION:
+        _USE_VISION = True
+        print(f"fapi.binance.com недоступен ({reason}) - переключаюсь на архив "
+              f"data.binance.vision (лаг данных ~1 день)", file=sys.stderr)
+
 def top_symbols(n):
     if n in _TOP_CACHE:
         return _TOP_CACHE[n]
-    r = requests.get(f"{BINANCE_FAPI}/fapi/v1/ticker/24hr", timeout=20)
-    r.raise_for_status()
-    data = [d for d in r.json() if d["symbol"].endswith("USDT")]
-    data.sort(key=lambda d: float(d.get("quoteVolume", 0)), reverse=True)
-    _TOP_CACHE[n] = [(d["symbol"], float(d["quoteVolume"])) for d in data[:n]]
+    if not _USE_VISION:
+        try:
+            r = requests.get(f"{BINANCE_FAPI}/fapi/v1/ticker/24hr", timeout=20)
+            if r.status_code in (403, 451):
+                _switch_to_vision(f"HTTP {r.status_code}")
+            else:
+                r.raise_for_status()
+                data = [d for d in r.json() if d["symbol"].endswith("USDT")]
+                data.sort(key=lambda d: float(d.get("quoteVolume", 0)), reverse=True)
+                _TOP_CACHE[n] = [(d["symbol"], float(d["quoteVolume"])) for d in data[:n]]
+                return _TOP_CACHE[n]
+        except requests.exceptions.ProxyError:
+            _switch_to_vision("прокси запретил соединение")
+    _TOP_CACHE[n] = _vision_top_symbols(n)
     return _TOP_CACHE[n]
 
-def fetch_klines(symbol, interval, days):
-    cache_key = (symbol, interval, days)
-    if cache_key in _KLINE_CACHE:
-        return _KLINE_CACHE[cache_key]
+def _fapi_fetch_klines(symbol, interval, days):
     end = int(time.time() * 1000)
     start = end - days * 24 * 60 * 60 * 1000
     out = []
@@ -326,8 +479,27 @@ def fetch_klines(symbol, interval, days):
     l = np.array([float(k[3]) for k in out])
     c = np.array([float(k[4]) for k in out])
     t = np.array([int(k[0]) // 1000 for k in out])
-    _KLINE_CACHE[cache_key] = (o, h, l, c, t)
     return o, h, l, c, t
+
+def fetch_klines(symbol, interval, days):
+    cache_key = (symbol, interval, days)
+    if cache_key in _KLINE_CACHE:
+        return _KLINE_CACHE[cache_key]
+    result = None
+    if not _USE_VISION:
+        try:
+            result = _fapi_fetch_klines(symbol, interval, days)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code in (403, 451):
+                _switch_to_vision(f"HTTP {e.response.status_code}")
+            else:
+                raise
+        except requests.exceptions.ProxyError:
+            _switch_to_vision("прокси запретил соединение")
+    if result is None:
+        result = _vision_fetch_klines(symbol, interval, days)
+    _KLINE_CACHE[cache_key] = result
+    return result
 
 # ═══════════════════════════════ ВЫВОД ══════════════════════════════════
 HEADERS = ["symbol", "tf", "signals", "sets", "wins", "losses", "winrate",

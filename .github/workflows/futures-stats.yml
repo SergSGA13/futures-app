@@ -1,6 +1,10 @@
 # Автообновление вкладки Futures Strategy: гоняет backtest_v29 по расписанию
 # и пишет результаты в Google Sheets (FUT_STRAT / _SL / _SLT + _PF).
 #
+# Данные: с раннеров GitHub живой fapi.binance.com отдаёт HTTP 451 (гео-блок),
+# поэтому скрипт автоматически берёт те же свечи из официального архива
+# data.binance.vision (лаг ~1 день). С домашнего ПК всё работает по живому API.
+#
 # Требуется секрет GOOGLE_CREDS_JSON (содержимое google-creds.json целиком):
 #   Settings -> Secrets and variables -> Actions -> New repository secret.
 # Без секрета запуск завершается без ошибки с предупреждением - расписание
@@ -17,6 +21,16 @@ on:
         default: 'all'
         type: choice
         options: [all, base, sl, sltrend]
+      dry_run:
+        description: 'Только бэктест + CSV, без записи в Google Sheets (секрет не нужен)'
+        type: boolean
+        default: false
+      symbols:
+        description: 'Список монет через запятую (пусто = топ по объёму), напр. BTC,ETH,SOL'
+        default: ''
+      history_days:
+        description: 'Глубина истории в днях (пусто = 90)'
+        default: ''
       probe_only:
         description: 'Только проверить доступность API, без бэктеста'
         type: boolean
@@ -33,13 +47,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Probe APIs (Binance / Bybit / Google)
+      - name: Probe APIs
         run: |
-          probe() { printf '%-24s %s\n' "$1:" "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$2" || echo FAIL)"; }
-          probe fapi.binance.com   https://fapi.binance.com/fapi/v1/ping
-          probe api.bybit.com      https://api.bybit.com/v5/market/time
-          probe data.binance.vision https://data.binance.vision/
-          probe oauth2.googleapis.com https://oauth2.googleapis.com/
+          probe() { printf '%-28s %s\n' "$1:" "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$2" || echo FAIL)"; }
+          probe fapi.binance.com        https://fapi.binance.com/fapi/v1/ping
+          probe data.binance.vision     https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/1d/
+          probe s3.data.binance.vision  "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/monthly/klines/"
+          probe oauth2.googleapis.com   https://oauth2.googleapis.com/
 
       - name: Check credentials secret
         if: ${{ !inputs.probe_only }}
@@ -56,7 +70,7 @@ jobs:
           fi
 
       - name: Set up Python
-        if: ${{ !inputs.probe_only && steps.creds.outputs.have == 'true' }}
+        if: ${{ !inputs.probe_only && (inputs.dry_run || steps.creds.outputs.have == 'true') }}
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -64,11 +78,20 @@ jobs:
           cache-dependency-path: scripts/requirements.txt
 
       - name: Install dependencies
-        if: ${{ !inputs.probe_only && steps.creds.outputs.have == 'true' }}
+        if: ${{ !inputs.probe_only && (inputs.dry_run || steps.creds.outputs.have == 'true') }}
         run: pip install -r scripts/requirements.txt
 
       - name: Run backtest and update Google Sheets
-        if: ${{ !inputs.probe_only && steps.creds.outputs.have == 'true' }}
+        if: ${{ !inputs.probe_only && (inputs.dry_run || steps.creds.outputs.have == 'true') }}
         env:
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/google-creds.json
-        run: python scripts/update_sheets.py --preset "${{ inputs.preset || 'all' }}"
+          PRESET: ${{ inputs.preset || 'all' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SYMBOLS: ${{ inputs.symbols }}
+          HISTORY_DAYS: ${{ inputs.history_days }}
+        run: |
+          args=(--preset "$PRESET")
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ -n "$SYMBOLS" ]; then args+=(--symbols "$SYMBOLS"); fi
+          if [ -n "$HISTORY_DAYS" ]; then args+=(--history-days "$HISTORY_DAYS"); fi
+          python scripts/update_sheets.py "${args[@]}"

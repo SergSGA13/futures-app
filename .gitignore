@@ -1,0 +1,11 @@
+# Ключи сервисных аккаунтов - НИКОГДА не коммитить (для GitHub Actions ключ
+# хранится в Settings -> Secrets and variables -> Actions -> GOOGLE_CREDS_JSON)
+google-creds.json
+googlecreds.json
+*service-account*.json
+
+# Локальные результаты бэктеста
+fut_strat*.csv
+
+__pycache__/
+*.pyc

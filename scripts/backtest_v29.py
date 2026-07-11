@@ -671,7 +671,22 @@ PRESETS = {
                                       port_risk_pct=2.0),
                            out="fut_strat_h_slt.csv", tab="FUT_STRAT_H_SLT",
                            label="Честный + стоп -5% + тренд (2%/сигнал)"),
+    # ФОРВАРД-ТЕСТ: та же честная модель, но с зафиксированным якорем.
+    # Вселенная = топ-300 по объёму на дату якоря и больше НЕ пересматривается;
+    # сделки считаются только после якоря; кривая только накапливается вперёд -
+    # прошлые точки не перерисовываются при каждом пересчёте. Число выбывших
+    # по делистингу монет растёт со временем, как в реальной торговле.
+    "forward": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
+                               use_trend_filter=True, trend_len=200,
+                               port_risk_pct=2.0,
+                               forward_anchor="2026-07-11"),
+                    out="fut_strat_fwd.csv", tab="FUT_STRAT_FWD",
+                    label="Форвард-тест с 2026-07-11 (2%/сигнал)"),
 }
+
+# Дней истории ПЕРЕД якорем для прогрева индикаторов (гауссов канал и EMA200
+# на 15m требуют ~2.1 дня; берём с запасом). Сделки до якоря не учитываются.
+FORWARD_WARMUP_DAYS = 5
 
 
 def build_config(preset="base", overrides=None):
@@ -874,8 +889,23 @@ def run_backtest(config=None, progress=None):
     log(f"Run: {cfg['label']} -> {cfg['out']} (sheet {cfg['tab']})")
 
     updated = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # Форвард-режим: якорная дата фиксирует вселенную и начало учёта сделок,
+    # окно данных растёт от якоря (с прогревом), а не скользит.
+    anchor_ts = None
+    if cfg.get("forward_anchor"):
+        a = dt.date.fromisoformat(cfg["forward_anchor"])
+        anchor_ts = int(dt.datetime(a.year, a.month, a.day, tzinfo=dt.timezone.utc).timestamp())
+        cfg["history_days"] = max(
+            (dt.datetime.now(dt.timezone.utc).date() - a).days + FORWARD_WARMUP_DAYS,
+            FORWARD_WARMUP_DAYS)
+
     if cfg["symbols"]:
         syms = [((s if s.upper().endswith("USDT") else s.upper() + "USDT"), 0.0) for s in cfg["symbols"]]
+    elif anchor_ts is not None:
+        a = dt.date.fromisoformat(cfg["forward_anchor"])
+        log(f"Форвард-тест: вселенная топ-{cfg['top_n']} на {a}, сделки с {a}")
+        syms = top_symbols(cfg["top_n"], on_date=a)
     elif cfg.get("rank_at_start"):
         # честный отбор: топ по объёму на НАЧАЛО тестового периода, а не сегодня
         start_date = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=cfg["history_days"])
@@ -896,13 +926,17 @@ def run_backtest(config=None, progress=None):
 
             fund = fetch_funding(sym, cfg["history_days"]) if use_funding else None
             sigs = compute_signals(c, h, l, cfg["tf_min"])
+            if anchor_ts is not None:
+                # прогревные свечи до якоря участвуют в расчёте индикатора,
+                # но сделки по ним не открываются
+                sigs = [(i, s) for (i, s) in sigs if t[i] >= anchor_ts]
             res = simulate(c, sigs, cfg, times=t, opens=o, funding=fund)
             # funding для портфельной модели: (t_сек, ставка, марк-цена ближайшей свечи)
             fund_pf = []
             if fund:
                 for ts_ms, rate in fund:
                     b = int(np.searchsorted(t, ts_ms // 1000, side="right")) - 1
-                    if 0 <= b < len(c):
+                    if 0 <= b < len(c) and (anchor_ts is None or int(t[b]) >= anchor_ts):
                         fund_pf.append((int(t[b]), rate, float(c[b])))
             coins_pf.append(dict(
                 sym=sym,

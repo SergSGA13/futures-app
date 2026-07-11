@@ -165,11 +165,11 @@ def main(argv=None):
     parser.add_argument("--sleep", type=float, default=2.0, help="Delay between presets when --preset all is used.")
     args = parser.parse_args(argv)
 
-    # "all" = классические пресеты + honest_sltrend (форвард-наблюдение за
-    # конфигом, прошедшим out-of-sample). Остальные honest* - только явно.
+    # "all" = только forward: приложение показывает один прогон - якорный
+    # форвард-тест. Классические и honest-пресеты запускаются только явно
+    # (--preset base и т.д.), в регулярном расписании они не нужны.
     if args.preset == "all":
-        presets = [k for k in PRESETS.keys()
-                   if not k.startswith("honest") or k == "honest_sltrend"]
+        presets = ["forward"]
     else:
         presets = [args.preset]
     spreadsheet = None

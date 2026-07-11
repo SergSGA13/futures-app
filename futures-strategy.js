@@ -11,7 +11,7 @@
   'use strict';
 
   const SHEET_ID = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-  const TAB = 'FUT_STRAT';
+  const TAB = 'FUT_STRAT_FWD';
   const FAV_KEY = 'futStrat_fav';
 
   const WR_RED = 55.6, WR_YELLOW = 61.9, MIN_SETS = 5;
@@ -45,7 +45,7 @@
 
   // ---- Гайд (обучение) ----------------------------------------------------
   const GUIDE = [
-    { t: 'Лидерборд стратегий', b: 'Здесь - результаты бэктеста индикатора v.29.1 по фьючерсам Binance. Стандарт прогона - Стоп+Тренд (выбран по умолчанию). Каждая карточка = одна монета со своей статистикой отработки сигналов за 90 дней.' },
+    { t: 'Форвард-тест стратегии', b: 'Здесь - форвард-тест индикатора v.29.1 по фьючерсам Binance: честная модель с funding и проскальзыванием, стоп -5% + фильтр тренда. Вселенная из топ-300 монет зафиксирована на дату старта, результаты накапливаются только вперёд. Каждая карточка = одна монета со статистикой с даты старта.' },
     { t: 'Карточка монеты', b: 'PNL - суммарная доходность от депозита. WIN% - доля прибыльных сделок (зелёный ≥62%, жёлтый 55.6-62%, красный ниже; «~X%» - статистики пока мало). Снизу - текущая сторона: в лонге или в шорте с числом долей. Стратегия реверсная - после первого сигнала монета всегда в позиции.' },
     { t: 'Прогон и таймфрейм', b: 'Прогон переключает набор правил (Базовый / Стоп / Стоп+Тренд). Таймфрейм 4H / 1H / 15m: сейчас данные считаются по 15m, сетапы 4H и 1H добавим позже (пока это дизайн на будущее).' },
     { t: 'Отбор активов', b: 'В дашборде - исторически успешные по индикатору активы за 90 дней. Если общий PNL по монете за 90 дней опускается ниже -5%, она выбывает из списка (в боевом режиме по ней автоматически закрываются все позиции).' },
@@ -525,10 +525,13 @@
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
     const progNote = ` · <span class="fs-demo" id="fsProg">${S.computing ? `считаю ${S.progress}/${S.total}` : ''}</span>`;
     const delistNote = delisted.length ? ` · <span class="fs-delist">${delisted.length} выбыло (PNL < ${DELIST_PNL}%)</span>` : '';
-    const segRun = `<div class="fs-seg">${RUNS.map(rn => `<button class="${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div>`;
+    // Переключатель прогонов показываем только когда прогонов больше одного
+    const segRun = RUNS.length > 1
+      ? `<div class="fs-seg">${RUNS.map(rn => `<button class="${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div><span class="fs-seg-div"></span>`
+      : `<span class="fs-run-badge">${(RUNS.find(r => r.key === S.run) || RUNS[0]).label}</span><span class="fs-seg-div"></span>`;
     const segTf = `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
     const controls = `<div class="fs-controls">
-      <div class="fs-ctl-row">${segRun}<span class="fs-seg-div"></span>${segTf}</div>
+      <div class="fs-ctl-row">${segRun}${segTf}</div>
     </div>`;
     const filters = `<div class="fs-filters fs-panel">
       <button class="fs-chip ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
@@ -779,17 +782,15 @@
 
   // ---- Публичный API -------------------------------------------------------
   const state = {};
+  // Единственный прогон - якорный форвард-тест: честная модель (funding,
+  // проскальзывание, вход по open следующей свечи, без подглядываний),
+  // стоп -5% + фильтр тренда EMA200, вселенная топ-300 зафиксирована на дату
+  // якоря, кривая только накапливается вперёд. Классические прогоны остались
+  // в scripts/backtest_v29.py и запускаются вручную.
   const RUNS = [
-    { key: 'base', label: 'Базовый', tab: 'FUT_STRAT' },
-    { key: 'sl', label: 'Стоп', tab: 'FUT_STRAT_SL' },
-    { key: 'sltrend', label: 'Стоп+Тренд', tab: 'FUT_STRAT_SLT' },
-    // Честный режим: funding, проскальзывание, вход по open следующей свечи,
-    // делистинг и топ-100 без знания будущего. Стоп -5% + тренд EMA200 -
-    // единственный конфиг с плюсом на двух независимых 90-дневных окнах.
-    { key: 'honest', label: 'Честный', tab: 'FUT_STRAT_H_SLT' },
+    { key: 'forward', label: 'Форвард-тест', tab: 'FUT_STRAT_FWD' },
   ];
-  // Прогон по умолчанию — Базовый
-  const DEFAULT_RUN = 'base';
+  const DEFAULT_RUN = 'forward';
   // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
   const TFS = [
     { key: '4h', label: '4H', ready: false },

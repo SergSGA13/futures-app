@@ -641,6 +641,11 @@ HEADERS = ["symbol", "tf", "signals", "sets", "wins", "losses", "winrate",
 
 # Готовые наборы правил. Запуск: python backtest_v29.py <ключ>
 # Каждый пишет свой CSV — вставь его в одноимённую вкладку Google Sheets.
+# Якорь форвард-теста: вселенная и старт учёта сделок. С 01.04 - чтобы в
+# приложении сразу была наполненная статистика; конфиг заморожен 2026-07-11,
+# поэтому оценивать форвард честно = смотреть кривую с этой даты.
+FORWARD_ANCHOR = "2026-04-01"
+
 _HONEST_RULES = dict(
     honest_fills=True,     # вход по open следующей свечи
     slippage_pct=0.05,     # 0.05% проскальзывание за сторону
@@ -677,26 +682,28 @@ PRESETS = {
     # прошлые точки не перерисовываются при каждом пересчёте. Число выбывших
     # по делистингу монет растёт со временем, как в реальной торговле.
     # Три таймфрейма - три независимых прогона в своих вкладках.
+    # ВАЖНО: конфиг зафиксирован 2026-07-11; отрезок якорь..2026-07-11 -
+    # иллюстративный бэктест, честный форвард начинается с 2026-07-11.
     "forward": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
                                use_trend_filter=True, trend_len=200,
                                port_risk_pct=2.0,
-                               forward_anchor="2026-07-11"),
+                               forward_anchor=FORWARD_ANCHOR),
                     out="fut_strat_fwd.csv", tab="FUT_STRAT_FWD",
-                    label="Форвард-тест 15m с 2026-07-11 (2%/сигнал)"),
+                    label=f"Форвард-тест 15m с {FORWARD_ANCHOR} (2%/сигнал)"),
     "forward_1h": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
                                   use_trend_filter=True, trend_len=200,
                                   port_risk_pct=2.0,
-                                  forward_anchor="2026-07-11",
+                                  forward_anchor=FORWARD_ANCHOR,
                                   interval="1h", tf_min=60),
                        out="fut_strat_fwd_1h.csv", tab="FUT_STRAT_FWD_1H",
-                       label="Форвард-тест 1H с 2026-07-11 (2%/сигнал)"),
+                       label=f"Форвард-тест 1H с {FORWARD_ANCHOR} (2%/сигнал)"),
     "forward_4h": dict(rules=dict(_HONEST_RULES, stop_loss_pct=5.0,
                                   use_trend_filter=True, trend_len=200,
                                   port_risk_pct=2.0,
-                                  forward_anchor="2026-07-11",
+                                  forward_anchor=FORWARD_ANCHOR,
                                   interval="4h", tf_min=240),
                        out="fut_strat_fwd_4h.csv", tab="FUT_STRAT_FWD_4H",
-                       label="Форвард-тест 4H с 2026-07-11 (2%/сигнал)"),
+                       label=f"Форвард-тест 4H с {FORWARD_ANCHOR} (2%/сигнал)"),
 }
 
 # Прогрев индикаторов перед якорем: гауссову каналу и EMA нужно 200 свечей

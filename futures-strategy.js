@@ -550,7 +550,7 @@
     };
     if (S.runError) {
       host.innerHTML = `
-        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · 15m · с 11.07.2026</div></div></div>
+        <div class="fs-header"><div><div class="fs-title">Futures-стратегии</div><div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · 15m · с 01.04.2026</div></div></div>
         ${controls}
         <div class="fs-runerr">Прогон не найден: вкладка <b>${S.runError}</b> пуста или отсутствует.<br><br>Сделай бэктест с нужными правилами и вставь результат в эту вкладку. В терминале:<br><code>python backtest_v29.py ${S.run}</code></div>`;
       wireCommon();
@@ -566,7 +566,7 @@
       <div class="fs-header">
         <div>
           <div class="fs-title">Futures-стратегии</div>
-          <div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · ${S.tf} · с 11.07.2026${srcNote}${progNote}${delistNote}</div>
+          <div class="fs-sub"><span class="fs-backtest-neon">Форвард</span> 🟣 v.29.1 · ${S.tf} · с 01.04.2026${srcNote}${progNote}${delistNote}</div>
           <div class="fs-guide-inline"><button class="fs-chip guide fs-guide-top" data-guide>🎓 Гайд</button></div>
         </div>
       </div>

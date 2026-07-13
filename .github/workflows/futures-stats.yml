@@ -43,7 +43,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 300   # три TF на растущем окне с 01.04 занимают ~2ч, к концу месяца больше
     steps:
       - uses: actions/checkout@v4
 

@@ -507,6 +507,7 @@
     let rows = universe.slice();
     if (S.favOnly) rows = rows.filter(r => favHas(r.symbol));
     if (S.hideWeak) rows = rows.filter(r => r.computed && !r.error && !isWeak(r));
+    if (S.inPos) rows = rows.filter(r => r.pos_side === 'long' || r.pos_side === 'short');
     rows = rows.filter(r => !r.computed || (r[S.sort] == null ? -1e9 : r[S.sort]) >= S.sliderVal);
     rows.sort((a, b) => { if (a.computed !== b.computed) return a.computed ? -1 : 1; return (b[S.sort] == null ? -1e9 : b[S.sort]) - (a[S.sort] == null ? -1e9 : a[S.sort]); });
 
@@ -518,7 +519,7 @@
     // портфельная кривая фиксирована (из Python по всей активной вселенной) - метрики по done, без UI-фильтра;
     // прикидка «по парам» считается по отфильтрованному списку
     const series = pnlSeries(hasPf ? done : rows, Object.assign({ stop: S.stop, tp: S.tp }, pf));
-    const filtered = !hasPf && (S.favOnly || S.hideWeak || (S.sliderVal != null && S.sliderVal > rng.min));
+    const filtered = !hasPf && (S.favOnly || S.hideWeak || S.inPos || (S.sliderVal != null && S.sliderVal > rng.min));
     const totalSets = done.reduce((s, r) => s + r.sets, 0);
     const longs = done.filter(r => r.pos_side === 'long').length;
     const shorts = done.filter(r => r.pos_side === 'short').length;
@@ -535,9 +536,11 @@
     const controls = `<div class="fs-controls">
       <div class="fs-ctl-row">${segRun}${segTf}</div>
     </div>`;
-    const filters = `<div class="fs-filters fs-panel">
+    const inPosCount = done.filter(r => r.pos_side === 'long' || r.pos_side === 'short').length;
+    const filters = `<div class="fs-filters fs-panel fs-cyber">
       <button class="fs-chip ${S.favOnly ? 'active' : ''}" data-favonly>★ Избранное</button>
       <button class="fs-chip qual ${S.hideWeak ? 'active' : ''}" data-hideweak>✓ Скрыть слабые</button>
+      <button class="fs-chip pos ${S.inPos ? 'active' : ''}" data-inpos><span class="fs-pos-dot"></span>В позиции${inPosCount ? ` <span class="fs-chip-n">${inPosCount}</span>` : ''}</button>
       <div class="fs-search${S.query ? ' has' : ''}"><span class="fs-search-ic">🔍</span><input class="fs-search-in" type="text" inputmode="search" placeholder="Поиск актива" value="${(S.query || '').replace(/"/g, '&quot;')}"><button class="fs-search-x" data-searchx aria-label="Очистить">×</button></div>
     </div>`;
     const wireCommon = () => {
@@ -597,6 +600,7 @@
     }));
     host.querySelector('[data-favonly]').addEventListener('click', () => { S.favOnly = !S.favOnly; renderList(host, S); });
     host.querySelector('[data-hideweak]').addEventListener('click', () => { S.hideWeak = !S.hideWeak; renderList(host, S); });
+    host.querySelector('[data-inpos]').addEventListener('click', () => { S.inPos = !S.inPos; renderList(host, S); });
     const si = host.querySelector('.fs-search-in');
     if (si) si.addEventListener('input', () => {
       S.query = si.value; const pos = si.selectionStart;
@@ -846,7 +850,7 @@
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
-    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, inPos: false, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
     state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
     await loadRun(host, S, DEFAULT_RUN);

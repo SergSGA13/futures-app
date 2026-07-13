@@ -2145,6 +2145,70 @@ html, body {
 .fs-chip.active { color: var(--yellow); border-color: rgba(255,209,102,.45); background: rgba(255,209,102,.08); box-shadow: 0 0 12px rgba(255,209,102,.18); }
 .fs-chip.qual.active { color: var(--green); border-color: rgba(78,255,160,.45); background: rgba(78,255,160,.08); box-shadow: 0 0 12px rgba(78,255,160,.16); }
 
+/* ===== Киберпанк-панель фильтров ===== */
+.fs-filters.fs-cyber {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(102,163,255,.06), transparent 55%),
+    repeating-linear-gradient(0deg, rgba(102,163,255,.028) 0 1px, transparent 1px 3px),
+    var(--card);
+  border: 1px solid rgba(102,163,255,.28);
+  border-radius: 14px;
+  padding: 11px 12px;
+  box-shadow:
+    inset 0 0 30px rgba(157,80,255,.05),
+    0 0 18px rgba(102,163,255,.07);
+  overflow: hidden;
+}
+/* неоновые "срезанные углы" рамки */
+.fs-filters.fs-cyber::before,
+.fs-filters.fs-cyber::after {
+  content: ''; position: absolute; width: 14px; height: 14px; pointer-events: none;
+}
+.fs-filters.fs-cyber::before {
+  top: -1px; left: -1px;
+  border-top: 2px solid rgba(157,80,255,.75);
+  border-left: 2px solid rgba(157,80,255,.75);
+  border-top-left-radius: 14px;
+  filter: drop-shadow(0 0 4px rgba(157,80,255,.6));
+}
+.fs-filters.fs-cyber::after {
+  bottom: -1px; right: -1px;
+  border-bottom: 2px solid rgba(102,163,255,.75);
+  border-right: 2px solid rgba(102,163,255,.75);
+  border-bottom-right-radius: 14px;
+  filter: drop-shadow(0 0 4px rgba(102,163,255,.6));
+}
+.fs-cyber .fs-chip {
+  border-radius: 9px;
+  text-transform: uppercase;
+  letter-spacing: .55px;
+  font-size: 10px;
+  padding: 7px 11px;
+  background: linear-gradient(180deg, rgba(16,20,36,.9), rgba(10,13,24,.9));
+  border-color: rgba(102,163,255,.22);
+}
+.fs-cyber .fs-search { border-radius: 9px; background: linear-gradient(180deg, rgba(16,20,36,.9), rgba(10,13,24,.9)); border-color: rgba(102,163,255,.22); }
+/* кнопка "В позиции": неон + живой пульс-индикатор */
+.fs-chip.pos { color: #66A3FF; display: inline-flex; align-items: center; gap: 6px; }
+.fs-pos-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #66A3FF; box-shadow: 0 0 6px rgba(102,163,255,.9);
+  animation: fsPosPulse 1.6s ease-in-out infinite;
+}
+.fs-chip.pos.active {
+  color: #7CC8FF; border-color: rgba(102,163,255,.65);
+  background: linear-gradient(180deg, rgba(102,163,255,.16), rgba(157,80,255,.10));
+  box-shadow: 0 0 14px rgba(102,163,255,.30), inset 0 0 8px rgba(102,163,255,.12);
+  text-shadow: 0 0 8px rgba(102,163,255,.55);
+}
+.fs-chip.pos.active .fs-pos-dot { background: #4EFFA0; box-shadow: 0 0 7px rgba(78,255,160,.95); }
+.fs-chip-n {
+  font-size: 9px; padding: 1px 5px; border-radius: 6px; margin-left: 1px;
+  background: rgba(102,163,255,.18); border: 1px solid rgba(102,163,255,.35);
+}
+@keyframes fsPosPulse { 0%, 100% { opacity: .5; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
+
 .fs-tfhint {
   position: fixed; left: 50%; bottom: 86px; transform: translate(-50%, 12px);
   max-width: 320px; width: max-content; padding: 10px 14px; border-radius: 12px;

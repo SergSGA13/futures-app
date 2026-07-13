@@ -107,6 +107,31 @@
       lineStyle: pl.style == null ? 2 : pl.style, axisLabelVisible: true, title: pl.title || '',
     }));
     try { if (LW.createSeriesMarkers) LW.createSeriesMarkers(candle, opts.markers || []); else if (candle.setMarkers) candle.setMarkers(opts.markers || []); } catch (e) {}
+    // «Линейка» сделки в стиле TradingView: натянутая линия вход → выход
+    // с точками на концах и подписью результата у точки выхода.
+    if (opts.ruler && LW.LineSeries) {
+      try {
+        const r = opts.ruler;
+        const col = r.pct >= 0 ? C.buy : C.sell;
+        const line = chart.addSeries(LW.LineSeries, {
+          color: col, lineWidth: 2, lineStyle: 2,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          pointMarkersVisible: true, pointMarkersRadius: 4,
+          priceFormat: { type: 'price', precision: prec.precision, minMove: prec.minMove },
+        });
+        const pts = [{ time: r.t1, value: r.p1 }, { time: r.t2, value: r.p2 }]
+          .sort((a, b) => a.time - b.time);
+        if (pts[0].time !== pts[1].time) {
+          line.setData(pts);
+          const mk = [{
+            time: r.t2, position: r.pct >= 0 ? 'aboveBar' : 'belowBar', color: col,
+            shape: r.pct >= 0 ? 'arrowUp' : 'arrowDown', size: 1,
+            text: (r.pct >= 0 ? '+' : '') + (+r.pct).toFixed(1) + '%',
+          }];
+          if (LW.createSeriesMarkers) LW.createSeriesMarkers(line, mk); else if (line.setMarkers) line.setMarkers(mk);
+        }
+      } catch (e) {}
+    }
     const n = (opts.candles || []).length, view = opts.viewBars || 200;
     if (opts.visibleRange) { try { chart.timeScale().setVisibleRange(opts.visibleRange); } catch (e) {} }
     else if (n) chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - view), to: n + 3 });

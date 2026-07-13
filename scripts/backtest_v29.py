@@ -1023,12 +1023,27 @@ def run_backtest(config=None, progress=None):
                 log(f"[{k}/{len(syms)}] {sym}: sets={res['sets']} below threshold, skipped")
                 continue
 
+            # sets_json в расширенном формате (как у браузерного движка):
+            # [ts_выхода, pnl%, side, средняя_входа, цена_выхода, [цены_входов], ts_входа]
+            # - приложение рисует по нему линии сделки и «линейку» вход→выход.
+            closed_trades = [tr for tr in res["sets_detail"] if tr["exit"] is not None]
+            sets_ext = []
+            for tr, (ts_exit, pct) in zip(closed_trades, res["sets_tpnl"]):
+                prices = [p for (p, _t) in tr["entries"]]
+                # средняя при равных нотионалах на долю = гармоническое среднее цен
+                avg = (len(prices) / sum(1.0 / p for p in prices)) if prices else 0.0
+                sets_ext.append([
+                    int(ts_exit), pct, tr["side"], round(avg, 8),
+                    round(tr["exit"][0], 8), [round(p, 8) for p in prices],
+                    int(tr["entries"][0][1]) if tr["entries"] else 0,
+                ])
+
             rows.append([
                 sym, cfg["interval"], res["signals"], res["sets"], res["wins"], res["losses"],
                 "" if res["winrate"] is None else round(res["winrate"], 1),
                 round(res["pnl_pct"], 2), round(res["realized_pct"], 2), round(res["unreal_pct"], 2),
                 res["pos_side"], res["pos_lots"], res["pos_avg"], res["last_side"], round(qvol), updated,
-                json.dumps(res["lot_entries"]), json.dumps(res["sets_tpnl"]),
+                json.dumps(res["lot_entries"]), json.dumps(sets_ext),
                 res["max_dd"], res["expectancy"],
             ])
 

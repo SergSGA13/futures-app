@@ -214,7 +214,7 @@
     const sigs = window.LiveChart.computeSignalList(candles, 15);
     const sim = simulateJS(candles, sigs); const p = sim.position;
     const prec = precisionFor(candles[candles.length - 1].close);
-    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4), st.side, +st.entryAvg.toFixed(prec.precision), +st.exitPrice.toFixed(prec.precision), (st.entries || []).map(p => +p.toFixed(prec.precision))]);
+    const sj = sim.sets.map(st => [st.t1, +st.pnl.toFixed(4), st.side, +st.entryAvg.toFixed(prec.precision), +st.exitPrice.toFixed(prec.precision), (st.entries || []).map(p => +p.toFixed(prec.precision)), st.t0 || 0]);
     const le = (p.side === 'long' || p.side === 'short') ? (p.entries || []).map(x => +x) : [];
     const s = { signals: sigs.length, sets: sim.stats.sets, wins: sim.stats.wins, losses: sim.stats.losses, winrate: sim.stats.winrate, pnl_pct: sim.stats.pnlPct, pos_side: p.side, pos_lots: p.lots, pos_avg: p.avg, max_dd: sim.stats.maxDD, expectancy: sim.stats.exp, sets_json: sj, lot_entries: le };
     cacheSet(sym, s);
@@ -693,13 +693,6 @@
     const openChip = isOpen
       ? `<div class="fd-chip open" data-set="open"><div class="fd-chip-n">\u0421\u0415\u0419\u0427\u0410\u0421 ${row.pos_side === 'long' ? '\u25b2 LONG' : '\u25bc SHORT'}</div><div class="fd-chip-v">\u00d7${row.pos_lots}</div><div class="fd-chip-d">\u0441\u0435\u0439\u0447\u0430\u0441</div></div>` : '';
 
-    // расчёт «что-если»: клип каждой сделки и компаундинг (грубая оценка, как в списке)
-    const recalc = (stop, tp) => {
-      let eq = 100, peak = 100, mdd = 0, wins = 0, losses = 0, sum = 0;
-      sets.forEach(s => { let v = s.pnl; if (stop) v = Math.max(v, -stop); if (tp) v = Math.min(v, tp); eq *= (1 + v / 100); if (eq > peak) peak = eq; const dd = peak ? (peak - eq) / peak * 100 : 0; if (dd > mdd) mdd = dd; if (v > 0) wins++; else if (v < 0) losses++; sum += v; });
-      return { pnl: eq - 100, wr: (wins + losses) ? wins / (wins + losses) * 100 : null, mdd, exp: sets.length ? sum / sets.length : 0 };
-    };
-
     const head = `<div class="fd-headwrap"><div class="fd-head">
       <button class="fd-back" data-back>\u2190</button>${nameBtn}
       <div class="fd-hstats"><div class="fd-hstat"><b>${row.sets}</b><span>\u0421\u0414\u0415\u041b\u041e\u041a</span></div><div class="fd-hstat"><b style="color:${wrHex(wr, row.sets)}">${wrTxt}</b><span>WIN</span></div><div class="fd-hstat"><b style="color:${pnlHex(row.pnl_pct)}">${fmtPct(row.pnl_pct)}</b><span>PNL</span></div></div>
@@ -716,27 +709,8 @@
       <div class="fd-chips">${openChip}${chips}${(!chips && !openChip) ? '<span class="fs-sets">\u043d\u0435\u0442 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0445 \u0441\u0434\u0435\u043b\u043e\u043a</span>' : ''}</div>
       <div class="fd-chartwrap"><div class="fd-chart" id="fdChart"></div></div>
       <div class="fd-legend"><span><i style="background:${COL.green}"></i>BUY</span><span><i style="background:${COL.red}"></i>SELL</span><span class="fd-note">\u0442\u0430\u043f \u043f\u043e \u0441\u0434\u0435\u043b\u043a\u0435 - \u043f\u0440\u0438\u0431\u043b\u0438\u0437\u0438\u0442\u044c</span></div>
-      <div class="fs-whatif fd-whatif">
-        <div class="fs-wi-row"><span class="fs-wi-lbl">Стоп-лосс</span><input type="range" class="fs-slider fs-wi" data-fwi="stop" min="0" max="30" step="1" value="0"><span class="fs-wi-val" data-fwival="stop">выкл</span></div>
-        <div class="fs-wi-row"><span class="fs-wi-lbl">Тейк-профит</span><input type="range" class="fs-slider fs-wi" data-fwi="tp" min="0" max="30" step="1" value="0"><span class="fs-wi-val" data-fwival="tp">выкл</span></div>
-        <div class="fd-wi-out" id="fdWiOut">что-если (грубо): двигай ползунки, чтобы прикинуть правила без переторговки</div>
-      </div>
       <div class="fs-hint">Цифры - из бэктеста прогона «${runLabel}». Маркеры BUY/SELL - сигналы индикатора v.29.1 на живых свечах. Модель: усреднение в ту же сторону, обратный сигнал закрывает все доли и открывает реверс. Размер входа в модели - 2% депозита на сигнал.</div>`;
     wireBar();
-
-    // ползунки что-если в детали (свой стейт, официальные цифры в шапке не трогаем)
-    let wiStop = 0, wiTp = 0;
-    const wiOut = host.querySelector('#fdWiOut');
-    const updWi = () => {
-      if (!wiStop && !wiTp) { wiOut.classList.remove('on'); wiOut.innerHTML = 'что-если (грубо): двигай ползунки, чтобы прикинуть правила без переторговки'; return; }
-      const r = recalc(wiStop, wiTp);
-      wiOut.classList.add('on');
-      wiOut.innerHTML = `что-если: PNL <b style="color:${pnlHex(r.pnl)}">${fmtPct(r.pnl)}</b> · WIN <b>${r.wr == null ? '-' : Math.round(r.wr) + '%'}</b> · просадка <b style="color:${COL.red}">-${r.mdd.toFixed(1)}%</b>`;
-    };
-    host.querySelectorAll('.fd-whatif .fs-wi').forEach(sl => {
-      const k = sl.dataset.fwi, lbl = host.querySelector(`[data-fwival="${k}"]`);
-      sl.addEventListener('input', () => { const v = +sl.value; if (k === 'stop') wiStop = v; else wiTp = v; if (lbl) lbl.textContent = v ? (k === 'stop' ? '-' : '+') + v + '%' : 'выкл'; updWi(); });
-    });
 
     const el = host.querySelector('#fdChart');
     const last = candles[candles.length - 1].time;
@@ -763,15 +737,15 @@
         window.LiveChart.renderInto(el, { candles, markers, priceLines: posLines, precision: prec, visibleRange: { from: from - pad, to: last + pad } });
         return;
       }
-      // исторический сет: приближаем график к моменту выхода сделки
-      // и показываем линии входа/выхода ЭТОЙ конкретной сделки (не текущей позиции)
+      // исторический сет: приближаем график к сделке, линии входа/выхода
+      // и «линейка» в стиле TradingView от точки входа до точки выхода
       const s = setByIx[+ds]; if (!s || !s.t) { baseView(); return; }
-      // Строим линии для исторического сета из sets_json расширенного формата
       const sj = (row.sets_json || [])[+ds];
       const histLines = [];
+      let ruler = null;
       if (Array.isArray(sj) && sj.length >= 6) {
-        // расширенный формат: [ts_exit, pnl, side, entry_avg, exit_price, [entries...]]
-        const [, , side, entryAvg, exitPrice, entries] = sj;
+        // расширенный формат: [ts_exit, pnl, side, entry_avg, exit_price, [entries...], ts_entry]
+        const [, , side, entryAvg, exitPrice, entries, tsEntry] = sj;
         const isLong = String(side).toLowerCase() === 'long';
         const entryCol = isLong ? COL.green : COL.purple;
         if (Array.isArray(entries)) {
@@ -779,10 +753,16 @@
         }
         if (entryAvg) histLines.push({ price: +entryAvg, color: entryCol, title: 'средняя', width: 2, style: 0 });
         if (exitPrice) histLines.push({ price: +exitPrice, color: s.pnl >= 0 ? COL.green : COL.red, title: 'выход', width: 1, style: 1 });
+        if (tsEntry && entryAvg && exitPrice) {
+          ruler = { t1: +tsEntry, p1: +entryAvg, t2: s.t, p2: +exitPrice, pct: s.pnl };
+        }
       }
       const linesForHist = histLines.length ? histLines : posLines;
-      const win = 18 * 3600;   // ~окно вокруг выхода
-      window.LiveChart.renderInto(el, { candles, markers, priceLines: linesForHist, precision: prec, visibleRange: { from: s.t - win * 2, to: s.t + win } });
+      // окно: вся сделка от входа до выхода + отступы (или ~18ч вокруг выхода, если вход неизвестен)
+      const win = 18 * 3600;
+      const from = ruler ? Math.min(ruler.t1, s.t) : s.t - win * 2;
+      const pad = Math.max(3600, (s.t - from) * 0.25);
+      window.LiveChart.renderInto(el, { candles, markers, priceLines: linesForHist, precision: prec, visibleRange: { from: from - pad, to: s.t + pad }, ruler });
     }));
   }
 

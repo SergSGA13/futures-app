@@ -1,0 +1,54 @@
+# Утренний чек-лист для раздела Last 30 Days · DEV: конфигурации-кандидаты
+# на удаление (WR за последние 4 дня ниже безубытка 55.6%). Пишет вкладку
+# DEV_BADLIST, приложение показывает её содержимое.
+#
+# Cron в GitHub - только UTC: 03:00 UTC = 05:00 Варшавы летом (CEST);
+# зимой (CET) запуск сдвигается на 04:00 по Варшаве.
+name: DEV badlist (morning config check)
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: dev-badlist
+  cancel-in-progress: false
+
+jobs:
+  badlist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check credentials secret
+        id: creds
+        env:
+          CREDS: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: |
+          if [ -z "$CREDS" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Секрет GOOGLE_CREDS_JSON не задан - пропуск."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+            printf '%s' "$CREDS" > "$RUNNER_TEMP/google-creds.json"
+          fi
+
+      - name: Set up Python
+        if: ${{ steps.creds.outputs.have == 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install dependencies
+        if: ${{ steps.creds.outputs.have == 'true' }}
+        run: pip install -r scripts/requirements.txt
+
+      - name: Build DEV_BADLIST
+        if: ${{ steps.creds.outputs.have == 'true' }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/google-creds.json
+        run: python scripts/dev_badlist.py

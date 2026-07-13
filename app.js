@@ -1965,6 +1965,51 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
   return findings.slice(0, DEV_INSIGHTS_TOP_N).map(f => devInsightBlock(f.cls, f.title, f.body)).join('');
 }
 
+// ===== ЧЕК-ЛИСТ "КОНФИГУРАЦИИ НА УДАЛЕНИЕ" (вкладка DEV_BADLIST) =====
+// Вкладку строит GitHub Actions ежедневно ~05:00 по Варшаве (scripts/dev_badlist.py):
+// активные конфигурации, у которых WR за последние 4 дня ниже безубытка 55.6%.
+function devEscapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function devRenderBadlist() {
+  const card = document.getElementById('devBadlistCard');
+  const listEl = document.getElementById('devBadlistBlock');
+  const updEl = document.getElementById('devBadlistUpdated');
+  if (!card || !listEl) return;
+  try {
+    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=DEV_BADLIST`;
+    const resp = await sigFetch(url, 15000);
+    if (!resp.ok) return;
+    const rows = parseCSV(await resp.text());
+    if (!rows || rows.length < 2) return;                    // вкладки ещё нет / пустая
+    const data = rows.slice(1).filter(r => (r[0] || '').trim());
+    if (!data.length) return;
+    const updated = (data[0][7] || '').trim();
+    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~05:00`;
+    if (data.length === 1 && data[0][0].trim() === 'OK') {
+      listEl.innerHTML = '<div class="dev-urgent-empty">Кандидатов на удаление нет - все активные конфигурации держат WR выше безубытка за последние 4 дня.</div>';
+    } else {
+      listEl.innerHTML = data.map(r => {
+        const pnl = (r[3] || '').trim();
+        const metrics = `WR <b>${r[2]}%</b> на ${r[1]} сигналах за 4 дня` +
+          (pnl !== '' ? ` · PnL 4д: <b>${pnl}</b>` : '') +
+          (r[4] ? ` · 30д: ${r[5]}% (${r[4]})` : '') +
+          (r[6] ? ` · посл. сигнал ${r[6]}` : '');
+        return `<div class="dev-urgent-item dev-urgent-critical">
+          <span class="dev-urgent-icon">🗑️</span>
+          <div class="dev-urgent-text">
+            <div class="dev-badlist-config">${devEscapeHtml(r[0])}</div>
+            <div class="dev-urgent-reason">${metrics}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    card.style.display = 'block';
+  } catch (e) { console.log('DEV badlist fetch error:', e); }
+}
+
 async function renderDevL30d() {
   if (devL30dRendered) return;
   try {
@@ -1988,6 +2033,7 @@ async function renderDevL30d() {
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
     try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
+    try { devRenderBadlist(); } catch (e) { console.log('DEV badlist error:', e); }
     try { devShowTable('devOpportunityBlock', 'devOpportunityCard', devBuildOpportunitySection(sigs, combinedRaw)); } catch (e) { console.log('DEV opportunity error:', e); }
     try {
       devRenderDrawdownChart(sigs);

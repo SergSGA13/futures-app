@@ -529,7 +529,9 @@
     const segRun = RUNS.length > 1
       ? `<div class="fs-seg">${RUNS.map(rn => `<button class="${S.run === rn.key ? 'active' : ''}" data-run="${rn.key}">${rn.label}</button>`).join('')}</div><span class="fs-seg-div"></span>`
       : `<span class="fs-run-badge">${(RUNS.find(r => r.key === S.run) || RUNS[0]).label}</span><span class="fs-seg-div"></span>`;
-    const segTf = `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`;
+    const segTf = TFS.length > 1
+      ? `<div class="fs-seg">${TFS.map(t => `<button class="${S.tf === t.key ? 'active' : ''}${t.ready ? '' : ' soon'}" data-tf="${t.key}">${t.label}</button>`).join('')}</div>`
+      : `<span class="fs-run-badge">${(TFS.find(t => t.key === S.tf) || TFS[0]).label}</span>`;
     const controls = `<div class="fs-controls">
       <div class="fs-ctl-row">${segRun}${segTf}</div>
     </div>`;
@@ -794,9 +796,9 @@
   // Таймфреймы. Сейчас данные считаются по 15m; 4H/1H - дизайн на будущее
   // Каждый таймфрейм - собственный форвард-прогон в своей вкладке
   // (суффикс добавляется к вкладке прогона: FUT_STRAT_FWD + _4H и т.д.)
+  // 1H/4H отключены: 15m показал самую стабильную кривую, а плотность сигналов
+  // даёт статистике быстро усредняться. Вернуть - добавить записи обратно.
   const TFS = [
-    { key: '4h', label: '4H', ready: true, tabSuffix: '_4H' },
-    { key: '1h', label: '1H', ready: true, tabSuffix: '_1H' },
     { key: '15m', label: '15m', ready: true, tabSuffix: '' },
   ];
   const DEFAULT_TF = '15m';

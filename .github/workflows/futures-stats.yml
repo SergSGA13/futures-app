@@ -53,6 +53,7 @@ jobs:
           probe fapi.binance.com        https://fapi.binance.com/fapi/v1/ping
           probe data.binance.vision     https://data.binance.vision/data/futures/um/daily/klines/BTCUSDT/1d/
           probe s3.data.binance.vision  "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/monthly/klines/"
+          probe data-api.binance.vision https://data-api.binance.vision/api/v3/ping
           probe oauth2.googleapis.com   https://oauth2.googleapis.com/
 
       - name: Check credentials secret

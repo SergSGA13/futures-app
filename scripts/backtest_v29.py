@@ -347,6 +347,8 @@ VISION_BASES = [
     "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision",
 ]
 VISION_S3_LIST = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+# Публичное зеркало спот-API (не гео-блокируется): живой хвост поверх архива.
+DATA_API_SPOT = "https://data-api.binance.vision"
 _VISION_BASE = None      # выбранное рабочее зеркало
 _USE_VISION = False      # переключились ли с fapi на архив
 _VISION_SYMBOLS = None   # символы, по которым в архиве есть свечи
@@ -427,6 +429,31 @@ def _vision_top_symbols(n, on_date=None):
     vols.sort(key=lambda x: x[1], reverse=True)
     return vols[:n]
 
+_LIVE_TAIL_ANNOUNCED = False
+
+def _spot_tail(symbol, last_ms, interval):
+    """Свежие свечи со спот-зеркала data-api.binance.vision (лаг архива ~1 день).
+    Перп ходит вплотную к споту; на следующий день хвост замещается точными
+    фьючерсными данными архива. Символы без спот-пары (1000X и т.п.) - пропуск."""
+    out = []
+    cur = last_ms + 1
+    now_ms = int(time.time() * 1000)
+    while cur < now_ms:
+        r = requests.get(f"{DATA_API_SPOT}/api/v3/klines",
+                         params=dict(symbol=symbol, interval=interval, startTime=cur, limit=1000),
+                         timeout=20)
+        if r.status_code != 200:
+            return out                                  # нет спот-пары / зеркало недоступно
+        chunk = r.json()
+        if not chunk:
+            break
+        out += [(int(k[0]), float(k[1]), float(k[2]), float(k[3]), float(k[4])) for k in chunk]
+        cur = int(chunk[-1][0]) + 1
+        if len(chunk) < 1000:
+            break
+        time.sleep(0.1)
+    return out
+
 def _vision_fetch_klines(symbol, interval, days):
     syms = None
     try:
@@ -469,6 +496,25 @@ def _vision_fetch_klines(symbol, interval, days):
                         recs[ts] = (ts, float(p[1]), float(p[2]), float(p[3]), float(p[4]))
                 d += dt.timedelta(days=1)
         m = next_m
+    # живой хвост поверх архива - чтобы позиции и PNL были свежими, а не вчерашними
+    global _LIVE_TAIL_ANNOUNCED
+    if recs:
+        last_ms = max(recs)
+        try:
+            tail = _spot_tail(symbol, last_ms, interval)
+        except requests.exceptions.RequestException:
+            tail = []
+        added = 0
+        for rec in tail:
+            if rec[0] > last_ms:
+                recs[rec[0]] = rec
+                added += 1
+        if added and not _LIVE_TAIL_ANNOUNCED:
+            _LIVE_TAIL_ANNOUNCED = True
+            last_dt = dt.datetime.fromtimestamp(max(recs) / 1000, dt.timezone.utc)
+            print(f"живой хвост со спот-зеркала включён (свечи до {last_dt:%Y-%m-%d %H:%M} UTC)",
+                  file=sys.stderr)
+
     cut_ms = int(dt.datetime(start.year, start.month, start.day,
                              tzinfo=dt.timezone.utc).timestamp() * 1000)
     rows = sorted(v for k, v in recs.items() if k >= cut_ms)

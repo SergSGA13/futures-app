@@ -165,11 +165,12 @@ def main(argv=None):
     parser.add_argument("--sleep", type=float, default=2.0, help="Delay between presets when --preset all is used.")
     args = parser.parse_args(argv)
 
-    # "all" = форвард-тесты всех трёх таймфреймов: приложение показывает
-    # якорный форвард с переключателем 15m/1H/4H. Классические и honest-пресеты
+    # "all" = только 15m-форвард: он показал самую стабильную кривую, 1H/4H
+    # отключены от расписания (их вкладки остаются в таблице замороженными,
+    # вернуть - добавить пресеты обратно в список). Классические и honest-пресеты
     # запускаются только явно (--preset base и т.д.).
     if args.preset == "all":
-        presets = ["forward", "forward_1h", "forward_4h"]
+        presets = ["forward"]
     else:
         presets = [args.preset]
     spreadsheet = None

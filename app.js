@@ -1281,8 +1281,12 @@ function devBuildTrendSection(sigs) {
 // Для угрозы "случайный пользователь потыкал чек-лист" достаточно и этого — кнопку
 // просто не увидит никто, кроме владельца с этим Telegram ID.
 const DEV_ADMIN_TG_ID = 431358856;
+const DEV_ADMIN_TG_USERNAME = 'serhiihumeniuk';   // @SerhiiHumeniuk
 function isDevAdmin() {
-  return !!(tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id === DEV_ADMIN_TG_ID);
+  const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+  if (!u) return false;
+  if (u.id === DEV_ADMIN_TG_ID) return true;
+  return String(u.username || '').toLowerCase() === DEV_ADMIN_TG_USERNAME;
 }
 
 // ===== ОТМЕТКИ "ИСПРАВЛЕНО" (localStorage этого устройства) =====
@@ -1424,6 +1428,25 @@ function devLastSignalMoment(sigs, pair, ind, dir) {
   return last;
 }
 
+// Отметки "Учтено" для возможностей: снуз на DEV_OPP_SNOOZE_DAYS дней.
+// Если после снуза возможность всё ещё в данных (пробел не закрыт / индикатор
+// так и молчит) - пункт возвращается в список сам.
+const DEV_OPP_DISMISS_KEY = 'fp_dev_opp_dismissed';
+const DEV_OPP_SNOOZE_DAYS = 7;
+function devGetOppDismissed() { try { return JSON.parse(localStorage.getItem(DEV_OPP_DISMISS_KEY) || '{}'); } catch (e) { return {}; } }
+function devSetOppDismissed(map) { try { localStorage.setItem(DEV_OPP_DISMISS_KEY, JSON.stringify(map)); } catch (e) {} }
+
+function devMarkOppDone(type, pair, ind, dir) {
+  if (!isDevAdmin()) return;
+  const map = devGetOppDismissed();
+  map[`${type}|${pair}|${ind}|${dir}`] = devTodayDk();
+  devSetOppDismissed(map);
+  if (tg) tg.HapticFeedback?.notificationOccurred?.('success');
+  if (devLastSigs && devLastCombinedRaw) {
+    devShowTable('devOpportunityBlock', 'devOpportunityCard', devBuildOpportunitySection(devLastSigs, devLastCombinedRaw));
+  }
+}
+
 function devBuildOpportunitySection(sigs, combinedRaw) {
   const totalsByPair = {
     ETH: aggregateByIndicator(combinedRaw, 21, 30, 'ETH'),
@@ -1447,13 +1470,30 @@ function devBuildOpportunitySection(sigs, combinedRaw) {
     }
   });
 
-  if (!items.length) {
-    return '<div class="dev-urgent-empty">Явных возможностей для расширения нет - сильные индикаторы уже используются на обеих парах и приходят регулярно.</div>';
+  // отметки "Учтено": прячем на время снуза, после - возвращаем, если не решено
+  const dismissed = devGetOppDismissed();
+  const todayMs = new Date(devTodayDk()).getTime();
+  let snoozed = 0;
+  const visible = items.filter(x => {
+    const dk = dismissed[`${x.type}|${x.pair}|${x.ind}|${x.dir}`];
+    if (!dk) return true;
+    const days = (todayMs - new Date(dk).getTime()) / 86400000;
+    if (days < DEV_OPP_SNOOZE_DAYS) { snoozed++; return false; }
+    return true;
+  });
+
+  const snoozedNote = snoozed
+    ? `<div class="dev-urgent-empty">Отмечено учтёнными: ${snoozed} - вернутся через ${DEV_OPP_SNOOZE_DAYS} дн., если не решены.</div>`
+    : '';
+
+  if (!visible.length) {
+    return snoozedNote || '<div class="dev-urgent-empty">Явных возможностей для расширения нет - сильные индикаторы уже используются на обеих парах и приходят регулярно.</div>';
   }
 
-  items.sort((a, b) => b.wr - a.wr);
+  visible.sort((a, b) => b.wr - a.wr);
+  const admin = isDevAdmin();
 
-  return items.map(x => {
+  return visible.map(x => {
     const label = `${x.pair} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${x.ind}`;
     let title, reason, icon;
     if (x.type === 'gap') {
@@ -1469,14 +1509,18 @@ function devBuildOpportunitySection(sigs, combinedRaw) {
       title = `${label} - давно не приходил`;
       reason = `WR ${x.wr.toFixed(0)}% на ${x.decided} сигналах за 30 дней, но последний сигнал был ${devFmtDk(dk)} (${hrsAgo} ч назад) - стоит проверить, почему индикатор замолчал.`;
     }
+    const btn = admin
+      ? `<button class="dev-urgent-fix-btn" onclick="devMarkOppDone('${x.type}','${x.pair}','${x.ind}','${x.dir}')">✓ Учтено</button>`
+      : '';
     return `<div class="dev-urgent-item dev-opportunity-item">
       <span class="dev-urgent-icon">${icon}</span>
       <div class="dev-urgent-text">
         <div class="dev-urgent-label">${title}</div>
         <div class="dev-urgent-reason">${reason}</div>
+        ${btn}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + snoozedNote;
 }
 
 // ===== 2. BLOCKED vs ИСПОЛНЕННЫЕ: кому отдавать приоритет на вход в лимит 5 окон =====
@@ -1972,11 +2016,88 @@ function devEscapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Отметки "Удалена" (владелец): конфиг прячется из списка. Контроль: если после
+// отметки (+12ч слака на часовые пояса) конфигурация продолжает слать сигналы -
+// значит, реально не удалена, и пункт возвращается с предупреждением.
+const DEV_BADLIST_DEL_KEY = 'fp_dev_badlist_deleted';
+function devGetBadlistDeleted() { try { return JSON.parse(localStorage.getItem(DEV_BADLIST_DEL_KEY) || '{}'); } catch (e) { return {}; } }
+function devSetBadlistDeleted(map) { try { localStorage.setItem(DEV_BADLIST_DEL_KEY, JSON.stringify(map)); } catch (e) {} }
+
+let devBadlistData = [];
+
+// 'dd.MM HH:mm' -> Date текущего года (на стыке лет - прошлого)
+function devParseBadlistTime(s) {
+  const m = String(s || '').match(/(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const now = new Date();
+  let d = new Date(now.getFullYear(), +m[2] - 1, +m[1], +m[3], +m[4]);
+  if (d.getTime() > now.getTime() + 86400000) d = new Date(now.getFullYear() - 1, +m[2] - 1, +m[1], +m[3], +m[4]);
+  return d;
+}
+
+function devMarkConfigDeleted(idx) {
+  if (!isDevAdmin()) return;
+  const r = devBadlistData[idx];
+  if (!r) return;
+  const map = devGetBadlistDeleted();
+  map[r[0]] = new Date().toISOString();
+  devSetBadlistDeleted(map);
+  if (tg) tg.HapticFeedback?.notificationOccurred?.('success');
+  devRenderBadlistList();
+}
+
+function devRenderBadlistList() {
+  const listEl = document.getElementById('devBadlistBlock');
+  if (!listEl) return;
+  const data = devBadlistData;
+  if (data.length === 1 && data[0][0].trim() === 'OK') {
+    listEl.innerHTML = '<div class="dev-urgent-empty">Кандидатов на удаление нет - все активные конфигурации держат WR выше безубытка за последние 4 дня.</div>';
+    return;
+  }
+  const deleted = devGetBadlistDeleted();
+  const admin = isDevAdmin();
+  let hidden = 0;
+  const parts = [];
+  data.forEach((r, idx) => {
+    const markIso = deleted[(r[0] || '').trim()];
+    let stillActive = false;
+    if (markIso) {
+      const lastSig = devParseBadlistTime(r[6]);
+      const markMs = new Date(markIso).getTime();
+      stillActive = !!(lastSig && lastSig.getTime() > markMs + 12 * 3600 * 1000);
+      if (!stillActive) { hidden++; return; }   // удалена и молчит - скрываем
+    }
+    const pnl = (r[3] || '').trim();
+    const metrics = `WR <b>${r[2]}%</b> на ${r[1]} сигналах за 4 дня` +
+      (pnl !== '' ? ` · PnL 4д: <b>${pnl}</b>` : '') +
+      (r[4] ? ` · 30д: ${r[5]}% (${r[4]})` : '') +
+      (r[6] ? ` · посл. сигнал ${r[6]}` : '');
+    const warn = stillActive
+      ? `<div class="dev-urgent-reason">⚠️ Отмечена удалённой, но после отметки продолжает слать сигналы - проверьте, действительно ли отключена.</div>`
+      : '';
+    const btn = (admin && !markIso)
+      ? `<button class="dev-urgent-fix-btn" onclick="devMarkConfigDeleted(${idx})">✓ Удалена</button>`
+      : '';
+    parts.push(`<div class="dev-urgent-item dev-urgent-critical">
+      <span class="dev-urgent-icon">${stillActive ? '⚠️' : '🗑️'}</span>
+      <div class="dev-urgent-text">
+        <div class="dev-badlist-config">${devEscapeHtml(r[0])}</div>
+        <div class="dev-urgent-reason">${metrics}</div>
+        ${warn}
+        ${btn}
+      </div>
+    </div>`);
+  });
+  if (hidden) {
+    parts.push(`<div class="dev-urgent-empty">Отмечено удалёнными: ${hidden} - вернутся с предупреждением, если продолжат слать сигналы.</div>`);
+  }
+  listEl.innerHTML = parts.join('') || '<div class="dev-urgent-empty">Все кандидаты отмечены удалёнными.</div>';
+}
+
 async function devRenderBadlist() {
   const card = document.getElementById('devBadlistCard');
-  const listEl = document.getElementById('devBadlistBlock');
   const updEl = document.getElementById('devBadlistUpdated');
-  if (!card || !listEl) return;
+  if (!card) return;
   try {
     const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
     const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=DEV_BADLIST`;
@@ -1988,24 +2109,8 @@ async function devRenderBadlist() {
     if (!data.length) return;
     const updated = (data[0][7] || '').trim();
     if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~05:00`;
-    if (data.length === 1 && data[0][0].trim() === 'OK') {
-      listEl.innerHTML = '<div class="dev-urgent-empty">Кандидатов на удаление нет - все активные конфигурации держат WR выше безубытка за последние 4 дня.</div>';
-    } else {
-      listEl.innerHTML = data.map(r => {
-        const pnl = (r[3] || '').trim();
-        const metrics = `WR <b>${r[2]}%</b> на ${r[1]} сигналах за 4 дня` +
-          (pnl !== '' ? ` · PnL 4д: <b>${pnl}</b>` : '') +
-          (r[4] ? ` · 30д: ${r[5]}% (${r[4]})` : '') +
-          (r[6] ? ` · посл. сигнал ${r[6]}` : '');
-        return `<div class="dev-urgent-item dev-urgent-critical">
-          <span class="dev-urgent-icon">🗑️</span>
-          <div class="dev-urgent-text">
-            <div class="dev-badlist-config">${devEscapeHtml(r[0])}</div>
-            <div class="dev-urgent-reason">${metrics}</div>
-          </div>
-        </div>`;
-      }).join('');
-    }
+    devBadlistData = data;
+    devRenderBadlistList();
     card.style.display = 'block';
   } catch (e) { console.log('DEV badlist fetch error:', e); }
 }

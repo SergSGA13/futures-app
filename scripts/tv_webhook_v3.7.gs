@@ -1,7 +1,10 @@
 // ============================================================
-// TradingView Signal Webhook → Telegram + Google Sheets  v3.6
+// TradingView Signal Webhook → Telegram + Google Sheets  v3.7
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.7: фильтр F7 переведён на ПРОИЗВОЛЬНЫЕ минутные окна
+//   (CONFIG.WEEKDAY_BLOCK.WINDOWS: список {from:"HH:MM", to:"HH:MM"}),
+//   вместо целых часов HOUR_FROM/HOUR_TO. Границы включительны.
 // v3.6: фильтр F7 - блокировка сигналов Пн-Чт 14:00-16:59 (Варшава);
 //   удалён устаревший блэклист F0 (его роль полностью закрывает
 //   авто-карантин DEV_BADLIST - список обновляется сам каждое утро,
@@ -45,6 +48,8 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
+// МИГРАЦИЯ v3.6 → v3.7: просто заменить код. Окна фильтра F7
+//   правятся в CONFIG.WEEKDAY_BLOCK.WINDOWS (время "HH:MM", Варшава).
 // МИГРАЦИЯ v3.5 → v3.6: просто заменить код. Выключатель нового
 //   фильтра: CONFIG.WEEKDAY_BLOCK.ENABLED = false.
 // МИГРАЦИЯ v3.4 → v3.5:
@@ -82,12 +87,16 @@ const CONFIG = {
   ENABLE_DEDUP:          false,  // FD: СНЯТ
   DEDUP_SECONDS: 90,
 
-  // ─── F7: блокировка по дням недели и часам (Варшава) ───
+  // ─── F7: блокировка по дням недели и минутным окнам (Варшава) ───
+  // Границы включительны (from..to). Окно может быть любой длины и
+  // пересекать полночь (from > to, напр. "23:30"-"00:30").
   WEEKDAY_BLOCK: {
     ENABLED: true,
     DAYS: ["Mon", "Tue", "Wed", "Thu"],  // Пн-Чт включительно
-    HOUR_FROM: 14,                       // с 14:00
-    HOUR_TO: 16,                         // по 16:59 (час 16 включительно)
+    WINDOWS: [
+      { from: "14:20", to: "14:59" },
+      { from: "15:20", to: "15:59" },
+    ],
   },
 
   // ─── F6: авто-карантин по DEV_BADLIST ───
@@ -256,13 +265,22 @@ function decideSignal_(data, badlist) {
     }
   }
 
-  // F7: блокировка Пн-Чт 14:00-16:59 (Варшава) - оба направления
+  // F7: блокировка по дням недели и минутным окнам (Варшава) - оба направления
   if (CONFIG.WEEKDAY_BLOCK.ENABLED) {
     const wb = CONFIG.WEEKDAY_BLOCK;
     const dow = Utilities.formatDate(now, "Europe/Warsaw", "EEE");   // Mon..Sun
-    if (wb.DAYS.indexOf(dow) >= 0 && currentHour >= wb.HOUR_FROM && currentHour <= wb.HOUR_TO)
-      return blocked("F7: " + dow + " " + pad_(currentHour) + ":" + pad_(currentMinute) +
-                     " (Пн-Чт " + wb.HOUR_FROM + ":00-" + wb.HOUR_TO + ":59)");
+    if (wb.DAYS.indexOf(dow) >= 0) {
+      const nowMin = currentHour * 60 + currentMinute;               // минут от полуночи
+      const toMin = (hhmm) => { const p = String(hhmm).split(":"); return (+p[0]) * 60 + (+p[1]); };
+      for (const win of (wb.WINDOWS || [])) {
+        const a = toMin(win.from), b = toMin(win.to);
+        // обычное окно (a<=b) ИЛИ окно через полночь (a>b)
+        const inWin = (a <= b) ? (nowMin >= a && nowMin <= b) : (nowMin >= a || nowMin <= b);
+        if (inWin)
+          return blocked("F7: " + dow + " " + pad_(currentHour) + ":" + pad_(currentMinute) +
+                         " (окно " + win.from + "-" + win.to + ")");
+      }
+    }
   }
 
   // F1: DOWN 02-07

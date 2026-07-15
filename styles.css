@@ -1175,6 +1175,12 @@ html, body {
 .dev-heatmap-table td.hm-empty { color: var(--text-muted); opacity: 0.5; font-weight: 400; }
 .dev-heatmap-table .hm-n { display: block; font-size: 8px; font-weight: 400; opacity: 0.75; margin-top: 1px; }
 
+/* Час × 15 минут: 24 строки × (4 четверти + Σ). Узкие колонки - помещается на телефоне. */
+.dev-qhm-table { min-width: 260px; }
+.dev-qhm-table td.hm-day { width: 30px; }
+.dev-qhm-table td.hm-sum { border-left: 2px solid rgba(102, 163, 255, 0.25); }
+.dev-qhm-table th:last-child { color: var(--blue); }
+
 /* Чек-лист "Требуют пересмотра прямо сейчас" — короткие пункты, не полноразмерные карточки */
 .dev-urgent-card { border-color: rgba(255, 82, 114, 0.35); }
 .dev-urgent-list { display: flex; flex-direction: column; gap: 8px; }

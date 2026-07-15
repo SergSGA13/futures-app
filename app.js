@@ -1742,6 +1742,62 @@ function devBuildHeatmapSection(sigs) {
   return html;
 }
 
+// ===== ТЕПЛОВАЯ КАРТА Час × 15 минут (свёрнуто по всем дням за 30 дней) =====
+// 96 15-минутных клеток суток как сетка 24 строки (часы) × 4 колонки (:00/:15/:30/:45).
+// В отличие от День×Час, здесь НЕ делим по дням недели: за 30 дней на одну
+// 15-минутную клетку суток набирается в ~7 раз больше сигналов, поэтому WR
+// осмыслен даже на такой мелкой сетке. Это отвечает на вопрос "в какие
+// конкретно минуты часа стратегия слабее" (напр. 05-14 или 50-54, которые
+// закрывают ручные фильтры UP).
+const DEV_QHM_MIN = 4; // минимум решённых сигналов в 15-мин клетке для покраски
+
+function devQuarterHeatmapBuild(sigs) {
+  const grid = Array.from({ length: 24 }, () => Array.from({ length: 4 }, () => ({ w: 0, l: 0 })));
+  for (const s of sigs) {
+    if ((s.res !== 'WIN' && s.res !== 'LOSE') || s.hour == null || s.minute == null) continue;
+    const q = Math.floor(s.minute / 15); // 0..3
+    if (q < 0 || q > 3) continue;
+    if (s.res === 'WIN') grid[s.hour][q].w++; else grid[s.hour][q].l++;
+  }
+  return grid;
+}
+
+function devBuildQuarterHeatmapSection(sigs) {
+  const grid = devQuarterHeatmapBuild(sigs);
+  const quarters = [':00', ':15', ':30', ':45'];
+
+  let html = '<div class="dev-heatmap-wrap"><table class="dev-heatmap-table dev-qhm-table"><thead><tr><th></th>';
+  quarters.forEach(q => { html += `<th>${q}</th>`; });
+  html += '<th>Σ</th></tr></thead><tbody>';
+
+  for (let h = 0; h < 24; h++) {
+    html += `<tr><td class="hm-day">${String(h).padStart(2, '0')}h</td>`;
+    let rowW = 0, rowL = 0;
+    for (let q = 0; q < 4; q++) {
+      const { w, l } = grid[h][q];
+      const dec = w + l;
+      rowW += w; rowL += l;
+      if (dec < DEV_QHM_MIN) {
+        html += '<td class="hm-empty">-</td>';
+      } else {
+        const wr = Math.round(w / dec * 100);
+        html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;
+      }
+    }
+    // строчный итог по часу
+    const rowDec = rowW + rowL;
+    if (rowDec < DEV_QHM_MIN) {
+      html += '<td class="hm-empty">-</td>';
+    } else {
+      const wr = Math.round(rowW / rowDec * 100);
+      html += `<td class="hm-sum" style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${rowDec}</span></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return html;
+}
+
 // ===== ПРОСАДКА (DRAWDOWN): насколько глубоко проваливалась кривая PNL от локального пика =====
 function devComputeDrawdown(sigs) {
   const dailyMap = {};
@@ -2189,6 +2245,7 @@ async function renderDevL30d() {
 
     // Тепловая карта День × Час и доля индикаторов по объёму — контекст перед таблицами по индикаторам
     try { devShowTable('devHeatmapBlock', 'devHeatmapCard', devBuildHeatmapSection(sigs)); } catch (e) { console.log('DEV heatmap error:', e); }
+    try { devShowTable('devQHeatmapBlock', 'devQHeatmapCard', devBuildQuarterHeatmapSection(sigs)); } catch (e) { console.log('DEV qheatmap error:', e); }
     try { devShowTable('devShareBlock', 'devShareCard', devBuildShareSection(sigs)); } catch (e) { console.log('DEV share error:', e); }
 
     // By Indicator — общая + отдельно ETH и BTC, по объединённым строкам

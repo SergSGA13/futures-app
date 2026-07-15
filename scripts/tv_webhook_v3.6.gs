@@ -1,7 +1,11 @@
 // ============================================================
-// TradingView Signal Webhook → Telegram + Google Sheets  v3.5
+// TradingView Signal Webhook → Telegram + Google Sheets  v3.6
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.6: фильтр F7 - блокировка сигналов Пн-Чт 14:00-16:59 (Варшава);
+//   удалён устаревший блэклист F0 (его роль полностью закрывает
+//   авто-карантин DEV_BADLIST - список обновляется сам каждое утро,
+//   а не редактируется руками в коде).
 // v3.5: авто-карантин по DEV_BADLIST (фильтр F6).
 //   Вкладку DEV_BADLIST строит GitHub Actions каждое утро (~05:00
 //   Варшавы): активные конфигурации, у которых WR за последние
@@ -41,6 +45,8 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
+// МИГРАЦИЯ v3.5 → v3.6: просто заменить код. Выключатель нового
+//   фильтра: CONFIG.WEEKDAY_BLOCK.ENABLED = false.
 // МИГРАЦИЯ v3.4 → v3.5:
 //   1) Заменить код проекта этим файлом (Script Properties не меняются).
 //   2) Запустить selfTest() один раз - убедиться, что DEV_BADLIST
@@ -68,7 +74,6 @@ const CONFIG = {
   },
 
   // ─── Переключатели фильтров (общие для обоих активов) ───
-  ENABLE_BLACKLIST:      false,  // F0: блэклист по Settings
   ENABLE_UP_0514:        false,  // F2: UP 05-14 мин
   ENABLE_UP_5054:        false,  // F2b: UP 50-54 мин
   ENABLE_DOWN_0207H:     false,  // F1: СНЯТ
@@ -76,6 +81,14 @@ const CONFIG = {
   ENABLE_CONFLICT:       true,   // FC: конфликт направлений
   ENABLE_DEDUP:          false,  // FD: СНЯТ
   DEDUP_SECONDS: 90,
+
+  // ─── F7: блокировка по дням недели и часам (Варшава) ───
+  WEEKDAY_BLOCK: {
+    ENABLED: true,
+    DAYS: ["Mon", "Tue", "Wed", "Thu"],  // Пн-Чт включительно
+    HOUR_FROM: 14,                       // с 14:00
+    HOUR_TO: 16,                         // по 16:59 (час 16 включительно)
+  },
 
   // ─── F6: авто-карантин по DEV_BADLIST ───
   BADLIST: {
@@ -94,14 +107,6 @@ const CONFIG = {
   PARTNER_WEBHOOK_ENABLED: true,  // false — отключить без удаления кода
   PARTNER_WEBHOOK_TIMEOUT: 10,    // секунд
 
-  BLACKLIST_SETTINGS: [
-    "ETH v.5.1 (50, 2, -3,05",
-    "ETH v.5.1 (50, 2, -3,",
-    "ETH v.5.1 (48, 2, -3,05",
-    "ETH v.5.1 (48, 2, -3,1",
-    "ETH v.5.1 (49, 2, -2,95",
-    "ETH v.5.1 (27, 2, -3,1",
-  ],
 };
 
 function getProp_(key) {
@@ -240,13 +245,6 @@ function decideSignal_(data, badlist) {
     return { status: "blocked", message: msg };
   };
 
-  // F0: блэклист
-  if (CONFIG.ENABLE_BLACKLIST) {
-    for (const bad of CONFIG.BLACKLIST_SETTINGS) {
-      if (settings.indexOf(bad) >= 0) return blocked("F0: блэклист Settings (" + bad + ")");
-    }
-  }
-
   // F6: авто-карантин DEV_BADLIST - конфигурации, у которых WR за последние
   // 4 дня ниже безубытка (список строит GitHub Actions каждое утро).
   // Точное совпадение строки Settings: список формируется из этой же колонки.
@@ -256,6 +254,15 @@ function decideSignal_(data, badlist) {
     if (badlist.indexOf(settings.trim()) >= 0) {
       return blocked("F6: авто-карантин DEV_BADLIST (WR 4д ниже безубытка)");
     }
+  }
+
+  // F7: блокировка Пн-Чт 14:00-16:59 (Варшава) - оба направления
+  if (CONFIG.WEEKDAY_BLOCK.ENABLED) {
+    const wb = CONFIG.WEEKDAY_BLOCK;
+    const dow = Utilities.formatDate(now, "Europe/Warsaw", "EEE");   // Mon..Sun
+    if (wb.DAYS.indexOf(dow) >= 0 && currentHour >= wb.HOUR_FROM && currentHour <= wb.HOUR_TO)
+      return blocked("F7: " + dow + " " + pad_(currentHour) + ":" + pad_(currentMinute) +
+                     " (Пн-Чт " + wb.HOUR_FROM + ":00-" + wb.HOUR_TO + ":59)");
   }
 
   // F1: DOWN 02-07

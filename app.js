@@ -1751,6 +1751,16 @@ function devBuildHeatmapSection(sigs) {
 // закрывают ручные фильтры UP).
 const DEV_QHM_MIN = 4; // минимум решённых сигналов в 15-мин клетке для покраски
 
+// Оставляет только сигналы будней (Пн-Пт) по дате dk.
+function devWeekdaysOnly(sigs) {
+  return sigs.filter(s => {
+    if (!s.dk) return false;
+    const [y, m, d] = s.dk.split('-').map(Number);
+    const raw = new Date(y, m - 1, d).getDay(); // 0=Sun..6=Sat
+    return raw >= 1 && raw <= 5;                 // Пн-Пт
+  });
+}
+
 function devQuarterHeatmapBuild(sigs) {
   const grid = Array.from({ length: 24 }, () => Array.from({ length: 4 }, () => ({ w: 0, l: 0 })));
   for (const s of sigs) {
@@ -2246,6 +2256,7 @@ async function renderDevL30d() {
     // Тепловая карта День × Час и доля индикаторов по объёму — контекст перед таблицами по индикаторам
     try { devShowTable('devHeatmapBlock', 'devHeatmapCard', devBuildHeatmapSection(sigs)); } catch (e) { console.log('DEV heatmap error:', e); }
     try { devShowTable('devQHeatmapBlock', 'devQHeatmapCard', devBuildQuarterHeatmapSection(sigs)); } catch (e) { console.log('DEV qheatmap error:', e); }
+    try { devShowTable('devQHeatmapWdBlock', 'devQHeatmapWdCard', devBuildQuarterHeatmapSection(devWeekdaysOnly(sigs))); } catch (e) { console.log('DEV qheatmap wd error:', e); }
     try { devShowTable('devShareBlock', 'devShareCard', devBuildShareSection(sigs)); } catch (e) { console.log('DEV share error:', e); }
 
     // By Indicator — общая + отдельно ETH и BTC, по объединённым строкам

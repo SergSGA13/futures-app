@@ -708,6 +708,12 @@
           <div id="devQHeatmapBlock"></div>
         </div>
 
+        <div class="pnl-chart-card" id="devQHeatmapWdCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>Тепловая карта: Час × 15 минут, будни Пн-Пт - Last 30 Days <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:10px">То же, что выше, но только будние дни (Пн-Пт, Варшава UTC+2) - выходные исключены. Отдельно видно внутричасовой паттерн рабочей недели, когда рынок и объёмы ведут себя иначе, чем в выходные.</p>
+          <div id="devQHeatmapWdBlock"></div>
+        </div>
+
         <div class="pnl-chart-card" id="devShareCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 2v10l7 4"/><circle cx="12" cy="12" r="10"/></svg>Доля индикаторов по объёму - Last 30 Days <span class="dev-chip">DEV</span></div>
           <p class="dev-note" style="margin-bottom:10px">Сколько сигналов вообще генерирует каждый индикатор - контекст для остальных таблиц: WR редко стреляющего кода значит меньше, чем WR постоянно активного.</p>

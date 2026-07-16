@@ -806,6 +806,18 @@ document.getElementById('all5minCard').style.display = 'block';
 let devL30dRendered = false;
 let devLastUpdatedAt = null;
 
+// Конфигурации индикатор×направление, отключённые владельцем навсегда (сняты
+// на TradingView из-за нестабильности) - их сигналы продолжают литься в
+// исходные таблицы как есть, но аналитические разделы (тренд/стрики/blocked/
+// urgent/opportunity/Итог) больше не должны их упоминать - индикатор уже не
+// сработает, обсуждать его дальше нет смысла. pair не задан = любая пара.
+const DEV_DISABLED_CONFIGS = [
+  { ind: 'v.8000', dir: 'DOWN' },
+];
+function devIsDisabledConfig(pair, ind, dir) {
+  return DEV_DISABLED_CONFIGS.some(c => (c.pair == null || c.pair === pair) && c.ind === ind && c.dir === dir);
+}
+
 function devRenderUpdatedAt() {
   const el = document.getElementById('devUpdatedAt');
   if (!el) return;
@@ -1180,8 +1192,8 @@ function devInsightIndicatorCells(combinedRaw) {
     const combos = aggregateByIndicator(combinedRaw, 21, 30, pair);
     for (const o of combos) {
       if (o.ind === '-') continue; // сигналы без кода индикатора отключать не предлагаем
-      out.push({ pair, ind: o.ind, dir: 'UP',   label: `${pair} ${o.ind} ↑ UP`,   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
-      out.push({ pair, ind: o.ind, dir: 'DOWN', label: `${pair} ${o.ind} ↓ DOWN`, w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
+      if (!devIsDisabledConfig(pair, o.ind, 'UP')) out.push({ pair, ind: o.ind, dir: 'UP',   label: `${pair} ${o.ind} ↑ UP`,   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
+      if (!devIsDisabledConfig(pair, o.ind, 'DOWN')) out.push({ pair, ind: o.ind, dir: 'DOWN', label: `${pair} ${o.ind} ↓ DOWN`, w: o.dnW, l: o.dnL, decided: o.dnW + o.dnL, wr: devWrOf(o.dnW, o.dnL) });
     }
   }
   return out;
@@ -1232,6 +1244,7 @@ function devTrendCells(sigs) {
   const groups = {};
   for (const s of sigs) {
     if (s.ind === '-' || (s.pair !== 'ETH' && s.pair !== 'BTC') || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    if (devIsDisabledConfig(s.pair, s.ind, s.dir)) continue;
     const key = `${s.pair}|${s.ind}|${s.dir}`;
     if (!groups[key]) groups[key] = { pair: s.pair, ind: s.ind, dir: s.dir, buckets: buckets.map(() => ({ w: 0, l: 0 })) };
     const bi = bucketOf[s.dk];
@@ -1539,7 +1552,7 @@ function devBlockedVsExecuted(sigs) {
     const bucket = s.isBlocked ? 'blocked' : 'exec';
     agg[bucket][s.res === 'WIN' ? 'w' : 'l']++;
 
-    if (s.ind === '-') continue;
+    if (s.ind === '-' || devIsDisabledConfig(s.pair, s.ind, s.dir)) continue;
     const key = `${s.pair}|${s.ind}|${s.dir}`;
     if (!byCell[key]) byCell[key] = { pair: s.pair, ind: s.ind, dir: s.dir, exec: { w: 0, l: 0 }, blocked: { w: 0, l: 0 } };
     byCell[key][bucket][s.res === 'WIN' ? 'w' : 'l']++;
@@ -1648,6 +1661,7 @@ function devStreaksOfType(sigs, resultType) {
   const groups = {};
   for (const s of sigs) {
     if (s.ind === '-' || (s.pair !== 'ETH' && s.pair !== 'BTC') || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
+    if (devIsDisabledConfig(s.pair, s.ind, s.dir)) continue;
     const key = `${s.pair}|${s.ind}|${s.dir}`;
     if (!groups[key]) groups[key] = { pair: s.pair, ind: s.ind, dir: s.dir, seq: [] };
     groups[key].seq.push(s);

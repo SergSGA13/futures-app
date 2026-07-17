@@ -1,7 +1,21 @@
 // ============================================================
-// TradingView Signal Webhook → Telegram + Google Sheets  v3.7
+// TradingView Signal Webhook → Telegram + Google Sheets  v3.8
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.8: новая схема лимитов по итогам реплея 7 917 сигналов
+//   (Signals_Log, 359 дней) через симулятор фильтров:
+//   - окно пер-актив лимитов сокращено 11 → 5 минут
+//     (кластеры сигналов плотные: половина идёт с гэпом <2 мин;
+//     короткое окно режет хвост пачки, но быстро пускает
+//     следующий независимый заход);
+//   - лимиты: ETH 3 → 2, BTC 2 → 1 сигнал в окне;
+//   - НОВЫЙ фильтр F8: глобальный кап - суммарно не больше
+//     5 принятых сигналов (ETH+BTC вместе) за скользящие
+//     11 минут. Отражает биржевой лимит 5 ставок в моменте:
+//     без него окно 5 мин может пропустить до 7 позиций.
+//   На бэктесте (последние 120 дней): PNL на уровне старой
+//   схемы, EV/сигнал +9.3 → +11.1, сумма убытков -16%,
+//   худший месяц -5875 → -2900.
 // v3.7: фильтр F7 переведён на ПРОИЗВОЛЬНЫЕ минутные окна
 //   (CONFIG.WEEKDAY_BLOCK.WINDOWS: список {from:"HH:MM", to:"HH:MM"}),
 //   вместо целых часов HOUR_FROM/HOUR_TO. Границы включительны.
@@ -48,6 +62,10 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
+// МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
+//   состояние signal_state_v2 совместимы). Откат к старой схеме:
+//   WINDOW_MINUTES: 11, LIMITS ETH {3,2} / BTC {2,1},
+//   GLOBAL_CAP.ENABLED = false.
 // МИГРАЦИЯ v3.6 → v3.7: просто заменить код. Окна фильтра F7
 //   правятся в CONFIG.WEEKDAY_BLOCK.WINDOWS (время "HH:MM", Варшава).
 // МИГРАЦИЯ v3.5 → v3.6: просто заменить код. Выключатель нового
@@ -69,13 +87,23 @@ const CONFIG = {
   BLOCKED_SHEET_NAME: "BLOCKEDsignal",
   FAILED_SHEET_NAME:  "FAILEDsignal",    // резерв для несостоявшихся записей
 
-  WINDOW_MINUTES: 11,
+  WINDOW_MINUTES: 5,      // v3.8: было 11 - окно пер-актив лимитов
   CONFLICT_MINUTES: 10,
 
-  // ─── РАЗДЕЛЬНЫЕ лимиты по активам (как было у двух скриптов) ───
+  // ─── РАЗДЕЛЬНЫЕ лимиты по активам (v3.8: ETH 3→2, BTC 2→1) ───
   LIMITS: {
-    ETH: { MAX_SIGNALS_PER_WINDOW: 3, MAX_SAME_PRICE: 2 },
-    BTC: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 1 },
+    ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 2 },
+    BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 1 },
+  },
+
+  // ─── F8: глобальный кап (v3.8) - суммарно по ОБОИМ активам ───
+  // Не больше MAX_OPEN принятых сигналов за скользящие WINDOW_MINUTES.
+  // Отражает биржевой лимит 5 ставок в моменте: пер-актив окна по
+  // 5 минут без него могут выпустить до 7 позиций за 11 минут.
+  GLOBAL_CAP: {
+    ENABLED: true,
+    MAX_OPEN: 5,
+    WINDOW_MINUTES: 11,
   },
 
   // ─── Переключатели фильтров (общие для обоих активов) ───
@@ -228,8 +256,14 @@ function decideSignal_(data, badlist) {
   let state = stateRaw ? JSON.parse(stateRaw) : { sent: [] };
   if (!state.sent) state.sent = [];
 
+  // v3.8: стейт храним на МАКСИМАЛЬНЫЙ из горизонтов фильтров
+  // (кап 11 мин > конфликт 10 мин > окно лимитов 5 мин);
+  // каждый фильтр ниже режет список по своему сроку сам.
   const windowMs = CONFIG.WINDOW_MINUTES * 60 * 1000;
-  state.sent = state.sent.filter(s => now.getTime() - s.t < windowMs);
+  const capMs = CONFIG.GLOBAL_CAP.WINDOW_MINUTES * 60 * 1000;
+  const keepMs = Math.max(windowMs, CONFIG.CONFLICT_MINUTES * 60 * 1000,
+                          CONFIG.GLOBAL_CAP.ENABLED ? capMs : 0);
+  state.sent = state.sent.filter(s => now.getTime() - s.t < keepMs);
 
   const direction = (data.direction || "").toUpperCase();
   const isUp = (direction === "UP" || direction === "BUY");
@@ -298,7 +332,10 @@ function decideSignal_(data, badlist) {
     return blocked("F3: DOWN мин " + pad_(currentMinute) + " (50-54)");
 
   // ── дальше — счётчики ПО ТЕКУЩЕМУ АКТИВУ ──
+  // sameAsset - весь хранимый горизонт (для FD/FC с их сроками),
+  // sameAssetWin - только окно лимитов WINDOW_MINUTES (для F4/F5).
   const sameAsset = state.sent.filter(s => s.asset === asset);
+  const sameAssetWin = sameAsset.filter(s => now.getTime() - s.t < windowMs);
 
   // FD: дедуп (по активу)
   if (CONFIG.ENABLE_DEDUP) {
@@ -313,18 +350,25 @@ function decideSignal_(data, badlist) {
     if (sameAsset.some(s => s.dir !== dir && (now.getTime() - s.t) < conflictMs))
       return blocked("FC: конфликт по " + asset + " за " + CONFIG.CONFLICT_MINUTES + " мин");
   }
+  // F8: глобальный кап (v3.8) - суммарно по ОБОИМ активам за 11 мин
+  if (CONFIG.GLOBAL_CAP.ENABLED) {
+    const inCap = state.sent.filter(s => now.getTime() - s.t < capMs).length;
+    if (inCap >= CONFIG.GLOBAL_CAP.MAX_OPEN)
+      return blocked("F8: глобальный кап " + inCap + "/" + CONFIG.GLOBAL_CAP.MAX_OPEN +
+                     " за " + CONFIG.GLOBAL_CAP.WINDOW_MINUTES + " мин");
+  }
   // F4: лимит окна (по активу)
-  if (sameAsset.length >= lim.MAX_SIGNALS_PER_WINDOW)
-    return blocked("F4: лимит окна " + asset + " (" + sameAsset.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")");
+  if (sameAssetWin.length >= lim.MAX_SIGNALS_PER_WINDOW)
+    return blocked("F4: лимит окна " + asset + " (" + sameAssetWin.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")");
   // F5: лимит цены (по активу)
-  const samePriceCount = sameAsset.filter(s => s.price === price).length;
+  const samePriceCount = sameAssetWin.filter(s => s.price === price).length;
   if (samePriceCount >= lim.MAX_SAME_PRICE)
     return blocked("F5: лимит цены " + asset + " " + price + " (" + samePriceCount + "/" + lim.MAX_SAME_PRICE + ")");
 
   // Пропускаем
   state.sent.push({ t: now.getTime(), price: price, dir: dir, asset: asset });
   props.setProperty("signal_state_v2", JSON.stringify(state));
-  const cntAsset = sameAsset.length + 1;
+  const cntAsset = sameAssetWin.length + 1;
   return { status: "sent", message: "Signal " + asset + " #" + cntAsset + " (price: " + price + ")" };
 }
 
@@ -484,6 +528,9 @@ function selfTest() {
   const bl = loadBadlist_();
   console.log("OK → вкладки:", a.getName(), "/", b.getName(), "/", f.getName(),
     "| лимиты ETH:", JSON.stringify(CONFIG.LIMITS.ETH), "BTC:", JSON.stringify(CONFIG.LIMITS.BTC),
+    "| окно:", CONFIG.WINDOW_MINUTES + " мин",
+    "| глобальный кап:", CONFIG.GLOBAL_CAP.ENABLED
+      ? (CONFIG.GLOBAL_CAP.MAX_OPEN + " за " + CONFIG.GLOBAL_CAP.WINDOW_MINUTES + " мин") : "DISABLED",
     "| TG token:", !!getProp_("TELEGRAM_BOT_TOKEN"), "| chat:", !!getProp_("TELEGRAM_CHAT_ID"),
     "| partner webhook:", CONFIG.PARTNER_WEBHOOK_ENABLED ? CONFIG.PARTNER_WEBHOOK_URL : "DISABLED",
     "| badlist:", CONFIG.BADLIST.ENABLED ? (bl.length + " конфигураций в карантине") : "DISABLED");

@@ -102,6 +102,9 @@
 //   5) 30-минутные алерты TradingView: добавить в JSON алерта поле
 //      "timing":"30" - сигнал получит шапку 🕒 30 MIN и проверку
 //      payout именно 30-минутного контракта. Без поля = 10 MIN.
+//      Тайминг 30 - ЭКСКЛЮЗИВ MEXC (MEXC_ONLY_TIMINGS): такие
+//      сигналы идут ТОЛЬКО в группу MEXC, основная ветка (TG,
+//      ALLsignal, партнёр, её лимиты) их не видит вовсе.
 //   6) selfTest() один раз - строка "MEXC:" в логе.
 //   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
 // МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
@@ -221,6 +224,10 @@ const CONFIG = {
     DEFAULT_TIMING: 10,
     // Шапка сообщения в группу MEXC: "<эмодзи> <тайминг> MIN | ACTIVE UP/DOWN"
     TIMING_EMOJI: { 10: "⚡️", 30: "🕒" },
+    // Тайминги-эксклюзивы MEXC: сигналы с таким timing идут ТОЛЬКО в
+    // ветку MEXC. Основная ветка их не видит вовсе: ни Telegram, ни
+    // ALLsignal, ни партнёрский вебхук, ни счётчики её лимитов.
+    MEXC_ONLY_TIMINGS: [30],
 
     ALERTS_ENABLED: true,  // алерты в группу MEXC на переходах через порог
   },
@@ -527,6 +534,9 @@ function doPost(e) {
   const badlist = loadBadlist_();
   const mexcOn = CONFIG.MEXC.ENABLED;
   const mexcPayout = mexcOn ? getMexcPayout_() : null;
+  // Сигналы с таймингом-эксклюзивом (30 мин) минуют основную ветку
+  const mexcOnly = mexcOn &&
+    CONFIG.MEXC.MEXC_ONLY_TIMINGS.indexOf(mexcTiming_(data)) >= 0;
 
   // ── Фаза 1: критическая секция (только состояние, без IO) ──
   // Оба решения под ОДНИМ локом: основная ветка и ветка MEXC
@@ -539,7 +549,10 @@ function doPost(e) {
     return buildResponse("error", "Lock timeout (записано в FAILED)");
   }
   try {
-    decision = decideSignal_(data, badlist);
+    // mexcOnly: основная ветка пропускается ЦЕЛИКОМ - её стейт не
+    // трогаем, чтобы 30-минутки не съедали лимиты основной группы
+    decision = mexcOnly ? { status: "skipped", message: "MEXC-only timing" }
+                        : decideSignal_(data, badlist);
     if (mexcOn) {
       try {
         decisionMexc = decideSignal_(data, badlist,
@@ -574,6 +587,14 @@ function doPost(e) {
   if (decisionMexc) {
     try { mexcNote = " | MEXC " + handleMexcIO_(ss, data, decisionMexc, mexcPayout); }
     catch (eM) { console.error("MEXC IO fail:", eM); mexcNote = " | MEXC error"; }
+  }
+
+  // Эксклюзив MEXC: основной поток (TG, партнёр, ALLsignal/BLOCKED)
+  // не задействуется вовсе - ответ только по ветке MEXC
+  if (mexcOnly) {
+    if (!decisionMexc) return buildResponse("error", "MEXC-only сигнал, но ветка MEXC не решила" + mexcNote);
+    return buildResponse(decisionMexc.status,
+      "MEXC-only (timing " + mexcTiming_(data) + ")" + mexcNote);
   }
 
   if (decision.status === "sent") {

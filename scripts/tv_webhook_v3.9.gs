@@ -229,7 +229,10 @@ const CONFIG = {
     // ALLsignal, ни партнёрский вебхук, ни счётчики её лимитов.
     MEXC_ONLY_TIMINGS: [30],
 
-    ALERTS_ENABLED: true,  // алерты в группу MEXC на переходах через порог
+    // Алерты "⛔ payout упал / ✅ вернулся" в группу MEXC: выключены по
+    // просьбе владельца (18.07.2026) - группа только для сигналов.
+    // История в MEXC_PAYOUT и сам фильтр FM работают независимо от этого.
+    ALERTS_ENABLED: false,
   },
 
   // ─── Надёжность записи ───
@@ -628,12 +631,13 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
   const pvCell = pv.known ? pv.value : "";
   if (decisionMexc.status === "sent") {
     let tgOK = true;
-    // Шапка: тайминг отработки + актив + направление, дальше исходный
-    // текст сигнала. 10м и 30м различаются эмодзи (TIMING_EMOJI).
+    // Короткий формат для группы MEXC: шапка (тайминг + актив +
+    // направление) и цена - без полного текста сигнала.
+    // 10м и 30м различаются эмодзи (TIMING_EMOJI).
     const arrow = dir === "UP" ? "📈" : (dir === "DOWN" ? "📉" : "");
     const emoji = CONFIG.MEXC.TIMING_EMOJI[timing] || "⏱";
     const header = emoji + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + arrow;
-    const mexcText = header + "\n" + (data.text || "Signal received");
+    const mexcText = header + "\n💰 Price: " + (data.price || "-");
     try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
     catch (e2) { tgOK = false; console.error("MEXC TG fail:", e2); }
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);

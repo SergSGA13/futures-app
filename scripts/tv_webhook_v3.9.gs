@@ -283,10 +283,13 @@ function getMexcPayout_() {
 
 // Актуален ли payout по активу: {known:bool, value:число %}.
 // known=false и когда данных нет, и когда они старше PAYOUT_STALE_MIN.
+// Ручной ввод (src="manual") НЕ протухает: значение действует,
+// пока его не сменят - иначе пришлось бы перевводить каждые 15 мин.
 function mexcPayoutFor_(payout, asset, nowMs) {
   const rec = payout && payout[asset];
   if (!rec || typeof rec.p !== "number") return { known: false, value: null };
-  if (nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_STALE_MIN * 60 * 1000)
+  if (rec.src !== "manual" &&
+      nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_STALE_MIN * 60 * 1000)
     return { known: false, value: rec.p };
   return { known: true, value: rec.p };
 }
@@ -310,7 +313,7 @@ function savePayout_(newVals, source) {
     if (v == null || isNaN(v)) continue;
     const norm = v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
     const prev = cur[asset] && cur[asset].p;
-    cur[asset] = { p: norm, t: nowMs };
+    cur[asset] = { p: norm, t: nowMs, src: source || "" };
     if (prev !== norm) changed.push({ asset: asset, prev: prev, next: norm });
   }
   props.setProperty(CONFIG.MEXC.PAYOUT_PROP, JSON.stringify(cur));

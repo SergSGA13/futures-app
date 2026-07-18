@@ -187,7 +187,16 @@ const CONFIG = {
 
     PAYOUT_PROP: "mexc_payout_v1",       // Script Property со значениями
     CACHE_KEY: "mexc_payout_cache_v1",   // CacheService (быстрый путь)
-    CACHE_TTL_SEC: 55,
+    CACHE_TTL_SEC: 25,
+
+    // Свежесть на РЕШЕНИИ: payout может меняться каждые ~30 секунд,
+    // поэтому он тянется из PAYOUT_URLS прямо в doPost (Фаза 0, вне
+    // лока), если сохранённому значению больше PAYOUT_FRESH_SEC.
+    // Time-триггер mexcPayoutMonitor при этом нужен только для
+    // алертов/истории в паузах между сигналами (раз в 1-5 мин;
+    // чаще Apps Script не умеет, а sleep-трюки съедают квоту).
+    PAYOUT_FRESH_SEC: 30,
+    PAYOUT_FETCH_TIMEOUT: 5,             // секунд на запрос к MEXC
 
     // Откуда монитору брать payout. У Prediction/Event Futures MEXC НЕТ
     // официального API. URL ищется руками: открыть страницу прогнозов
@@ -263,22 +272,57 @@ function resetBadlistCache() {
 
 // ─── MEXC PAYOUT (v3.9) ──────────────────────────────────────
 // Значения хранятся в Script Property PAYOUT_PROP в виде
-// {ETH:{p:80,t:169...}, BTC:{p:78,t:...}} (t - millis записи).
+// {ETH:{p:80,t:169...,src:"monitor"}, BTC:{...}} (t - millis записи).
 // Быстрый путь - CacheService; fail-open как у бэдлиста: любой
 // сбой чтения = {} (payout неизвестен, дальше решает FAIL_OPEN).
+//
+// Payout плавает каждые ~30 секунд, поэтому здесь же - ДОЖИМ до
+// свежести: если по активу задан URL и сохранённое значение старше
+// PAYOUT_FRESH_SEC (или ручное - его монитор обновляет всегда,
+// когда есть URL), тянем свежее прямо сейчас. Вызов идёт из
+// Фазы 0 doPost (ВНЕ лока), так что сеть не попадает в критическую
+// секцию. Сбой запроса = остаёмся на сохранённом значении.
 function getMexcPayout_() {
   try {
     const cache = CacheService.getScriptCache();
     const cached = cache.get(CONFIG.MEXC.CACHE_KEY);
-    if (cached != null) return JSON.parse(cached);
-    const raw = PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP);
-    const val = raw ? JSON.parse(raw) : {};
-    cache.put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(val), CONFIG.MEXC.CACHE_TTL_SEC);
-    return val;
+    let val;
+    if (cached != null) val = JSON.parse(cached);
+    else {
+      const raw = PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP);
+      val = raw ? JSON.parse(raw) : {};
+      cache.put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(val), CONFIG.MEXC.CACHE_TTL_SEC);
+    }
+    const refreshed = refreshPayoutIfStale_(val);
+    return refreshed || val;
   } catch (err) {
     console.error("getMexcPayout_ failed (fail-open):", err);
     return {};
   }
+}
+
+// Дожим свежести: тянет URL-ы тех активов, чьё значение старше
+// PAYOUT_FRESH_SEC. Возвращает обновлённый объект или null, если
+// тянуть нечего. savePayout_ по пути пишет историю и шлёт алерты.
+function refreshPayoutIfStale_(val) {
+  const urls = CONFIG.MEXC.PAYOUT_URLS || {};
+  const nowMs = Date.now();
+  const got = {};
+  for (const asset of ["ETH", "BTC"]) {
+    if (!urls[asset]) continue;
+    const rec = val && val[asset];
+    if (rec && nowMs - (rec.t || 0) <= CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) continue;
+    try {
+      const v = fetchPayoutFromUrl_(urls[asset]);
+      if (v != null) got[asset] = v;
+    } catch (err) { console.error("payout refresh " + asset + " failed:", err); }
+  }
+  if (!Object.keys(got).length) return null;
+  savePayout_(got, "monitor");
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) { return null; }
 }
 
 // Актуален ли payout по активу: {known:bool, value:число %}.
@@ -346,25 +390,18 @@ function savePayout_(newVals, source) {
   }
 }
 
-// Монитор payout: повесить time-триггер на 1-5 минут.
-// Тянет PAYOUT_URLS; если оба URL пустые - тихо выходит (значит,
-// payout вводится вручную через setMexcPayoutManual).
+// Монитор payout: повесить time-триггер на 1 минуту (или 5).
+// Его роль - алерты и история в паузах между сигналами; свежесть
+// на самих решениях обеспечивает дожим в getMexcPayout_ (Фаза 0).
+// Если оба URL пустые - тихо выходит (ручной режим).
 function mexcPayoutMonitor() {
   if (!CONFIG.MEXC.ENABLED) return;
   const urls = CONFIG.MEXC.PAYOUT_URLS || {};
-  const got = {};
-  let any = false;
-  for (const asset of ["ETH", "BTC"]) {
-    if (!urls[asset]) continue;
-    any = true;
-    try {
-      const v = fetchPayoutFromUrl_(urls[asset]);
-      if (v != null) got[asset] = v;
-      else console.error("mexcPayoutMonitor: не удалось извлечь payout " + asset);
-    } catch (err) { console.error("mexcPayoutMonitor fetch " + asset + " failed:", err); }
-  }
-  if (!any) { console.log("mexcPayoutMonitor: PAYOUT_URLS пусты - ручной режим"); return; }
-  if (Object.keys(got).length) savePayout_(got, "monitor");
+  if (!urls.ETH && !urls.BTC) { console.log("mexcPayoutMonitor: PAYOUT_URLS пусты - ручной режим"); return; }
+  let val = {};
+  try { val = JSON.parse(PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP) || "{}"); }
+  catch (e) {}
+  refreshPayoutIfStale_(val);
 }
 
 // Извлечение числа payout из ответа: сперва PAYOUT_REGEX (группа 1),
@@ -372,6 +409,7 @@ function mexcPayoutMonitor() {
 function fetchPayoutFromUrl_(url) {
   const resp = UrlFetchApp.fetch(url, {
     muteHttpExceptions: true,
+    deadline: CONFIG.MEXC.PAYOUT_FETCH_TIMEOUT,
     headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*" },
   });
   const code = resp.getResponseCode();

@@ -14,11 +14,13 @@
 //   3 сигнала, а на MEXC из-за payout прошёл 1 - лимиты MEXC
 //   считаются по СВОИМ принятым, и после возврата payout к 80%
 //   ветка MEXC принимает сигналы независимо от основной.
-//   Payout берёт монитор mexcPayoutMonitor() (time-триггер каждые
-//   1-5 мин) из PAYOUT_URLS, либо ручной ввод setMexcPayoutManual().
-//   ВАЖНО: у Prediction/Event Futures MEXC НЕТ официального API -
-//   URL нужно взять из DevTools (см. комментарий у PAYOUT_URLS);
-//   пока URL пуст, работает ручной ввод, а при отсутствии/
+//   Payout тянется с внутреннего endpoint Event Futures MEXC
+//   (event_contract/detail, найден через DevTools 18.07.2026):
+//   один JSON на все контракты, ставки по направлениям (upPayRate/
+//   downPayRate) и таймфреймам (MINUTE 10/30, HOUR, DAY). Свежесть
+//   на решении - дожим в getMexcPayout_ (30 с), между сигналами -
+//   минутный триггер mexcPayoutMonitor() (алерты/история). Запасной
+//   путь - ручной ввод setMexcPayoutManual(); при отсутствии/
 //   устаревании данных действует FAIL_OPEN (по умолчанию true -
 //   сигналы идут, фильтр FM тихо пропускается).
 //   Монитор шлёт алерты в группу MEXC на переходах payout через
@@ -92,9 +94,11 @@
 //      (chat_id новой ТГ-группы MEXC; бот должен быть в группе).
 //   3) Триггеры (часы слева) → Add Trigger → mexcPayoutMonitor,
 //      time-driven, каждые 1-5 минут.
-//   4) Настроить источник payout: CONFIG.MEXC.PAYOUT_URLS
-//      (см. комментарий там) ИЛИ вручную запускать
-//      setMexcPayoutManual(80, 80) при изменении payout.
+//   4) Источник payout уже настроен (PAYOUT_URL + TIME_UNIT/TIME_VAL
+//      = MINUTE/10; для 30-минуток поставить TIME_VAL: 30). Проверить:
+//      запустить mexcPayoutProbe() - в логе должны быть числа.
+//      Если HTTP 403 - endpoint закрыт для серверов Google, тогда
+//      вручную setMexcPayoutManual(80, 80) при изменении payout.
 //   5) selfTest() один раз - строка "MEXC:" в логе.
 //   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
 // МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
@@ -190,7 +194,7 @@ const CONFIG = {
     CACHE_TTL_SEC: 25,
 
     // Свежесть на РЕШЕНИИ: payout может меняться каждые ~30 секунд,
-    // поэтому он тянется из PAYOUT_URLS прямо в doPost (Фаза 0, вне
+    // поэтому он тянется из PAYOUT_URL прямо в doPost (Фаза 0, вне
     // лока), если сохранённому значению больше PAYOUT_FRESH_SEC.
     // Time-триггер mexcPayoutMonitor при этом нужен только для
     // алертов/истории в паузах между сигналами (раз в 1-5 мин;
@@ -198,21 +202,19 @@ const CONFIG = {
     PAYOUT_FRESH_SEC: 30,
     PAYOUT_FETCH_TIMEOUT: 5,             // секунд на запрос к MEXC
 
-    // Откуда монитору брать payout. У Prediction/Event Futures MEXC НЕТ
-    // официального API. URL ищется руками: открыть страницу прогнозов
-    // MEXC → F12 → Network → XHR → найти запрос, в ответе которого есть
-    // payout/odds → скопировать URL сюда. Если MEXC отдаёт его только
-    // браузеру (Cloudflare), оставить пустым и пользоваться ручным
-    // вводом setMexcPayoutManual(eth, btc).
-    PAYOUT_URLS: {
-      ETH: "",  // напр. "https://futures.mexc.com/api/....ETH_USDT"
-      BTC: "",
-    },
-    // Как достать число из ответа: JSON-путь через точки ИЛИ regex
-    // (regex приоритетнее, первая группа - число). Значения 0..1
-    // трактуются как доли (0.8 → 80%).
-    PAYOUT_JSON_PATH: "data.payout",
-    PAYOUT_REGEX: "",
+    // Источник payout: endpoint деталей Event Futures (найден через
+    // DevTools 18.07.2026). Отдаёт ВСЕ контракты одним JSON; у каждого
+    // символа ставки по таймфреймам:
+    //   "MINUTE":[{"val":10,"upPayRate":0.8,"downPayRate":0.8},
+    //             {"val":30,"upPayRate":0.85,...}], "HOUR":[...], ...
+    // Пустая строка = ручной режим (setMexcPayoutManual).
+    PAYOUT_URL: "https://www.mexc.com/api/platform/futures/api/v1/event_contract/detail",
+    SYMBOLS: { ETH: "ETH_USDT", BTC: "BTC_USDT" },
+    // Какой таймфрейм ставок торгуется: юнит и значение из ответа.
+    // 10-минутки = MINUTE/10 (сейчас 80%), 30-минутки = MINUTE/30 (85%),
+    // час = HOUR/1, день = DAY/1.
+    TIME_UNIT: "MINUTE",
+    TIME_VAL: 10,
 
     ALERTS_ENABLED: true,  // алерты в группу MEXC на переходах через порог
   },
@@ -301,23 +303,23 @@ function getMexcPayout_() {
   }
 }
 
-// Дожим свежести: тянет URL-ы тех активов, чьё значение старше
-// PAYOUT_FRESH_SEC. Возвращает обновлённый объект или null, если
-// тянуть нечего. savePayout_ по пути пишет историю и шлёт алерты.
+// Дожим свежести: если хоть одному активу больше PAYOUT_FRESH_SEC,
+// один запрос к PAYOUT_URL обновляет ОБА (endpoint отдаёт все
+// контракты разом). Возвращает обновлённый объект или null.
+// savePayout_ по пути пишет историю и шлёт алерты.
 function refreshPayoutIfStale_(val) {
-  const urls = CONFIG.MEXC.PAYOUT_URLS || {};
+  if (!CONFIG.MEXC.PAYOUT_URL) return null;
   const nowMs = Date.now();
-  const got = {};
+  let stale = false;
   for (const asset of ["ETH", "BTC"]) {
-    if (!urls[asset]) continue;
     const rec = val && val[asset];
-    if (rec && nowMs - (rec.t || 0) <= CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) continue;
-    try {
-      const v = fetchPayoutFromUrl_(urls[asset]);
-      if (v != null) got[asset] = v;
-    } catch (err) { console.error("payout refresh " + asset + " failed:", err); }
+    if (!rec || nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) { stale = true; break; }
   }
-  if (!Object.keys(got).length) return null;
+  if (!stale) return null;
+  let got = null;
+  try { got = fetchEventPayouts_(); }
+  catch (err) { console.error("payout refresh failed:", err); return null; }
+  if (!got || !Object.keys(got).length) return null;
   savePayout_(got, "monitor");
   try {
     const raw = PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP);
@@ -326,39 +328,53 @@ function refreshPayoutIfStale_(val) {
 }
 
 // Актуален ли payout по активу: {known:bool, value:число %}.
+// dir ("UP"/"DOWN") выбирает ставку направления - у MEXC upPayRate и
+// downPayRate могут различаться; без dir берётся худшая из двух.
 // known=false и когда данных нет, и когда они старше PAYOUT_STALE_MIN.
 // Ручной ввод (src="manual") НЕ протухает: значение действует,
 // пока его не сменят - иначе пришлось бы перевводить каждые 15 мин.
-function mexcPayoutFor_(payout, asset, nowMs) {
+function mexcPayoutFor_(payout, asset, nowMs, dir) {
   const rec = payout && payout[asset];
-  if (!rec || typeof rec.p !== "number") return { known: false, value: null };
+  if (!rec) return { known: false, value: null };
+  const up = typeof rec.up === "number" ? rec.up : rec.p;   // rec.p - старый формат
+  const down = typeof rec.down === "number" ? rec.down : rec.p;
+  if (typeof up !== "number" && typeof down !== "number") return { known: false, value: null };
+  const value = dir === "UP" ? up : (dir === "DOWN" ? down : Math.min(up, down));
   if (rec.src !== "manual" &&
       nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_STALE_MIN * 60 * 1000)
-    return { known: false, value: rec.p };
-  return { known: true, value: rec.p };
+    return { known: false, value: value };
+  return { known: typeof value === "number", value: value };
 }
 
 // Ручной ввод payout (%, число за актив; null/undefined - не менять).
-// Пример: setMexcPayoutManual(80, 76). Работает и когда PAYOUT_URLS
-// пусты - тогда это единственный источник данных для фильтра FM.
+// Пример: setMexcPayoutManual(80, 76). Ставит одинаковое значение на
+// оба направления. Работает и без PAYOUT_URL - тогда это единственный
+// источник данных для фильтра FM.
 function setMexcPayoutManual(ethPayout, btcPayout) {
   savePayout_({ ETH: ethPayout, BTC: btcPayout }, "manual");
 }
 
 // Общая запись payout: props + кэш + история + алерты на переходах.
+// Значение за актив: число (оба направления) или {up, down}.
 function savePayout_(newVals, source) {
   const props = PropertiesService.getScriptProperties();
   let cur = {};
   try { cur = JSON.parse(props.getProperty(CONFIG.MEXC.PAYOUT_PROP) || "{}"); } catch (e) {}
   const nowMs = Date.now();
+  const norm1 = (v) => v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
   const changed = [];
   for (const asset of ["ETH", "BTC"]) {
-    const v = newVals[asset];
-    if (v == null || isNaN(v)) continue;
-    const norm = v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
-    const prev = cur[asset] && cur[asset].p;
-    cur[asset] = { p: norm, t: nowMs, src: source || "" };
-    if (prev !== norm) changed.push({ asset: asset, prev: prev, next: norm });
+    let v = newVals[asset];
+    if (v == null) continue;
+    if (typeof v === "number") { if (isNaN(v)) continue; v = { up: v, down: v }; }
+    if (typeof v.up !== "number" || typeof v.down !== "number") continue;
+    const up = norm1(v.up), down = norm1(v.down);
+    const prevRec = cur[asset] || {};
+    const prevMin = typeof prevRec.up === "number"
+      ? Math.min(prevRec.up, prevRec.down) : prevRec.p;   // p - старый формат
+    cur[asset] = { up: up, down: down, t: nowMs, src: source || "" };
+    if (prevRec.up !== up || prevRec.down !== down)
+      changed.push({ asset: asset, prev: prevMin, next: Math.min(up, down), up: up, down: down });
   }
   props.setProperty(CONFIG.MEXC.PAYOUT_PROP, JSON.stringify(cur));
   try { CacheService.getScriptCache().put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(cur), CONFIG.MEXC.CACHE_TTL_SEC); } catch (e) {}
@@ -368,10 +384,11 @@ function savePayout_(newVals, source) {
   try {
     const ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
     const sh = getOrCreateSheet_(ss, CONFIG.MEXC.PAYOUT_SHEET_NAME, HDR_PAYOUT);
-    for (const c of changed) sh.appendRow([new Date(), c.asset, c.next, source || ""]);
+    for (const c of changed)
+      sh.appendRow([new Date(), c.asset, c.up === c.down ? c.up : (c.up + "/" + c.down), source || ""]);
     SpreadsheetApp.flush();
   } catch (err) { console.error("payout history write failed:", err); }
-  // алерты в группу MEXC на переходах через порог
+  // алерты в группу MEXC на переходах через порог (по худшему направлению)
   if (CONFIG.MEXC.ALERTS_ENABLED) {
     const min = CONFIG.MEXC.MIN_PAYOUT;
     for (const c of changed) {
@@ -393,21 +410,23 @@ function savePayout_(newVals, source) {
 // Монитор payout: повесить time-триггер на 1 минуту (или 5).
 // Его роль - алерты и история в паузах между сигналами; свежесть
 // на самих решениях обеспечивает дожим в getMexcPayout_ (Фаза 0).
-// Если оба URL пустые - тихо выходит (ручной режим).
+// Если PAYOUT_URL пуст - тихо выходит (ручной режим).
 function mexcPayoutMonitor() {
   if (!CONFIG.MEXC.ENABLED) return;
-  const urls = CONFIG.MEXC.PAYOUT_URLS || {};
-  if (!urls.ETH && !urls.BTC) { console.log("mexcPayoutMonitor: PAYOUT_URLS пусты - ручной режим"); return; }
+  if (!CONFIG.MEXC.PAYOUT_URL) { console.log("mexcPayoutMonitor: PAYOUT_URL пуст - ручной режим"); return; }
   let val = {};
   try { val = JSON.parse(PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP) || "{}"); }
   catch (e) {}
   refreshPayoutIfStale_(val);
 }
 
-// Извлечение числа payout из ответа: сперва PAYOUT_REGEX (группа 1),
-// иначе JSON-путь PAYOUT_JSON_PATH ("data.payout" и т.п.).
-function fetchPayoutFromUrl_(url) {
-  const resp = UrlFetchApp.fetch(url, {
+// Один запрос к event_contract/detail → {ETH:{up,down}, BTC:{up,down}}.
+// Структуру ответа не завязываем на точную обёртку: ищем в дереве
+// узел с symbol=="ETH_USDT", в нём - массив TIME_UNIT ("MINUTE"),
+// в массиве - элемент с val==TIME_VAL (10). Так парсер переживёт
+// перестановки полей в ответе MEXC.
+function fetchEventPayouts_() {
+  const resp = UrlFetchApp.fetch(CONFIG.MEXC.PAYOUT_URL, {
     muteHttpExceptions: true,
     deadline: CONFIG.MEXC.PAYOUT_FETCH_TIMEOUT,
     headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*" },
@@ -415,19 +434,52 @@ function fetchPayoutFromUrl_(url) {
   const code = resp.getResponseCode();
   const body = resp.getContentText();
   if (code < 200 || code >= 300) { console.error("payout fetch HTTP " + code + ": " + body.slice(0, 200)); return null; }
-  if (CONFIG.MEXC.PAYOUT_REGEX) {
-    const m = body.match(new RegExp(CONFIG.MEXC.PAYOUT_REGEX));
-    return m ? parseFloat(m[1]) : null;
+  let root;
+  try { root = JSON.parse(body); }
+  catch (err) { console.error("payout parse failed (не JSON):", body.slice(0, 200)); return null; }
+  const out = {};
+  for (const asset of ["ETH", "BTC"]) {
+    const contract = findNodeWithSymbol_(root, CONFIG.MEXC.SYMBOLS[asset]);
+    if (!contract) { console.error("payout: символ " + CONFIG.MEXC.SYMBOLS[asset] + " не найден в ответе"); continue; }
+    const arr = findUnitArray_(contract, CONFIG.MEXC.TIME_UNIT);
+    if (!arr) { console.error("payout: юнит " + CONFIG.MEXC.TIME_UNIT + " не найден у " + asset); continue; }
+    let el = null;
+    for (const o of arr) if (o && o.val === CONFIG.MEXC.TIME_VAL && typeof o.upPayRate === "number") { el = o; break; }
+    if (!el) for (const o of arr) if (o && typeof o.upPayRate === "number") { el = o; break; }
+    if (!el) { console.error("payout: val=" + CONFIG.MEXC.TIME_VAL + " не найден у " + asset); continue; }
+    out[asset] = { up: el.upPayRate, down: (typeof el.downPayRate === "number" ? el.downPayRate : el.upPayRate) };
   }
-  try {
-    let node = JSON.parse(body);
-    for (const key of String(CONFIG.MEXC.PAYOUT_JSON_PATH || "").split(".")) {
-      if (node == null) return null;
-      node = node[key];
-    }
-    const v = parseFloat(node);
-    return isNaN(v) ? null : v;
-  } catch (err) { console.error("payout parse failed:", err); return null; }
+  return out;
+}
+
+// DFS: первый узел дерева, у которого node.symbol === symbol.
+function findNodeWithSymbol_(node, symbol) {
+  if (node == null || typeof node !== "object") return null;
+  if (node.symbol === symbol) return node;
+  for (const k in node) {
+    const r = findNodeWithSymbol_(node[k], symbol);
+    if (r) return r;
+  }
+  return null;
+}
+
+// DFS: первый массив под ключом unit ("MINUTE"/"HOUR"/"DAY") в поддереве.
+function findUnitArray_(node, unit) {
+  if (node == null || typeof node !== "object") return null;
+  if (Array.isArray(node[unit])) return node[unit];
+  for (const k in node) {
+    const r = findUnitArray_(node[k], unit);
+    if (r) return r;
+  }
+  return null;
+}
+
+// Диагностика источника: запустить руками, смотрит сырой ответ.
+// Если в логе HTTP 403/лом - endpoint закрыт для серверов, остаёмся
+// на ручном вводе или мосте из браузера.
+function mexcPayoutProbe() {
+  const got = fetchEventPayouts_();
+  console.log("mexcPayoutProbe:", JSON.stringify(got));
 }
 
 // ─── WEBHOOK HANDLER ─────────────────────────────────────────
@@ -520,7 +572,10 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
   // соответствует значению, по которому принималось решение
   const nowMs = (data.bartime ? new Date(data.bartime) : new Date()).getTime();
   const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
-  const pv = mexcPayoutFor_(payout, asset, nowMs);
+  const dirUp = String(data.direction || "").toUpperCase();
+  const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" :
+              ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
+  const pv = mexcPayoutFor_(payout, asset, nowMs, dir);
   const pvCell = pv.known ? pv.value : "";
   if (decisionMexc.status === "sent") {
     let tgOK = true;
@@ -596,7 +651,7 @@ function decideSignal_(data, badlist, branch) {
   // не съедает её лимиты - после возврата payout к порогу ветка
   // принимает сигналы так, будто паузы не было.
   if (branch && branch.payout !== undefined) {
-    const pv = mexcPayoutFor_(branch.payout, asset, now.getTime());
+    const pv = mexcPayoutFor_(branch.payout, asset, now.getTime(), dir);
     if (pv.known) {
       if (pv.value < CONFIG.MEXC.MIN_PAYOUT)
         return blocked("FM: MEXC payout " + asset + " " + pv.value + "% < " + CONFIG.MEXC.MIN_PAYOUT + "%");
@@ -857,7 +912,7 @@ function selfTest() {
     console.log("MEXC: ветка ON | chat_id задан:", chatOk,
       "| payout:", JSON.stringify(po),
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
-      "| источник:", (CONFIG.MEXC.PAYOUT_URLS.ETH || CONFIG.MEXC.PAYOUT_URLS.BTC) ? "URL-монитор" : "ручной (setMexcPayoutManual)",
+      "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + "/" + CONFIG.MEXC.TIME_VAL + ")") : "ручной (setMexcPayoutManual)",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
   } else {
     console.log("MEXC: ветка DISABLED");

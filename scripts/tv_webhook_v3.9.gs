@@ -94,12 +94,15 @@
 //      (chat_id новой ТГ-группы MEXC; бот должен быть в группе).
 //   3) Триггеры (часы слева) → Add Trigger → mexcPayoutMonitor,
 //      time-driven, каждые 1-5 минут.
-//   4) Источник payout уже настроен (PAYOUT_URL + TIME_UNIT/TIME_VAL
-//      = MINUTE/10; для 30-минуток поставить TIME_VAL: 30). Проверить:
-//      запустить mexcPayoutProbe() - в логе должны быть числа.
+//   4) Источник payout уже настроен (PAYOUT_URL, таймфреймы из
+//      TIMINGS: 10 и 30 минут). Проверить: запустить mexcPayoutProbe()
+//      - в логе должны быть числа по обоим таймфреймам.
 //      Если HTTP 403 - endpoint закрыт для серверов Google, тогда
 //      вручную setMexcPayoutManual(80, 80) при изменении payout.
-//   5) selfTest() один раз - строка "MEXC:" в логе.
+//   5) 30-минутные алерты TradingView: добавить в JSON алерта поле
+//      "timing":"30" - сигнал получит шапку 🕒 30 MIN и проверку
+//      payout именно 30-минутного контракта. Без поля = 10 MIN.
+//   6) selfTest() один раз - строка "MEXC:" в логе.
 //   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
 // МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
 //   состояние signal_state_v2 совместимы). Откат к старой схеме:
@@ -210,11 +213,14 @@ const CONFIG = {
     // Пустая строка = ручной режим (setMexcPayoutManual).
     PAYOUT_URL: "https://www.mexc.com/api/platform/futures/api/v1/event_contract/detail",
     SYMBOLS: { ETH: "ETH_USDT", BTC: "BTC_USDT" },
-    // Какой таймфрейм ставок торгуется: юнит и значение из ответа.
-    // 10-минутки = MINUTE/10 (сейчас 80%), 30-минутки = MINUTE/30 (85%),
-    // час = HOUR/1, день = DAY/1.
+    // Таймфреймы отработки: payout хранится и проверяется ПО КАЖДОМУ
+    // (у MEXC 10m и 30m - разные ставки). Тайминг сигнала задаётся в
+    // алерте TradingView полем "timing":"30" (без поля = DEFAULT_TIMING).
     TIME_UNIT: "MINUTE",
-    TIME_VAL: 10,
+    TIMINGS: [10, 30],
+    DEFAULT_TIMING: 10,
+    // Шапка сообщения в группу MEXC: "<эмодзи> <тайминг> MIN | ACTIVE UP/DOWN"
+    TIMING_EMOJI: { 10: "⚡️", 30: "🕒" },
 
     ALERTS_ENABLED: true,  // алерты в группу MEXC на переходах через порог
   },
@@ -312,12 +318,16 @@ function refreshPayoutIfStale_(val) {
   const nowMs = Date.now();
   let stale = false;
   for (const asset of ["ETH", "BTC"]) {
-    const rec = val && val[asset];
-    if (!rec || nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) { stale = true; break; }
+    for (const tf of CONFIG.MEXC.TIMINGS) {
+      const rec = val && val[asset + "@" + tf];
+      if (!rec || nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) { stale = true; break; }
+    }
+    if (stale) break;
   }
   if (!stale) return null;
   let got = null;
   try { got = fetchEventPayouts_(); }
+  // (один запрос даёт все активы и таймфреймы разом)
   catch (err) { console.error("payout refresh failed:", err); return null; }
   if (!got || !Object.keys(got).length) return null;
   savePayout_(got, "monitor");
@@ -327,14 +337,22 @@ function refreshPayoutIfStale_(val) {
   } catch (err) { return null; }
 }
 
-// Актуален ли payout по активу: {known:bool, value:число %}.
+// Тайминг отработки сигнала (минуты): поле "timing" из алерта
+// TradingView, иначе DEFAULT_TIMING. Принимает "30", 30, "30 min".
+function mexcTiming_(data) {
+  const t = parseInt(data && (data.timing || data.mexc_tf), 10);
+  return (t && CONFIG.MEXC.TIMINGS.indexOf(t) >= 0) ? t : CONFIG.MEXC.DEFAULT_TIMING;
+}
+
+// Актуален ли payout по активу и таймингу: {known:bool, value:число %}.
 // dir ("UP"/"DOWN") выбирает ставку направления - у MEXC upPayRate и
 // downPayRate могут различаться; без dir берётся худшая из двух.
 // known=false и когда данных нет, и когда они старше PAYOUT_STALE_MIN.
 // Ручной ввод (src="manual") НЕ протухает: значение действует,
 // пока его не сменят - иначе пришлось бы перевводить каждые 15 мин.
-function mexcPayoutFor_(payout, asset, nowMs, dir) {
-  const rec = payout && payout[asset];
+function mexcPayoutFor_(payout, asset, nowMs, dir, timing) {
+  const key = asset + "@" + (timing || CONFIG.MEXC.DEFAULT_TIMING);
+  const rec = payout && (payout[key] || payout[asset]);  // payout[asset] - старый формат
   if (!rec) return { known: false, value: null };
   const up = typeof rec.up === "number" ? rec.up : rec.p;   // rec.p - старый формат
   const down = typeof rec.down === "number" ? rec.down : rec.p;
@@ -347,15 +365,22 @@ function mexcPayoutFor_(payout, asset, nowMs, dir) {
 }
 
 // Ручной ввод payout (%, число за актив; null/undefined - не менять).
-// Пример: setMexcPayoutManual(80, 76). Ставит одинаковое значение на
-// оба направления. Работает и без PAYOUT_URL - тогда это единственный
-// источник данных для фильтра FM.
-function setMexcPayoutManual(ethPayout, btcPayout) {
-  savePayout_({ ETH: ethPayout, BTC: btcPayout }, "manual");
+// Пример: setMexcPayoutManual(80, 76) - на ВСЕ таймфреймы;
+// setMexcPayoutManual(85, 85, 30) - только на 30-минутки.
+// Ставит одинаковое значение на оба направления. Работает и без
+// PAYOUT_URL - тогда это единственный источник данных для FM.
+function setMexcPayoutManual(ethPayout, btcPayout, timingOpt) {
+  const timings = timingOpt ? [timingOpt] : CONFIG.MEXC.TIMINGS;
+  const vals = {};
+  for (const tf of timings) {
+    if (ethPayout != null) vals["ETH@" + tf] = ethPayout;
+    if (btcPayout != null) vals["BTC@" + tf] = btcPayout;
+  }
+  savePayout_(vals, "manual");
 }
 
 // Общая запись payout: props + кэш + история + алерты на переходах.
-// Значение за актив: число (оба направления) или {up, down}.
+// newVals: {"ETH@10": число | {up,down}, "BTC@30": ...}.
 function savePayout_(newVals, source) {
   const props = PropertiesService.getScriptProperties();
   let cur = {};
@@ -363,18 +388,18 @@ function savePayout_(newVals, source) {
   const nowMs = Date.now();
   const norm1 = (v) => v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
   const changed = [];
-  for (const asset of ["ETH", "BTC"]) {
-    let v = newVals[asset];
+  for (const key in newVals) {
+    let v = newVals[key];
     if (v == null) continue;
     if (typeof v === "number") { if (isNaN(v)) continue; v = { up: v, down: v }; }
     if (typeof v.up !== "number" || typeof v.down !== "number") continue;
     const up = norm1(v.up), down = norm1(v.down);
-    const prevRec = cur[asset] || {};
+    const prevRec = cur[key] || {};
     const prevMin = typeof prevRec.up === "number"
       ? Math.min(prevRec.up, prevRec.down) : prevRec.p;   // p - старый формат
-    cur[asset] = { up: up, down: down, t: nowMs, src: source || "" };
+    cur[key] = { up: up, down: down, t: nowMs, src: source || "" };
     if (prevRec.up !== up || prevRec.down !== down)
-      changed.push({ asset: asset, prev: prevMin, next: Math.min(up, down), up: up, down: down });
+      changed.push({ asset: key.replace("@", " ") + "м", prev: prevMin, next: Math.min(up, down), up: up, down: down });
   }
   props.setProperty(CONFIG.MEXC.PAYOUT_PROP, JSON.stringify(cur));
   try { CacheService.getScriptCache().put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(cur), CONFIG.MEXC.CACHE_TTL_SEC); } catch (e) {}
@@ -420,10 +445,11 @@ function mexcPayoutMonitor() {
   refreshPayoutIfStale_(val);
 }
 
-// Один запрос к event_contract/detail → {ETH:{up,down}, BTC:{up,down}}.
+// Один запрос к event_contract/detail →
+//   {"ETH@10":{up,down}, "ETH@30":{...}, "BTC@10":..., "BTC@30":...}.
 // Структуру ответа не завязываем на точную обёртку: ищем в дереве
 // узел с symbol=="ETH_USDT", в нём - массив TIME_UNIT ("MINUTE"),
-// в массиве - элемент с val==TIME_VAL (10). Так парсер переживёт
+// в массиве - элементы с val из TIMINGS. Так парсер переживёт
 // перестановки полей в ответе MEXC.
 function fetchEventPayouts_() {
   const resp = UrlFetchApp.fetch(CONFIG.MEXC.PAYOUT_URL, {
@@ -443,11 +469,12 @@ function fetchEventPayouts_() {
     if (!contract) { console.error("payout: символ " + CONFIG.MEXC.SYMBOLS[asset] + " не найден в ответе"); continue; }
     const arr = findUnitArray_(contract, CONFIG.MEXC.TIME_UNIT);
     if (!arr) { console.error("payout: юнит " + CONFIG.MEXC.TIME_UNIT + " не найден у " + asset); continue; }
-    let el = null;
-    for (const o of arr) if (o && o.val === CONFIG.MEXC.TIME_VAL && typeof o.upPayRate === "number") { el = o; break; }
-    if (!el) for (const o of arr) if (o && typeof o.upPayRate === "number") { el = o; break; }
-    if (!el) { console.error("payout: val=" + CONFIG.MEXC.TIME_VAL + " не найден у " + asset); continue; }
-    out[asset] = { up: el.upPayRate, down: (typeof el.downPayRate === "number" ? el.downPayRate : el.upPayRate) };
+    for (const tf of CONFIG.MEXC.TIMINGS) {
+      let el = null;
+      for (const o of arr) if (o && o.val === tf && typeof o.upPayRate === "number") { el = o; break; }
+      if (!el) { console.error("payout: val=" + tf + " не найден у " + asset); continue; }
+      out[asset + "@" + tf] = { up: el.upPayRate, down: (typeof el.downPayRate === "number" ? el.downPayRate : el.upPayRate) };
+    }
   }
   return out;
 }
@@ -575,17 +602,24 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
   const dirUp = String(data.direction || "").toUpperCase();
   const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" :
               ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
-  const pv = mexcPayoutFor_(payout, asset, nowMs, dir);
+  const timing = mexcTiming_(data);
+  const pv = mexcPayoutFor_(payout, asset, nowMs, dir, timing);
   const pvCell = pv.known ? pv.value : "";
   if (decisionMexc.status === "sent") {
     let tgOK = true;
-    try { sendTelegram(data, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
+    // Шапка: тайминг отработки + актив + направление, дальше исходный
+    // текст сигнала. 10м и 30м различаются эмодзи (TIMING_EMOJI).
+    const arrow = dir === "UP" ? "📈" : (dir === "DOWN" ? "📉" : "");
+    const emoji = CONFIG.MEXC.TIMING_EMOJI[timing] || "⏱";
+    const header = emoji + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + arrow;
+    const mexcText = header + "\n" + (data.text || "Signal received");
+    try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
     catch (e2) { tgOK = false; console.error("MEXC TG fail:", e2); }
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
     const okW = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      data.direction1 || "", data.direction2 || "", pvCell
+      data.direction1 || "", data.direction2 || "", pvCell, timing
     ]);
     return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ")";
   } else {
@@ -593,7 +627,7 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
     const okB = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      decisionMexc.message, pvCell
+      decisionMexc.message, pvCell, timing
     ]);
     return "blocked: " + decisionMexc.message + " (sheet:" + okB + ")";
   }
@@ -651,10 +685,11 @@ function decideSignal_(data, badlist, branch) {
   // не съедает её лимиты - после возврата payout к порогу ветка
   // принимает сигналы так, будто паузы не было.
   if (branch && branch.payout !== undefined) {
-    const pv = mexcPayoutFor_(branch.payout, asset, now.getTime(), dir);
+    const timing = mexcTiming_(data);
+    const pv = mexcPayoutFor_(branch.payout, asset, now.getTime(), dir, timing);
     if (pv.known) {
       if (pv.value < CONFIG.MEXC.MIN_PAYOUT)
-        return blocked("FM: MEXC payout " + asset + " " + pv.value + "% < " + CONFIG.MEXC.MIN_PAYOUT + "%");
+        return blocked("FM: MEXC payout " + asset + " " + timing + "м " + pv.value + "% < " + CONFIG.MEXC.MIN_PAYOUT + "%");
     } else if (!CONFIG.MEXC.FAIL_OPEN) {
       return blocked("FM: payout " + asset + " неизвестен (монитор молчит), FAIL_OPEN=false");
     }
@@ -831,8 +866,8 @@ function getOrCreateSheet_(ss, name, header) {
 const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2"];
 const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1"];
 const HDR_FAILED = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Context"];
-const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout"];
-const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout"];
+const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout","Timing"];
+const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout","Timing"];
 const HDR_PAYOUT     = ["Time","Asset","Payout","Source"];
 
 function writeToSheets_(ss, data) {
@@ -912,7 +947,7 @@ function selfTest() {
     console.log("MEXC: ветка ON | chat_id задан:", chatOk,
       "| payout:", JSON.stringify(po),
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
-      "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + "/" + CONFIG.MEXC.TIME_VAL + ")") : "ручной (setMexcPayoutManual)",
+      "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + " " + CONFIG.MEXC.TIMINGS.join("/") + ")") : "ручной (setMexcPayoutManual)",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
   } else {
     console.log("MEXC: ветка DISABLED");

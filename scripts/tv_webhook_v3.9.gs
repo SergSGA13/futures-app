@@ -1,7 +1,31 @@
 // ============================================================
-// TradingView Signal Webhook → Telegram + Google Sheets  v3.8
+// TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9: ОТДЕЛЬНАЯ ВЕТКА для трейдеров MEXC (CONFIG.MEXC).
+//   Каждый сигнал проходит ДВА независимых решения:
+//   - основная ветка: как раньше (свой стейт signal_state_v2,
+//     свои вкладки, своя ТГ-группа, партнёрский вебхук);
+//   - ветка MEXC: СВОЙ стейт лимитов (signal_state_mexc_v1),
+//     свои вкладки MEXCsignal/MEXCblocked, СВОЯ ТГ-группа
+//     (Script Property MEXC_TELEGRAM_CHAT_ID) + новый фильтр
+//     FM: блок при payout MEXC < MIN_PAYOUT (80%).
+//   Стейты НЕ пересекаются: если в основную группу прошло
+//   3 сигнала, а на MEXC из-за payout прошёл 1 - лимиты MEXC
+//   считаются по СВОИМ принятым, и после возврата payout к 80%
+//   ветка MEXC принимает сигналы независимо от основной.
+//   Payout берёт монитор mexcPayoutMonitor() (time-триггер каждые
+//   1-5 мин) из PAYOUT_URLS, либо ручной ввод setMexcPayoutManual().
+//   ВАЖНО: у Prediction/Event Futures MEXC НЕТ официального API -
+//   URL нужно взять из DevTools (см. комментарий у PAYOUT_URLS);
+//   пока URL пуст, работает ручной ввод, а при отсутствии/
+//   устаревании данных действует FAIL_OPEN (по умолчанию true -
+//   сигналы идут, фильтр FM тихо пропускается).
+//   Монитор шлёт алерты в группу MEXC на переходах payout через
+//   порог: "⛔ упал ниже 80%" / "✅ вернулся к 80%".
+//   EV-справка: WIN +0.8×ставка / LOSE -ставка. Безубыток
+//   WR = 1/(1+payout): 80% → 55.6%, 75% → 57.1%, 70% → 58.8%.
+//   При WR ~60% почти вся кромка съедается уже на 70-75%.
 // v3.8: новая схема лимитов по итогам реплея 7 917 сигналов
 //   (Signals_Log, 359 дней) через симулятор фильтров:
 //   - окно пер-актив лимитов сокращено 11 → 5 минут
@@ -62,6 +86,17 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
+// МИГРАЦИЯ v3.8 → v3.9:
+//   1) Заменить код проекта этим файлом.
+//   2) Script Properties: добавить MEXC_TELEGRAM_CHAT_ID
+//      (chat_id новой ТГ-группы MEXC; бот должен быть в группе).
+//   3) Триггеры (часы слева) → Add Trigger → mexcPayoutMonitor,
+//      time-driven, каждые 1-5 минут.
+//   4) Настроить источник payout: CONFIG.MEXC.PAYOUT_URLS
+//      (см. комментарий там) ИЛИ вручную запускать
+//      setMexcPayoutManual(80, 80) при изменении payout.
+//   5) selfTest() один раз - строка "MEXC:" в логе.
+//   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
 // МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
 //   состояние signal_state_v2 совместимы). Откат к старой схеме:
 //   WINDOW_MINUTES: 11, LIMITS ETH {3,2} / BTC {2,1},
@@ -135,6 +170,44 @@ const CONFIG = {
     CACHE_TTL_SEC: 3600,           // перечитывать вкладку не чаще раза в час
   },
 
+  // ─── Ветка MEXC (v3.9): независимое решение + payout-фильтр ───
+  MEXC: {
+    ENABLED: true,
+    STATE_KEY: "signal_state_mexc_v1", // СВОЙ стейт лимитов (не общий!)
+    SHEET_NAME:         "MEXCsignal",
+    BLOCKED_SHEET_NAME: "MEXCblocked",
+    PAYOUT_SHEET_NAME:  "MEXC_PAYOUT", // история payout (пишет монитор)
+    CHAT_ID_PROP: "MEXC_TELEGRAM_CHAT_ID", // Script Property: chat_id группы MEXC
+
+    // FM: минимальный payout (%). Ниже - сигнал в MEXCblocked.
+    // Безубыток WR = 1/(1+payout): 80%→55.6%, 75%→57.1%, 70%→58.8%.
+    MIN_PAYOUT: 80,
+    PAYOUT_STALE_MIN: 15,  // данные старше 15 мин считаем неизвестными
+    FAIL_OPEN: true,       // payout неизвестен: true - пропускать, false - блокировать
+
+    PAYOUT_PROP: "mexc_payout_v1",       // Script Property со значениями
+    CACHE_KEY: "mexc_payout_cache_v1",   // CacheService (быстрый путь)
+    CACHE_TTL_SEC: 55,
+
+    // Откуда монитору брать payout. У Prediction/Event Futures MEXC НЕТ
+    // официального API. URL ищется руками: открыть страницу прогнозов
+    // MEXC → F12 → Network → XHR → найти запрос, в ответе которого есть
+    // payout/odds → скопировать URL сюда. Если MEXC отдаёт его только
+    // браузеру (Cloudflare), оставить пустым и пользоваться ручным
+    // вводом setMexcPayoutManual(eth, btc).
+    PAYOUT_URLS: {
+      ETH: "",  // напр. "https://futures.mexc.com/api/....ETH_USDT"
+      BTC: "",
+    },
+    // Как достать число из ответа: JSON-путь через точки ИЛИ regex
+    // (regex приоритетнее, первая группа - число). Значения 0..1
+    // трактуются как доли (0.8 → 80%).
+    PAYOUT_JSON_PATH: "data.payout",
+    PAYOUT_REGEX: "",
+
+    ALERTS_ENABLED: true,  // алерты в группу MEXC на переходах через порог
+  },
+
   // ─── Надёжность записи ───
   WRITE_RETRIES: 3,
   WRITE_RETRY_SLEEP_MS: 350,
@@ -188,6 +261,134 @@ function resetBadlistCache() {
   console.log("Badlist cache reset OK");
 }
 
+// ─── MEXC PAYOUT (v3.9) ──────────────────────────────────────
+// Значения хранятся в Script Property PAYOUT_PROP в виде
+// {ETH:{p:80,t:169...}, BTC:{p:78,t:...}} (t - millis записи).
+// Быстрый путь - CacheService; fail-open как у бэдлиста: любой
+// сбой чтения = {} (payout неизвестен, дальше решает FAIL_OPEN).
+function getMexcPayout_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get(CONFIG.MEXC.CACHE_KEY);
+    if (cached != null) return JSON.parse(cached);
+    const raw = PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.PAYOUT_PROP);
+    const val = raw ? JSON.parse(raw) : {};
+    cache.put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(val), CONFIG.MEXC.CACHE_TTL_SEC);
+    return val;
+  } catch (err) {
+    console.error("getMexcPayout_ failed (fail-open):", err);
+    return {};
+  }
+}
+
+// Актуален ли payout по активу: {known:bool, value:число %}.
+// known=false и когда данных нет, и когда они старше PAYOUT_STALE_MIN.
+function mexcPayoutFor_(payout, asset, nowMs) {
+  const rec = payout && payout[asset];
+  if (!rec || typeof rec.p !== "number") return { known: false, value: null };
+  if (nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_STALE_MIN * 60 * 1000)
+    return { known: false, value: rec.p };
+  return { known: true, value: rec.p };
+}
+
+// Ручной ввод payout (%, число за актив; null/undefined - не менять).
+// Пример: setMexcPayoutManual(80, 76). Работает и когда PAYOUT_URLS
+// пусты - тогда это единственный источник данных для фильтра FM.
+function setMexcPayoutManual(ethPayout, btcPayout) {
+  savePayout_({ ETH: ethPayout, BTC: btcPayout }, "manual");
+}
+
+// Общая запись payout: props + кэш + история + алерты на переходах.
+function savePayout_(newVals, source) {
+  const props = PropertiesService.getScriptProperties();
+  let cur = {};
+  try { cur = JSON.parse(props.getProperty(CONFIG.MEXC.PAYOUT_PROP) || "{}"); } catch (e) {}
+  const nowMs = Date.now();
+  const changed = [];
+  for (const asset of ["ETH", "BTC"]) {
+    const v = newVals[asset];
+    if (v == null || isNaN(v)) continue;
+    const norm = v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
+    const prev = cur[asset] && cur[asset].p;
+    cur[asset] = { p: norm, t: nowMs };
+    if (prev !== norm) changed.push({ asset: asset, prev: prev, next: norm });
+  }
+  props.setProperty(CONFIG.MEXC.PAYOUT_PROP, JSON.stringify(cur));
+  try { CacheService.getScriptCache().put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(cur), CONFIG.MEXC.CACHE_TTL_SEC); } catch (e) {}
+
+  if (!changed.length) return;
+  // история (только при изменении значения - не раз в минуту)
+  try {
+    const ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
+    const sh = getOrCreateSheet_(ss, CONFIG.MEXC.PAYOUT_SHEET_NAME, HDR_PAYOUT);
+    for (const c of changed) sh.appendRow([new Date(), c.asset, c.next, source || ""]);
+    SpreadsheetApp.flush();
+  } catch (err) { console.error("payout history write failed:", err); }
+  // алерты в группу MEXC на переходах через порог
+  if (CONFIG.MEXC.ALERTS_ENABLED) {
+    const min = CONFIG.MEXC.MIN_PAYOUT;
+    for (const c of changed) {
+      let text = null;
+      const wasBelow = typeof c.prev === "number" && c.prev < min;
+      const nowBelow = c.next < min;
+      if (!wasBelow && nowBelow)
+        text = "⛔ MEXC payout " + c.asset + " упал до " + c.next + "% (порог " + min + "%). Сигналы " + c.asset + " на паузе.";
+      else if (wasBelow && !nowBelow)
+        text = "✅ MEXC payout " + c.asset + " вернулся к " + c.next + "%. Сигналы " + c.asset + " снова идут.";
+      if (text) {
+        try { sendTelegram({ text: text }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
+        catch (err) { console.error("payout alert TG failed:", err); }
+      }
+    }
+  }
+}
+
+// Монитор payout: повесить time-триггер на 1-5 минут.
+// Тянет PAYOUT_URLS; если оба URL пустые - тихо выходит (значит,
+// payout вводится вручную через setMexcPayoutManual).
+function mexcPayoutMonitor() {
+  if (!CONFIG.MEXC.ENABLED) return;
+  const urls = CONFIG.MEXC.PAYOUT_URLS || {};
+  const got = {};
+  let any = false;
+  for (const asset of ["ETH", "BTC"]) {
+    if (!urls[asset]) continue;
+    any = true;
+    try {
+      const v = fetchPayoutFromUrl_(urls[asset]);
+      if (v != null) got[asset] = v;
+      else console.error("mexcPayoutMonitor: не удалось извлечь payout " + asset);
+    } catch (err) { console.error("mexcPayoutMonitor fetch " + asset + " failed:", err); }
+  }
+  if (!any) { console.log("mexcPayoutMonitor: PAYOUT_URLS пусты - ручной режим"); return; }
+  if (Object.keys(got).length) savePayout_(got, "monitor");
+}
+
+// Извлечение числа payout из ответа: сперва PAYOUT_REGEX (группа 1),
+// иначе JSON-путь PAYOUT_JSON_PATH ("data.payout" и т.п.).
+function fetchPayoutFromUrl_(url) {
+  const resp = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*" },
+  });
+  const code = resp.getResponseCode();
+  const body = resp.getContentText();
+  if (code < 200 || code >= 300) { console.error("payout fetch HTTP " + code + ": " + body.slice(0, 200)); return null; }
+  if (CONFIG.MEXC.PAYOUT_REGEX) {
+    const m = body.match(new RegExp(CONFIG.MEXC.PAYOUT_REGEX));
+    return m ? parseFloat(m[1]) : null;
+  }
+  try {
+    let node = JSON.parse(body);
+    for (const key of String(CONFIG.MEXC.PAYOUT_JSON_PATH || "").split(".")) {
+      if (node == null) return null;
+      node = node[key];
+    }
+    const v = parseFloat(node);
+    return isNaN(v) ? null : v;
+  } catch (err) { console.error("payout parse failed:", err); return null; }
+}
+
 // ─── WEBHOOK HANDLER ─────────────────────────────────────────
 function doPost(e) {
   let data;
@@ -202,11 +403,15 @@ function doPost(e) {
   }
   delete data.secret;
 
-  // ── Фаза 0: карантинный список (кэш; сеть/таблица - максимум раз в час) ──
+  // ── Фаза 0: карантинный список + payout MEXC (кэш, вне лока) ──
   const badlist = loadBadlist_();
+  const mexcOn = CONFIG.MEXC.ENABLED;
+  const mexcPayout = mexcOn ? getMexcPayout_() : null;
 
   // ── Фаза 1: критическая секция (только состояние, без IO) ──
-  let decision;
+  // Оба решения под ОДНИМ локом: основная ветка и ветка MEXC
+  // независимы (свои стейты), но обновляться должны атомарно.
+  let decision, decisionMexc = null;
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) {
     try { logFailed_(data, "LOCK TIMEOUT — не удалось войти в критическую секцию"); }
@@ -215,6 +420,16 @@ function doPost(e) {
   }
   try {
     decision = decideSignal_(data, badlist);
+    if (mexcOn) {
+      try {
+        decisionMexc = decideSignal_(data, badlist,
+          { stateKey: CONFIG.MEXC.STATE_KEY, payout: mexcPayout });
+      } catch (errM) {
+        // ветка MEXC не должна ронять основную
+        console.error("decideSignal MEXC error:", errM);
+        decisionMexc = null;
+      }
+    }
   } catch (err) {
     console.error("decideSignal error:", err);
     lock.releaseLock();
@@ -233,26 +448,73 @@ function doPost(e) {
     return buildResponse("error", "spreadsheet open failed");
   }
 
+  // Ветка MEXC: своя ТГ-группа и свои вкладки; ошибки не влияют
+  // на основной поток.
+  let mexcNote = "";
+  if (decisionMexc) {
+    try { mexcNote = " | MEXC " + handleMexcIO_(ss, data, decisionMexc, mexcPayout); }
+    catch (eM) { console.error("MEXC IO fail:", eM); mexcNote = " | MEXC error"; }
+  }
+
   if (decision.status === "sent") {
     let tgOK = true, sheetOK = false, partnerOK = true;
     try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
     try { sendPartnerWebhook(data); } catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
     sheetOK = writeToSheets_(ss, data);
     if (!sheetOK) logFailed_safe_(ss, data, "ALLsignal write failed после " + CONFIG.WRITE_RETRIES + " попыток");
-    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK + ", partner:" + partnerOK + ")");
+    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK + ", partner:" + partnerOK + ")" + mexcNote);
   } else {
     const okB = logBlocked_(ss, data, decision.message);
     if (!okB) logFailed_safe_(ss, data, "BLOCKED write failed: " + decision.message);
-    return buildResponse("blocked", decision.message + " (sheet:" + okB + ")");
+    return buildResponse("blocked", decision.message + " (sheet:" + okB + ")" + mexcNote);
+  }
+}
+
+// ─── MEXC: IO ветки (v3.9) ───────────────────────────────────
+// Телеграм в группу MEXC + запись в MEXCsignal/MEXCblocked.
+// В строки добавляется текущий payout - копится статистика для
+// последующего анализа EV по реальным payout.
+function handleMexcIO_(ss, data, decisionMexc, payout) {
+  // то же время, что и в decideSignal_ - payout в строке лога
+  // соответствует значению, по которому принималось решение
+  const nowMs = (data.bartime ? new Date(data.bartime) : new Date()).getTime();
+  const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
+  const pv = mexcPayoutFor_(payout, asset, nowMs);
+  const pvCell = pv.known ? pv.value : "";
+  if (decisionMexc.status === "sent") {
+    let tgOK = true;
+    try { sendTelegram(data, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
+    catch (e2) { tgOK = false; console.error("MEXC TG fail:", e2); }
+    const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
+    const okW = appendRowSafe_(sheet, [
+      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      data.volume || "", data.text || "", data.Settings || "",
+      data.direction1 || "", data.direction2 || "", pvCell
+    ]);
+    return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ")";
+  } else {
+    const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
+    const okB = appendRowSafe_(sheet, [
+      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      data.volume || "", data.text || "", data.Settings || "",
+      decisionMexc.message, pvCell
+    ]);
+    return "blocked: " + decisionMexc.message + " (sheet:" + okB + ")";
   }
 }
 
 // ─── РЕШЕНИЕ (под локом, без сетевого IO) ───────────────────
-function decideSignal_(data, badlist) {
+// branch (v3.9, необязателен) - параметры ветки:
+//   { stateKey: "signal_state_mexc_v1", payout: {ETH:{p,t},BTC:{p,t}} }
+// Без branch работает основная ветка (stateKey "signal_state_v2",
+// payout-фильтра нет). Каждая ветка копит СВОЙ список принятых:
+// лимиты F4/F5/F8 и конфликт FC считаются только по своим сигналам.
+function decideSignal_(data, badlist, branch) {
+  const stateKey = (branch && branch.stateKey) || "signal_state_v2";
   const now = data.bartime ? new Date(data.bartime) : new Date();
   const props = PropertiesService.getScriptProperties();
 
-  const stateRaw = props.getProperty("signal_state_v2");
+  const stateRaw = props.getProperty(stateKey);
   let state = stateRaw ? JSON.parse(stateRaw) : { sent: [] };
   if (!state.sent) state.sent = [];
 
@@ -284,9 +546,24 @@ function decideSignal_(data, badlist) {
   const price = data.price;
 
   const blocked = (msg) => {
-    props.setProperty("signal_state_v2", JSON.stringify(state));
+    props.setProperty(stateKey, JSON.stringify(state));
     return { status: "blocked", message: msg };
   };
+
+  // FM (v3.9, только ветка MEXC): блок при payout ниже порога.
+  // Заблокированный здесь сигнал НЕ попадает в стейт ветки, поэтому
+  // не съедает её лимиты - после возврата payout к порогу ветка
+  // принимает сигналы так, будто паузы не было.
+  if (branch && branch.payout !== undefined) {
+    const pv = mexcPayoutFor_(branch.payout, asset, now.getTime());
+    if (pv.known) {
+      if (pv.value < CONFIG.MEXC.MIN_PAYOUT)
+        return blocked("FM: MEXC payout " + asset + " " + pv.value + "% < " + CONFIG.MEXC.MIN_PAYOUT + "%");
+    } else if (!CONFIG.MEXC.FAIL_OPEN) {
+      return blocked("FM: payout " + asset + " неизвестен (монитор молчит), FAIL_OPEN=false");
+    }
+    // payout неизвестен + FAIL_OPEN=true → фильтр тихо пропускается
+  }
 
   // F6: авто-карантин DEV_BADLIST - конфигурации, у которых WR за последние
   // 4 дня ниже безубытка (список строит GitHub Actions каждое утро).
@@ -367,7 +644,7 @@ function decideSignal_(data, badlist) {
 
   // Пропускаем
   state.sent.push({ t: now.getTime(), price: price, dir: dir, asset: asset });
-  props.setProperty("signal_state_v2", JSON.stringify(state));
+  props.setProperty(stateKey, JSON.stringify(state));
   const cntAsset = sameAssetWin.length + 1;
   return { status: "sent", message: "Signal " + asset + " #" + cntAsset + " (price: " + price + ")" };
 }
@@ -375,10 +652,12 @@ function decideSignal_(data, badlist) {
 function pad_(n) { return (n < 10 ? "0" : "") + n; }
 
 // ─── TELEGRAM ────────────────────────────────────────────────
-function sendTelegram(data) {
+// chatIdOpt (v3.9): необязательный chat_id - для группы MEXC.
+// Без него шлём в основную группу, как раньше.
+function sendTelegram(data, chatIdOpt) {
   const url = "https://api.telegram.org/bot" + getProp_("TELEGRAM_BOT_TOKEN") + "/sendMessage";
   const payload = {
-    chat_id: getProp_("TELEGRAM_CHAT_ID"),
+    chat_id: chatIdOpt || getProp_("TELEGRAM_CHAT_ID"),
     text: data.text || "Signal received",
     parse_mode: "HTML"
   };
@@ -456,6 +735,9 @@ function getOrCreateSheet_(ss, name, header) {
 const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2"];
 const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1"];
 const HDR_FAILED = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Context"];
+const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout"];
+const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout"];
+const HDR_PAYOUT     = ["Time","Asset","Payout","Source"];
 
 function writeToSheets_(ss, data) {
   try {
@@ -515,7 +797,8 @@ function buildResponse(status, message) {
 // ─── СБРОС СОСТОЯНИЯ ─────────────────────────────────────────
 function resetState() {
   PropertiesService.getScriptProperties().deleteProperty("signal_state_v2");
-  console.log("State reset OK");
+  PropertiesService.getScriptProperties().deleteProperty(CONFIG.MEXC.STATE_KEY);
+  console.log("State reset OK (обе ветки)");
 }
 
 // ─── САМОПРОВЕРКА (запусти руками один раз после деплоя) ─────
@@ -524,6 +807,20 @@ function selfTest() {
   const a = getOrCreateSheet_(ss, CONFIG.SHEET_NAME, HDR_ALL);
   const b = getOrCreateSheet_(ss, CONFIG.BLOCKED_SHEET_NAME, HDR_BLOCK);
   const f = getOrCreateSheet_(ss, CONFIG.FAILED_SHEET_NAME, HDR_FAILED);
+  if (CONFIG.MEXC.ENABLED) {
+    getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
+    getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
+    getOrCreateSheet_(ss, CONFIG.MEXC.PAYOUT_SHEET_NAME, HDR_PAYOUT);
+    const chatOk = !!PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.CHAT_ID_PROP);
+    const po = getMexcPayout_();
+    console.log("MEXC: ветка ON | chat_id задан:", chatOk,
+      "| payout:", JSON.stringify(po),
+      "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
+      "| источник:", (CONFIG.MEXC.PAYOUT_URLS.ETH || CONFIG.MEXC.PAYOUT_URLS.BTC) ? "URL-монитор" : "ручной (setMexcPayoutManual)",
+      "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
+  } else {
+    console.log("MEXC: ветка DISABLED");
+  }
   resetBadlistCache();
   const bl = loadBadlist_();
   console.log("OK → вкладки:", a.getName(), "/", b.getName(), "/", f.getName(),

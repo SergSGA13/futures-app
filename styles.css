@@ -1213,6 +1213,9 @@ html, body {
 }
 .dev-urgent-fix-btn:active { background: rgba(78, 255, 160, 0.22); }
 
+/* PnL в списке кормильцев - акцент зелёным */
+.dev-top-pnl { color: #4EFFA0; }
+
 /* строка конфигурации в чек-листе на удаление: длинная, моноширинная, с переносами */
 .dev-badlist-config {
   font-family: 'SF Mono', 'Menlo', 'Roboto Mono', monospace;

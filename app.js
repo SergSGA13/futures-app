@@ -2174,6 +2174,56 @@ function devRenderBadlistList() {
   listEl.innerHTML = parts.join('') || '<div class="dev-urgent-empty">Все кандидаты отмечены удалёнными.</div>';
 }
 
+// ===== "КОРМИЛЬЦЫ" - топ прибыльных конфигураций (вкладка DEV_TOPLIST) =====
+// Строит тот же утренний dev_badlist.py: активные конфигурации с наибольшим
+// положительным PnL за 30 дней (ранжирование по PnL = сработки × EV).
+async function devRenderToplist() {
+  const card = document.getElementById('devToplistCard');
+  const updEl = document.getElementById('devToplistUpdated');
+  const listEl = document.getElementById('devToplistBlock');
+  if (!card || !listEl) return;
+  try {
+    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=DEV_TOPLIST`;
+    const resp = await sigFetch(url, 15000);
+    if (!resp.ok) return;
+    const rows = parseCSV(await resp.text());
+    if (!rows || rows.length < 2) return;                    // вкладки ещё нет / пустая
+    const data = rows.slice(1).filter(r => (r[0] || '').trim());
+    if (!data.length) return;
+    const updated = (data[0][9] || '').trim();
+    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~05:00`;
+
+    if (data.length === 1 && data[0][0].trim() === 'OK') {
+      listEl.innerHTML = '<div class="dev-urgent-empty">Пока нет конфигураций, проходящих порог: 20+ сигналов за 30 дней с WR выше безубытка.</div>';
+      card.style.display = 'block';
+      return;
+    }
+    const medals = ['🥇', '🥈', '🥉'];
+    const parts = data.map((r, idx) => {
+      // r: [конфиг, n30, wr30, pnl30, ev, n4, wr4, pnl4, послСигнал, обновлено]
+      const pnl30 = (r[3] || '').trim();
+      const form4 = (r[5] && r[6])
+        ? ` · форма 4д: ${r[6]}%${(r[7] || '').trim() !== '' ? ` (${(r[7] || '').trim()})` : ''} на ${r[5]}`
+        : '';
+      const metrics = `PnL 30д: <b class="dev-top-pnl">${pnl30 !== '' ? '+' + pnl30.replace(/^\+/, '') : '—'}</b>` +
+        ` · EV <b>${r[4] || '—'}</b>/сигнал` +
+        ` · WR <b>${r[2]}%</b> на ${r[1]} сигналах` +
+        form4 +
+        (r[8] ? ` · посл. сигнал ${r[8]}` : '');
+      return `<div class="dev-urgent-item dev-opportunity-item">
+        <span class="dev-urgent-icon">${medals[idx] || '💰'}</span>
+        <div class="dev-urgent-text">
+          <div class="dev-badlist-config">${devEscapeHtml(r[0])}</div>
+          <div class="dev-urgent-reason">${metrics}</div>
+        </div>
+      </div>`;
+    });
+    listEl.innerHTML = parts.join('');
+    card.style.display = 'block';
+  } catch (e) { console.log('DEV toplist fetch error:', e); }
+}
+
 async function devRenderBadlist() {
   const card = document.getElementById('devBadlistCard');
   const updEl = document.getElementById('devBadlistUpdated');
@@ -2219,6 +2269,7 @@ async function renderDevL30d() {
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
     try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
     try { devRenderBadlist(); } catch (e) { console.log('DEV badlist error:', e); }
+    try { devRenderToplist(); } catch (e) { console.log('DEV toplist error:', e); }
     try { devShowTable('devOpportunityBlock', 'devOpportunityCard', devBuildOpportunitySection(sigs, combinedRaw)); } catch (e) { console.log('DEV opportunity error:', e); }
     try {
       devRenderDrawdownChart(sigs);

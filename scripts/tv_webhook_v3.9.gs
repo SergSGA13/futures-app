@@ -2,6 +2,14 @@
 // TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9.2: EXECUTOR - автоторговля сигналов MEXC _10m.
+//   Принятый веткой MEXC сигнал дополнительно форвардится POST-ом
+//   на локальный исполнитель (scripts/mexc-executor: Node+Playwright
+//   на домашнем ПК, наружу - через cloudflared-туннель). Исполнитель
+//   сам кликает ставку на странице Event Futures. Конфиг:
+//   CONFIG.MEXC.EXECUTOR (ENABLED/URL/SECRET/TIMINGS). По умолчанию
+//   выключено; TIMINGS [10] - 30-минутки автоматически не исполняются.
+//   Сбой исполнителя не влияет на Telegram/записи (fail-safe).
 // v3.9.1: метки timing в таблицах и партнёрском вебхуке.
 //   - ALLsignal (лист) и партнёрский вебхук: timing = "10m"
 //     (в лист - в колонку CONFIG.MAIN_TIMING_COL, по умолч. "J",
@@ -246,6 +254,19 @@ const CONFIG = {
     // просьбе владельца (18.07.2026) - группа только для сигналов.
     // История в MEXC_PAYOUT и сам фильтр FM работают независимо от этого.
     ALERTS_ENABLED: false,
+
+    // ─── EXECUTOR (v3.9.2): автоторговля через локальный исполнитель ───
+    // Принятый веткой MEXC сигнал форвардится POST-ом на локальный
+    // исполнитель (scripts/mexc-executor на домашнем ПК, доступен через
+    // cloudflared-туннель). Сбой исполнителя НЕ влияет на основной
+    // поток и на отправку в группу - это доп. слушатель, как партнёр.
+    EXECUTOR: {
+      ENABLED: false,   // включить после настройки исполнителя
+      URL: "",          // https://<твой-туннель>.trycloudflare.com/signal
+      SECRET: "",       // тот же секрет, что в config.json исполнителя
+      TIMEOUT: 5,       // секунд на запрос
+      TIMINGS: [10],    // какие таймфреймы исполнять автоматически
+    },
   },
 
   // ─── Метка тайминга основной ветки (v3.9.1) ───
@@ -381,6 +402,35 @@ function mexcTiming_(data) {
 // Метка тайминга для листа MEXC: "MEXC _10m" / "MEXC _30m"
 // (пробел и подчёркивание - как в JSON-алертах TradingView).
 function mexcTimingLabel_(tf) { return "MEXC _" + tf + "m"; }
+
+// ─── EXECUTOR: форвард сигнала локальному исполнителю (v3.9.2) ──
+// Вызывается только для ПРИНЯТЫХ веткой MEXC сигналов. Возвращает
+// короткую заметку для лога ответа ("off" / "skip" / "http 200").
+// Любая ошибка глотается на уровне вызова - исполнитель не должен
+// влиять ни на Telegram, ни на запись в листы.
+function sendMexcExecutor_(data, asset, dir, timing, payoutVal) {
+  const ex = CONFIG.MEXC.EXECUTOR;
+  if (!ex.ENABLED || !ex.URL) return "off";
+  if (ex.TIMINGS.indexOf(timing) < 0) return "skip";   // напр. 30m пока руками
+  const payload = {
+    secret:    ex.SECRET,
+    asset:     asset,                       // "ETH" | "BTC"
+    ticker:    data.ticker || "",
+    direction: dir,                         // "UP" | "DOWN"
+    timing:    timing,                      // 10 | 30
+    label:     mexcTimingLabel_(timing),    // "MEXC _10m"
+    price:     data.price || "",
+    payout:    payoutVal,                   // число % или null (неизвестен)
+    bartime:   data.bartime || "",
+    sentAt:    new Date().toISOString(),
+  };
+  const resp = UrlFetchApp.fetch(ex.URL, {
+    method: "post", contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true, deadline: ex.TIMEOUT,
+  });
+  return "http " + resp.getResponseCode();
+}
 
 // Актуален ли payout по активу и таймингу: {known:bool, value:число %}.
 // dir ("UP"/"DOWN") выбирает ставку направления - у MEXC upPayRate и
@@ -669,13 +719,17 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
     const mexcText = header + "\n💰 Price: " + (data.price || "-");
     try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
     catch (e2) { tgOK = false; console.error("MEXC TG fail:", e2); }
+    // v3.9.2: форвард исполнителю (автоторговля); сбой не мешает потоку
+    let execNote = "off";
+    try { execNote = sendMexcExecutor_(data, asset, dir, timing, pv.known ? pv.value : null); }
+    catch (eX) { execNote = "error"; console.error("MEXC executor fail:", eX); }
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
     const okW = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
       data.direction1 || "", data.direction2 || "", pvCell, tLabel
     ]);
-    return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ")";
+    return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ", exec:" + execNote + ")";
   } else {
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
     const okB = appendRowSafe_(sheet, [
@@ -1021,6 +1075,7 @@ function selfTest() {
       "| payout:", JSON.stringify(po),
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
       "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + " " + CONFIG.MEXC.TIMINGS.join("/") + ")") : "ручной (setMexcPayoutManual)",
+      "| executor:", CONFIG.MEXC.EXECUTOR.ENABLED ? (CONFIG.MEXC.EXECUTOR.URL || "URL НЕ ЗАДАН") : "DISABLED",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
   } else {
     console.log("MEXC: ветка DISABLED");

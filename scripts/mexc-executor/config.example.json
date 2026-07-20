@@ -1,0 +1,32 @@
+{
+  "port": 8787,
+  "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-CONFIG.MEXC.EXECUTOR.SECRET",
+
+  "dryRun": true,
+  "stakeUSDT": 5,
+  "minPayout": 80,
+  "maxBetsPerDay": 40,
+  "maxSignalAgeSec": 90,
+  "maxConsecutiveErrors": 3,
+  "headless": true,
+  "pageSettleMs": 2500,
+
+  "urls": {
+    "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
+    "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT"
+  },
+
+  "timeUnitText": { "10": "10m", "30": "30m" },
+
+  "selectors": {
+    "loginMarker": "button:has-text(\"Log In\")",
+    "timeUnit": "button, div[role=button], span",
+    "amount": "input[placeholder*=\"USDT\"], input[placeholder*=\"250\"]",
+    "up": "button:has-text(\"Up\")",
+    "down": "button:has-text(\"Down\")",
+    "confirm": "button:has-text(\"Confirm\")"
+  },
+
+  "tgToken": "",
+  "tgChatId": ""
+}

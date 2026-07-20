@@ -2,6 +2,16 @@
 // TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9.1: метки timing в таблицах и партнёрском вебхуке.
+//   - ALLsignal (лист) и партнёрский вебхук: timing = "10m"
+//     (в лист - в колонку CONFIG.MAIN_TIMING_COL, по умолч. "J",
+//     первая свободная после Direction2).
+//   - MEXCsignal/MEXCblocked: timing = "MEXC _10m" / "MEXC _30m"
+//     (колонка "Timing", уже первая свободная после Payout).
+//   30-минутки помечаются в JSON алерта TradingView как
+//   "timing":"MEXC _30m" - они идут ТОЛЬКО в MEXC (mexcOnly),
+//   в ALLsignal/партнёру не попадают. 10-минуткам поле не нужно
+//   (нет "30" в timing → трактуется как 10м).
 // v3.9: ОТДЕЛЬНАЯ ВЕТКА для трейдеров MEXC (CONFIG.MEXC).
 //   Каждый сигнал проходит ДВА независимых решения:
 //   - основная ветка: как раньше (свой стейт signal_state_v2,
@@ -100,11 +110,13 @@
 //      Если HTTP 403 - endpoint закрыт для серверов Google, тогда
 //      вручную setMexcPayoutManual(80, 80) при изменении payout.
 //   5) 30-минутные алерты TradingView: добавить в JSON алерта поле
-//      "timing":"30" - сигнал получит шапку 🕒 30 MIN и проверку
-//      payout именно 30-минутного контракта. Без поля = 10 MIN.
-//      Тайминг 30 - ЭКСКЛЮЗИВ MEXC (MEXC_ONLY_TIMINGS): такие
+//      "timing":"MEXC _30m" - сигнал получит шапку 🕒 30 MIN, проверку
+//      payout 30-минутного контракта и метку "MEXC _30m" в листе.
+//      Без поля (или "10m") = 10-минутка.
+//      30-минутка - ЭКСКЛЮЗИВ MEXC (MEXC_ONLY_TIMINGS): такие
 //      сигналы идут ТОЛЬКО в группу MEXC, основная ветка (TG,
 //      ALLsignal, партнёр, её лимиты) их не видит вовсе.
+//      ALLsignal и партнёру уходит метка "10m" (только 10-минутки).
 //   6) selfTest() один раз - строка "MEXC:" в логе.
 //   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
 // МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
@@ -218,7 +230,8 @@ const CONFIG = {
     SYMBOLS: { ETH: "ETH_USDT", BTC: "BTC_USDT" },
     // Таймфреймы отработки: payout хранится и проверяется ПО КАЖДОМУ
     // (у MEXC 10m и 30m - разные ставки). Тайминг сигнала задаётся в
-    // алерте TradingView полем "timing":"30" (без поля = DEFAULT_TIMING).
+    // алерте TradingView полем "timing": 30-минутки помечаются
+    // "timing":"MEXC _30m"; 10-минуткам поле не нужно (по умолчанию 10).
     TIME_UNIT: "MINUTE",
     TIMINGS: [10, 30],
     DEFAULT_TIMING: 10,
@@ -234,6 +247,15 @@ const CONFIG = {
     // История в MEXC_PAYOUT и сам фильтр FM работают независимо от этого.
     ALERTS_ENABLED: false,
   },
+
+  // ─── Метка тайминга основной ветки (v3.9.1) ───
+  // Все сигналы, попадающие в ALLsignal и в партнёрский вебхук - это
+  // 10-минутки (30-минутки уходят ТОЛЬКО в MEXC, минуя основную ветку).
+  MAIN_TIMING_LABEL: "10m",
+  // Колонка листа ALLsignal, куда писать timing. По умолчанию "J" -
+  // первая свободная после Direction2 (I). Если у тебя J и дальше
+  // заняты (напр. результатами), поставь свободную букву, напр. "X".
+  MAIN_TIMING_COL: "J",
 
   // ─── Надёжность записи ───
   WRITE_RETRIES: 3,
@@ -347,12 +369,18 @@ function refreshPayoutIfStale_(val) {
   } catch (err) { return null; }
 }
 
-// Тайминг отработки сигнала (минуты): поле "timing" из алерта
-// TradingView, иначе DEFAULT_TIMING. Принимает "30", 30, "30 min".
+// Тайминг отработки сигнала (минуты, 10 или 30): из поля "timing"
+// алерта TradingView. Принимает любую форму, содержащую число:
+// "MEXC _30m", "30", 30, "30 min" → 30; всё остальное (в т.ч.
+// "10m", "MEXC _10m", отсутствие поля) → 10.
 function mexcTiming_(data) {
-  const t = parseInt(data && (data.timing || data.mexc_tf), 10);
-  return (t && CONFIG.MEXC.TIMINGS.indexOf(t) >= 0) ? t : CONFIG.MEXC.DEFAULT_TIMING;
+  const s = String((data && (data.timing || data.mexc_tf)) || "");
+  return /30/.test(s) ? 30 : 10;
 }
+
+// Метка тайминга для листа MEXC: "MEXC _10m" / "MEXC _30m"
+// (пробел и подчёркивание - как в JSON-алертах TradingView).
+function mexcTimingLabel_(tf) { return "MEXC _" + tf + "m"; }
 
 // Актуален ли payout по активу и таймингу: {known:bool, value:число %}.
 // dir ("UP"/"DOWN") выбирает ставку направления - у MEXC upPayRate и
@@ -627,6 +655,7 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
   const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" :
               ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
   const timing = mexcTiming_(data);
+  const tLabel = mexcTimingLabel_(timing);   // "MEXC _10m" / "MEXC _30m"
   const pv = mexcPayoutFor_(payout, asset, nowMs, dir, timing);
   const pvCell = pv.known ? pv.value : "";
   if (decisionMexc.status === "sent") {
@@ -644,7 +673,7 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
     const okW = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      data.direction1 || "", data.direction2 || "", pvCell, timing
+      data.direction1 || "", data.direction2 || "", pvCell, tLabel
     ]);
     return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ")";
   } else {
@@ -652,7 +681,7 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
     const okB = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      decisionMexc.message, pvCell, timing
+      decisionMexc.message, pvCell, tLabel
     ]);
     return "blocked: " + decisionMexc.message + " (sheet:" + okB + ")";
   }
@@ -830,7 +859,9 @@ function sendTelegram(data, chatIdOpt) {
 
 // ─── PARTNER WEBHOOK ─────────────────────────────────────────
 // Шлём только прошедшие фильтры (вызов только при status==="sent").
-// secret и Settings партнёру НЕ передаются.
+// Вызывается лишь в основной ветке (см. doPost) - значит, партнёру
+// уходят только 10-минутки; сигналы MEXC (в т.ч. 30-минутки) партнёру
+// НЕ передаются. secret и Settings тоже НЕ передаются.
 // Ошибка на их стороне не влияет на основной поток.
 function sendPartnerWebhook(data) {
   if (!CONFIG.PARTNER_WEBHOOK_ENABLED) return;
@@ -841,6 +872,7 @@ function sendPartnerWebhook(data) {
     volume:    data.volume    || "",
     text:      data.text      || "",
     bartime:   data.bartime   || "",
+    timing:    CONFIG.MAIN_TIMING_LABEL,   // "10m" - партнёрам только 10-минутки
   };
   try {
     const response = UrlFetchApp.fetch(CONFIG.PARTNER_WEBHOOK_URL, {
@@ -888,21 +920,37 @@ function getOrCreateSheet_(ss, name, header) {
   }
 }
 
-const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2"];
+const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Timing"];
 const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1"];
 const HDR_FAILED = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Context"];
 const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout","Timing"];
 const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout","Timing"];
 const HDR_PAYOUT     = ["Time","Asset","Payout","Source"];
 
+// Буква колонки → индекс массива (0-based): "A"→0, "J"→9, "X"→23.
+function colToIdx_(letter) {
+  let n = 0; const s = String(letter).toUpperCase();
+  for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+// Записать val в колонку colLetter строки-массива, добив пустыми до неё.
+function setCol_(row, colLetter, val) {
+  const idx = colToIdx_(colLetter);
+  while (row.length <= idx) row.push("");
+  row[idx] = val;
+}
+
 function writeToSheets_(ss, data) {
   try {
     const sheet = getOrCreateSheet_(ss, CONFIG.SHEET_NAME, HDR_ALL);
-    return appendRowSafe_(sheet, [
+    const row = [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
       data.direction1 || "", data.direction2 || ""
-    ]);
+    ];
+    // timing "10m" в первую свободную колонку (по умолчанию J)
+    setCol_(row, CONFIG.MAIN_TIMING_COL, CONFIG.MAIN_TIMING_LABEL);
+    return appendRowSafe_(sheet, row);
   } catch (err) {
     console.error("writeToSheets_ fatal:", err);
     return false;

@@ -395,14 +395,15 @@ function mexcTimingLabel_(tf) { return "MEXC _" + tf + "m"; }
 function sendMexcWebhook_(data, label, payoutVal) {
   if (!CONFIG.MEXC.WEBHOOK_ENABLED || !CONFIG.MEXC.WEBHOOK_URL) return "off";
   const payload = {
-    ticker:    data.ticker    || "",
-    direction: data.direction || "",
-    price:     data.price     || "",
-    volume:    data.volume    || "",
-    text:      data.text      || "",
-    bartime:   data.bartime   || "",
-    timing:    label,                  // "MEXC _10m" / "MEXC _30m"
-    payout:    payoutVal,              // число % или null (неизвестен)
+    ticker:     data.ticker     || "",
+    direction:  data.direction  || "",
+    price:      data.price      || "",
+    volume:     data.volume     || "",
+    text:       data.text       || "",
+    bartime:    data.bartime    || "",
+    timing:     label,                  // "MEXC _10m" / "MEXC _30m"
+    payout:     payoutVal,              // число % или null (неизвестен)
+    receivedAt: data.receivedAt || new Date().toISOString(),   // время прихода, до мс (UTC)
   };
   const resp = UrlFetchApp.fetch(CONFIG.MEXC.WEBHOOK_URL, {
     method: "post", contentType: "application/json",
@@ -579,6 +580,9 @@ function mexcPayoutProbe() {
 
 // ─── WEBHOOK HANDLER ─────────────────────────────────────────
 function doPost(e) {
+  // Время ПОСТУПЛЕНИЯ сигнала (UTC, до миллисекунд) - фиксируем в самом
+  // начале, до парсинга/лока/IO, чтобы отражало реальный момент прихода.
+  const receivedAt = new Date().toISOString();   // "2026-07-21T05:30:07.123Z"
   let data;
   try {
     data = JSON.parse(e.postData.contents);
@@ -590,6 +594,7 @@ function doPost(e) {
     return buildResponse("error", "unauthorized");
   }
   delete data.secret;
+  data.receivedAt = receivedAt;   // доступно в партнёрском и MEXC хуках
 
   // ── Фаза 0: карантинный список + payout MEXC (кэш, вне лока) ──
   const badlist = loadBadlist_();
@@ -900,13 +905,14 @@ function sendTelegram(data, chatIdOpt) {
 function sendPartnerWebhook(data) {
   if (!CONFIG.PARTNER_WEBHOOK_ENABLED) return;
   const payload = {
-    ticker:    data.ticker    || "",
-    direction: data.direction || "",
-    price:     data.price     || "",
-    volume:    data.volume    || "",
-    text:      data.text      || "",
-    bartime:   data.bartime   || "",
-    timing:    "10m",   // партнёру уходят только 10-минутки основной ветки
+    ticker:     data.ticker     || "",
+    direction:  data.direction  || "",
+    price:      data.price      || "",
+    volume:     data.volume     || "",
+    text:       data.text       || "",
+    bartime:    data.bartime    || "",
+    timing:     "10m",   // партнёру уходят только 10-минутки основной ветки
+    receivedAt: data.receivedAt || new Date().toISOString(),   // время прихода, до мс (UTC)
   };
   try {
     const response = UrlFetchApp.fetch(CONFIG.PARTNER_WEBHOOK_URL, {

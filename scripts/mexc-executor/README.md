@@ -47,17 +47,16 @@ cloudflared tunnel --url http://localhost:8787
 
 ## Подключение к вебхуку
 
-В Apps Script, `CONFIG.MEXC.EXECUTOR`:
+В Apps Script, внутри `CONFIG.MEXC` (v3.9.2 - простой хук в стиле
+партнёрского, секрет передаётся прямо в URL):
 ```js
-EXECUTOR: {
-  ENABLED: true,
-  URL: "https://xxxx.trycloudflare.com/signal",
-  SECRET: "тот же секрет, что в config.json",
-  TIMEOUT: 5,
-  TIMINGS: [10],   // автоторгуем только 10-минутки
-},
+WEBHOOK_URL: "https://xxxx.trycloudflare.com/signal?secret=ТВОЙ-СЕКРЕТ",
+WEBHOOK_ENABLED: true,
+WEBHOOK_TIMEOUT: 5,
 ```
-Передеплой скрипт. Проверка: `https://xxxx.trycloudflare.com/health`
+Передеплой скрипт. Хук получает ВСЕ принятые сигналы MEXC с меткой
+timing ("MEXC _10m"/"MEXC _30m"); какие исполнять - решает
+`execTimings` в config.json (по умолчанию только 10m). Проверка: `https://xxxx.trycloudflare.com/health`
 в браузере должен показать `{"ok":true,...}`.
 
 ## Порядок ввода в бой

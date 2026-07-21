@@ -212,15 +212,37 @@ const server = http.createServer((req, res) => {
     }));
     return;
   }
-  if (req.method !== 'POST' || req.url !== '/signal') { res.writeHead(404); res.end(); return; }
+  const u = new URL(req.url, 'http://x');
+  if (req.method !== 'POST' || u.pathname !== '/signal') { res.writeHead(404); res.end(); return; }
   let body = '';
   req.on('data', d => { body += d; if (body.length > 65536) req.destroy(); });
   req.on('end', () => {
     let sig;
     try { sig = JSON.parse(body); } catch (e) { res.writeHead(400); res.end('bad json'); return; }
-    if (!CFG.secret || sig.secret !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
+    // секрет: либо в URL (?secret=...), либо в теле - вебхук шлёт
+    // партнёрский формат без секрета, поэтому URL-вариант основной
+    const qsecret = u.searchParams.get('secret');
+    if (!CFG.secret || (sig.secret !== CFG.secret && qsecret !== CFG.secret)) {
+      res.writeHead(403); res.end('forbidden'); return;
+    }
+    // актив: из ticker ("ETHUSDT.P"/"BTCUSDT.P") или явного поля
+    sig.asset = sig.asset || ((sig.ticker || '').includes('BTC') ? 'BTC' :
+                              ((sig.ticker || '').includes('ETH') ? 'ETH' : ''));
+    sig.direction = String(sig.direction || '').toUpperCase();
+    if (sig.direction === 'BUY') sig.direction = 'UP';
+    if (sig.direction === 'SELL') sig.direction = 'DOWN';
+    // тайминг: из метки "MEXC _10m"/"MEXC _30m" (или числа)
+    sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
     if (sig.asset !== 'ETH' && sig.asset !== 'BTC') { res.writeHead(400); res.end('bad asset'); return; }
     if (sig.direction !== 'UP' && sig.direction !== 'DOWN') { res.writeHead(400); res.end('bad direction'); return; }
+    // исполняем только разрешённые таймфреймы (по умолчанию 10m)
+    const execTimings = CFG.execTimings || [10];
+    if (execTimings.indexOf(sig.timing) < 0) {
+      log(`пропуск: тайминг ${sig.timing}м не в execTimings`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'timing' }));
+      return;
+    }
 
     // новый день - сброс дневного счётчика
     const today = new Date().toDateString();

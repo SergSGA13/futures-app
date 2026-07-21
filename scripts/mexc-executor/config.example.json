@@ -8,6 +8,7 @@
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
   "maxConsecutiveErrors": 3,
+  "execTimings": [10],
   "headless": true,
   "pageSettleMs": 2500,
 

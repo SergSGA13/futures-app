@@ -2,6 +2,20 @@
 // TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9.3: скорость доставки + ALT-ветка + F6 выключен.
+//   - ПОРЯДОК ОБРАБОТКИ переставлен: PRO-группа и партнёрский хук
+//     получают сигнал СРАЗУ после фильтров основной ветки, не
+//     дожидаясь payout MEXC, ветки MEXC и записей в листы. Записи в
+//     Google Sheets ушли в самый конец - их задержка больше не
+//     влияет на доставку. Выигрыш ~1.5-5 секунд на сигнал.
+//     Логика фильтров/лимитов НЕ менялась (стейты веток независимы,
+//     каждое решение - под своим коротким локом).
+//   - ALT-ветка (CONFIG.ALT_FEED): сигналы, заблокированные фильтрами
+//     основной ветки (то, что пишется в BLOCKEDsignal), уходят в
+//     отдельный ТГ-канал своим ботом (Script Properties
+//     ALT_TELEGRAM_BOT_TOKEN + ALT_TELEGRAM_CHAT_ID) - масштабирование
+//     на вторую аудиторию подписчиков.
+//   - F6 (авто-карантин DEV_BADLIST) выключен: BADLIST.ENABLED=false.
 // v3.9.2: MEXC-хук - принятые веткой MEXC сигналы уходят POST-ом
 //   на CONFIG.MEXC.WEBHOOK_URL (устроен в точности как партнёрский
 //   вебхук: тот же payload + timing "MEXC _10m"/"MEXC _30m" + payout).
@@ -104,6 +118,12 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
+// МИГРАЦИЯ v3.9.2 → v3.9.3: просто заменить код. Для ALT-ветки:
+//   1) Script Properties: ALT_TELEGRAM_CHAT_ID (chat_id канала;
+//      бот должен быть в нём админом) и ALT_TELEGRAM_BOT_TOKEN
+//      (токен отдельного бота; пусто = слать основным ботом).
+//   2) CONFIG.ALT_FEED.ENABLED = true.
+//   Вернуть карантин F6: CONFIG.BADLIST.ENABLED = true.
 // МИГРАЦИЯ v3.8 → v3.9:
 //   1) Заменить код проекта этим файлом.
 //   2) Script Properties: добавить MEXC_TELEGRAM_CHAT_ID
@@ -191,8 +211,12 @@ const CONFIG = {
   },
 
   // ─── F6: авто-карантин по DEV_BADLIST ───
+  // ВЫКЛЮЧЕН по просьбе владельца (21.07.2026). Вкладку DEV_BADLIST
+  // GitHub Actions продолжает строить каждое утро - аналитика в
+  // приложении живёт, карантин сигналов не применяется. Бонус к
+  // скорости: loadBadlist_ при ENABLED=false возвращается мгновенно.
   BADLIST: {
-    ENABLED: true,                 // false - отключить карантин без удаления кода
+    ENABLED: false,                // true - включить карантин обратно
     SHEET_NAME: "DEV_BADLIST",     // вкладку строит GitHub Actions ежедневно
     CACHE_KEY: "dev_badlist_v1",
     CACHE_TTL_SEC: 3600,           // перечитывать вкладку не чаще раза в час
@@ -271,6 +295,20 @@ const CONFIG = {
   PARTNER_WEBHOOK_URL: "https://signalapiwebhook1312.win/webhook/signal/74f9addb559e663d75047ed9d250edf6e526510cd47440be",
   PARTNER_WEBHOOK_ENABLED: true,  // false — отключить без удаления кода
   PARTNER_WEBHOOK_TIMEOUT: 10,    // секунд
+
+  // ─── ALT-ветка (v3.9.3): канал «обратных» сигналов ───
+  // Сигналы, ЗАБЛОКИРОВАННЫЕ фильтрами основной ветки (то, что пишется
+  // в BLOCKEDsignal), уходят отдельным сообщением в свой канал -
+  // масштабирование: часть подписчиков торгует основной поток PRO,
+  // часть - альтернативный. Бот и канал отдельные: Script Properties
+  // ALT_TELEGRAM_BOT_TOKEN (пусто = использовать основного бота) и
+  // ALT_TELEGRAM_CHAT_ID (chat_id канала/группы; бот должен быть там).
+  // 30-минутки MEXC сюда не попадают (они минуют основную ветку).
+  ALT_FEED: {
+    ENABLED: false,               // включить после заполнения Properties
+    BOT_TOKEN_PROP: "ALT_TELEGRAM_BOT_TOKEN",
+    CHAT_ID_PROP: "ALT_TELEGRAM_CHAT_ID",
+  },
 
 };
 
@@ -596,92 +634,119 @@ function doPost(e) {
   delete data.secret;
   data.receivedAt = receivedAt;   // доступно в партнёрском и MEXC хуках
 
-  // ── Фаза 0: карантинный список + payout MEXC (кэш, вне лока) ──
+  // ── Фаза 0: карантинный список (при BADLIST.ENABLED=false - мгновенно) ──
   const badlist = loadBadlist_();
   const mexcOn = CONFIG.MEXC.ENABLED;
-  const mexcPayout = mexcOn ? getMexcPayout_() : null;
   // Сигналы с таймингом-эксклюзивом (30 мин) минуют основную ветку
   const mexcOnly = mexcOn &&
     CONFIG.MEXC.MEXC_ONLY_TIMINGS.indexOf(mexcTiming_(data)) >= 0;
 
-  // ── Фаза 1: критическая секция (только состояние, без IO) ──
-  // Оба решения под ОДНИМ локом: основная ветка и ветка MEXC
-  // независимы (свои стейты), но обновляться должны атомарно.
-  let decision, decisionMexc = null;
+  // ══ ОСНОВНАЯ ВЕТКА (v3.9.3): решение → НЕМЕДЛЕННАЯ доставка ══
+  // PRO-группа и партнёр получают сигнал сразу после фильтров, НЕ
+  // дожидаясь payout MEXC, ветки MEXC и записей в листы. Заблокированный
+  // сигнал так же немедленно уходит в ALT-канал (если включён).
+  // Лок короткий и только вокруг решения (чтение/запись стейта).
+  let decision = { status: "skipped", message: "MEXC-only timing" };
+  let tgOK = true, partnerOK = true, altNote = "off";
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(25000)) {
-    try { logFailed_(data, "LOCK TIMEOUT — не удалось войти в критическую секцию"); }
-    catch (e2) { console.error("FAILED-log на LOCK TIMEOUT не удался:", e2); }
-    return buildResponse("error", "Lock timeout (записано в FAILED)");
+  if (!mexcOnly) {
+    if (!lock.tryLock(25000)) {
+      try { logFailed_(data, "LOCK TIMEOUT — не удалось войти в критическую секцию"); }
+      catch (e2) { console.error("FAILED-log на LOCK TIMEOUT не удался:", e2); }
+      return buildResponse("error", "Lock timeout (записано в FAILED)");
+    }
+    try {
+      decision = decideSignal_(data, badlist);
+    } catch (err) {
+      console.error("decideSignal error:", err);
+      lock.releaseLock();
+      try { logFailed_(data, "decideSignal exception: " + err.message); } catch (e2) { console.error(e2); }
+      return buildResponse("error", err.message);
+    }
+    lock.releaseLock();
+
+    if (decision.status === "sent") {
+      try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
+      try { sendPartnerWebhook(data); } catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
+    } else {
+      // ALT-ветка: заблокированные основной веткой сигналы - в свой канал
+      try { altNote = sendAltFeed_(data); }
+      catch (e3) { altNote = "error"; console.error("ALT feed fail:", e3); }
+    }
   }
-  try {
-    // mexcOnly: основная ветка пропускается ЦЕЛИКОМ - её стейт не
-    // трогаем, чтобы 30-минутки не съедали лимиты основной группы
-    decision = mexcOnly ? { status: "skipped", message: "MEXC-only timing" }
-                        : decideSignal_(data, badlist);
-    if (mexcOn) {
+
+  // ══ ВЕТКА MEXC: payout (сеть, только если устарел) → решение → доставка ══
+  // Свой стейт и свой короткий лок; основная ветка уже доставлена.
+  let decisionMexc = null, mexcDelivery = null;
+  if (mexcOn) {
+    const mexcPayout = getMexcPayout_();
+    if (lock.tryLock(25000)) {
       try {
         decisionMexc = decideSignal_(data, badlist,
           { stateKey: CONFIG.MEXC.STATE_KEY, payout: mexcPayout });
       } catch (errM) {
-        // ветка MEXC не должна ронять основную
         console.error("decideSignal MEXC error:", errM);
         decisionMexc = null;
       }
+      lock.releaseLock();
+    } else {
+      console.error("MEXC lock timeout - ветка MEXC пропущена");
     }
-  } catch (err) {
-    console.error("decideSignal error:", err);
-    lock.releaseLock();
-    try { logFailed_(data, "decideSignal exception: " + err.message); } catch (e2) { console.error(e2); }
-    return buildResponse("error", err.message);
+    if (decisionMexc) mexcDelivery = mexcDeliver_(data, decisionMexc, mexcPayout);
   }
-  lock.releaseLock();
 
-  // ── Фаза 2: медленный IO (ВНЕ лока) ──
-  let ss;
+  // ══ Логирование в листы: ПОСЛЕ всех доставок ══
+  // Сбой листов больше не задерживает и не блокирует сигналы.
+  let ss = null;
   try {
     ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
   } catch (err) {
     console.error("openById failed:", err);
     console.error("LOST PAYLOAD:", JSON.stringify(data), "decision:", JSON.stringify(decision));
-    return buildResponse("error", "spreadsheet open failed");
+  }
+  let sheetOK = false, mexcNote = "";
+  if (ss) {
+    if (decision.status === "sent") {
+      sheetOK = writeToSheets_(ss, data);
+      if (!sheetOK) logFailed_safe_(ss, data, "ALLsignal write failed после " + CONFIG.WRITE_RETRIES + " попыток");
+    } else if (decision.status === "blocked") {
+      sheetOK = logBlocked_(ss, data, decision.message);
+      if (!sheetOK) logFailed_safe_(ss, data, "BLOCKED write failed: " + decision.message);
+    }
+    if (decisionMexc && mexcDelivery) {
+      try { mexcNote = " | MEXC " + mexcLogSheet_(ss, data, decisionMexc, mexcDelivery); }
+      catch (eM) { console.error("MEXC log fail:", eM); mexcNote = " | MEXC log error"; }
+    }
   }
 
-  // Ветка MEXC: своя ТГ-группа и свои вкладки; ошибки не влияют
-  // на основной поток.
-  let mexcNote = "";
-  if (decisionMexc) {
-    try { mexcNote = " | MEXC " + handleMexcIO_(ss, data, decisionMexc, mexcPayout); }
-    catch (eM) { console.error("MEXC IO fail:", eM); mexcNote = " | MEXC error"; }
-  }
-
-  // Эксклюзив MEXC: основной поток (TG, партнёр, ALLsignal/BLOCKED)
-  // не задействуется вовсе - ответ только по ветке MEXC
+  // Эксклюзив MEXC: ответ только по ветке MEXC
   if (mexcOnly) {
     if (!decisionMexc) return buildResponse("error", "MEXC-only сигнал, но ветка MEXC не решила" + mexcNote);
     return buildResponse(decisionMexc.status,
       "MEXC-only (timing " + mexcTiming_(data) + ")" + mexcNote);
   }
-
-  if (decision.status === "sent") {
-    let tgOK = true, sheetOK = false, partnerOK = true;
-    try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
-    try { sendPartnerWebhook(data); } catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
-    sheetOK = writeToSheets_(ss, data);
-    if (!sheetOK) logFailed_safe_(ss, data, "ALLsignal write failed после " + CONFIG.WRITE_RETRIES + " попыток");
+  if (decision.status === "sent")
     return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK + ", partner:" + partnerOK + ")" + mexcNote);
-  } else {
-    const okB = logBlocked_(ss, data, decision.message);
-    if (!okB) logFailed_safe_(ss, data, "BLOCKED write failed: " + decision.message);
-    return buildResponse("blocked", decision.message + " (sheet:" + okB + ")" + mexcNote);
-  }
+  return buildResponse("blocked", decision.message + " (sheet:" + sheetOK + ", alt:" + altNote + ")" + mexcNote);
 }
 
-// ─── MEXC: IO ветки (v3.9) ───────────────────────────────────
-// Телеграм в группу MEXC + запись в MEXCsignal/MEXCblocked.
-// В строки добавляется текущий payout - копится статистика для
-// последующего анализа EV по реальным payout.
-function handleMexcIO_(ss, data, decisionMexc, payout) {
+// ─── ALT-ветка: доставка заблокированных сигналов (v3.9.3) ───
+// Возвращает заметку для лога: "off" / "no-chat" / "sent".
+function sendAltFeed_(data) {
+  const af = CONFIG.ALT_FEED;
+  if (!af.ENABLED) return "off";
+  const props = PropertiesService.getScriptProperties();
+  const chatId = props.getProperty(af.CHAT_ID_PROP);
+  if (!chatId) return "no-chat";
+  const token = props.getProperty(af.BOT_TOKEN_PROP);   // пусто = основной бот
+  sendTelegram(data, chatId, token || null);
+  return "sent";
+}
+
+// ─── MEXC: доставка (v3.9.3, БЕЗ листов - они пишутся позже) ──
+// Телеграм в группу MEXC + MEXC-хук. Возвращает объект с метками для
+// последующего логирования (mexcLogSheet_).
+function mexcDeliver_(data, decisionMexc, payout) {
   // то же время, что и в decideSignal_ - payout в строке лога
   // соответствует значению, по которому принималось решение
   const nowMs = (data.bartime ? new Date(data.bartime) : new Date()).getTime();
@@ -692,35 +757,40 @@ function handleMexcIO_(ss, data, decisionMexc, payout) {
   const timing = mexcTiming_(data);
   const tLabel = mexcTimingLabel_(timing);   // "MEXC _10m" / "MEXC _30m"
   const pv = mexcPayoutFor_(payout, asset, nowMs, dir, timing);
-  const pvCell = pv.known ? pv.value : "";
+  const out = { tLabel: tLabel, pvCell: (pv.known ? pv.value : ""), tgOK: true, hookNote: "off" };
+  if (decisionMexc.status !== "sent") return out;
+
+  // Короткий формат для группы MEXC: шапка (тайминг + актив +
+  // направление) и цена - без полного текста сигнала.
+  // 10м и 30м различаются эмодзи (TIMING_EMOJI).
+  const arrow = dir === "UP" ? "📈" : (dir === "DOWN" ? "📉" : "");
+  const emoji = CONFIG.MEXC.TIMING_EMOJI[timing] || "⏱";
+  const header = emoji + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + arrow;
+  const mexcText = header + "\n💰 Price: " + (data.price || "-");
+  try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
+  catch (e2) { out.tgOK = false; console.error("MEXC TG fail:", e2); }
+  // MEXC-хук (как партнёрский); сбой не мешает потоку
+  try { out.hookNote = sendMexcWebhook_(data, tLabel, pv.known ? pv.value : null); }
+  catch (eX) { out.hookNote = "error"; console.error("MEXC hook fail:", eX); }
+  return out;
+}
+
+// ─── MEXC: логирование в листы (после всех доставок) ─────────
+function mexcLogSheet_(ss, data, decisionMexc, d) {
   if (decisionMexc.status === "sent") {
-    let tgOK = true;
-    // Короткий формат для группы MEXC: шапка (тайминг + актив +
-    // направление) и цена - без полного текста сигнала.
-    // 10м и 30м различаются эмодзи (TIMING_EMOJI).
-    const arrow = dir === "UP" ? "📈" : (dir === "DOWN" ? "📉" : "");
-    const emoji = CONFIG.MEXC.TIMING_EMOJI[timing] || "⏱";
-    const header = emoji + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + arrow;
-    const mexcText = header + "\n💰 Price: " + (data.price || "-");
-    try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
-    catch (e2) { tgOK = false; console.error("MEXC TG fail:", e2); }
-    // v3.9.2: MEXC-хук (как партнёрский); сбой не мешает потоку
-    let hookNote = "off";
-    try { hookNote = sendMexcWebhook_(data, tLabel, pv.known ? pv.value : null); }
-    catch (eX) { hookNote = "error"; console.error("MEXC hook fail:", eX); }
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
     const okW = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      data.direction1 || "", data.direction2 || "", pvCell, tLabel
+      data.direction1 || "", data.direction2 || "", d.pvCell, d.tLabel
     ]);
-    return "sent: " + decisionMexc.message + " (tg:" + tgOK + ", sheet:" + okW + ", hook:" + hookNote + ")";
+    return "sent: " + decisionMexc.message + " (tg:" + d.tgOK + ", sheet:" + okW + ", hook:" + d.hookNote + ")";
   } else {
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
     const okB = appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      decisionMexc.message, pvCell, tLabel
+      decisionMexc.message, d.pvCell, d.tLabel
     ]);
     return "blocked: " + decisionMexc.message + " (sheet:" + okB + ")";
   }
@@ -877,9 +947,10 @@ function pad_(n) { return (n < 10 ? "0" : "") + n; }
 
 // ─── TELEGRAM ────────────────────────────────────────────────
 // chatIdOpt (v3.9): необязательный chat_id - для группы MEXC.
-// Без него шлём в основную группу, как раньше.
-function sendTelegram(data, chatIdOpt) {
-  const url = "https://api.telegram.org/bot" + getProp_("TELEGRAM_BOT_TOKEN") + "/sendMessage";
+// tokenOpt (v3.9.3): необязательный токен другого бота - для ALT-ветки.
+// Без них шлём основным ботом в основную группу, как раньше.
+function sendTelegram(data, chatIdOpt, tokenOpt) {
+  const url = "https://api.telegram.org/bot" + (tokenOpt || getProp_("TELEGRAM_BOT_TOKEN")) + "/sendMessage";
   const payload = {
     chat_id: chatIdOpt || getProp_("TELEGRAM_CHAT_ID"),
     text: data.text || "Signal received",
@@ -1046,6 +1117,10 @@ function selfTest() {
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
       "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + " " + CONFIG.MEXC.TIMINGS.join("/") + ")") : "ручной (setMexcPayoutManual)",
       "| MEXC-хук:", CONFIG.MEXC.WEBHOOK_ENABLED ? (CONFIG.MEXC.WEBHOOK_URL || "URL НЕ ЗАДАН") : "DISABLED",
+      "| ALT-ветка:", CONFIG.ALT_FEED.ENABLED
+        ? ("chat:" + !!PropertiesService.getScriptProperties().getProperty(CONFIG.ALT_FEED.CHAT_ID_PROP) +
+           " свой бот:" + !!PropertiesService.getScriptProperties().getProperty(CONFIG.ALT_FEED.BOT_TOKEN_PROP))
+        : "DISABLED",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
   } else {
     console.log("MEXC: ветка DISABLED");

@@ -54,47 +54,6 @@
           </div>
           <div class="card-arrow">›</div>
         </div>
-        <div class="menu-card" onclick="navigate('futures-strategy')">
-          <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
-              <rect x="13" y="3" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
-              <rect x="3" y="13" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
-              <rect x="13" y="13" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
-            </svg>
-          </div>
-          <div class="card-content">
-            <h3>Futures Strategy <span class="fs-backtest-neon"><span class="feature-dot"></span> backtest</span></h3>
-            <p data-i18n="menu.fs.sub">Торговые стратегии · Бектесты</p>
-          </div>
-          <div class="card-arrow">›</div>
-        </div>
-        <div class="menu-card" onclick="navigate('indicators')">
-          <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" stroke="#66A3FF" stroke-width="2"/>
-              <path d="M12 7v5l3 3" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <div class="card-content">
-            <h3 data-i18n="menu.ind.title">Индикаторы</h3>
-            <p data-i18n="menu.ind.sub">TradingView индикаторы</p>
-          </div>
-          <div class="card-arrow">›</div>
-        </div>
-        <div class="menu-card" onclick="navigate('articles')">
-          <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
-              <path d="M4 4h16v16H4z" rx="2" stroke="#66A3FF" stroke-width="2"/>
-              <path d="M8 9h8M8 13h8M8 17h4" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <div class="card-content">
-            <h3 data-i18n="menu.art.title">Статьи</h3>
-            <p data-i18n="menu.art.sub">Психология · Обучение</p>
-          </div>
-          <div class="card-arrow">›</div>
-        </div>
       </div>
 
       <!-- Stats preview -->
@@ -123,15 +82,40 @@
         </div>
       </div>
 
+      <div class="menu-grid menu-grid-compact">
+        <div class="menu-card compact" onclick="navigate('articles')">
+          <div class="card-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <path d="M4 4h16v16H4z" rx="2" stroke="#66A3FF" stroke-width="2"/>
+              <path d="M8 9h8M8 13h8M8 17h4" stroke="#9D50FF" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3 data-i18n="menu.art.title">Статьи</h3>
+            <p data-i18n="menu.art.sub">Психология · Обучение</p>
+          </div>
+        </div>
+        <div class="menu-card compact" onclick="navigate('futures-strategy')">
+          <div class="card-icon">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
+              <rect x="13" y="3" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
+              <rect x="3" y="13" width="8" height="8" rx="2" stroke="#9D50FF" stroke-width="2"/>
+              <rect x="13" y="13" width="8" height="8" rx="2" stroke="#66A3FF" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <h3>Futures Strategy <span class="fs-backtest-neon"><span class="feature-dot"></span> backtest</span></h3>
+            <p data-i18n="menu.fs.sub">Торговые стратегии · Бектесты</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Community links -->
       <div class="links-section">
         <a href="https://t.me/+Bx9PHt1Dy743ZTgy" class="tg-link" target="_blank">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#66A3FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
           <span data-i18n="link.main">Основной канал</span>
-        </a>
-        <a href="https://t.me/+Bx9PHt1Dy743ZTgy" class="tg-link" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="#9D50FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
-          <span data-i18n="link.chat">Чат сообщества</span>
         </a>
       </div>
 
@@ -263,32 +247,6 @@
       </div>
     </div>
     <!-- /FUTURES STRATEGY PAGE -->
-
-    <!-- INDICATORS PAGE -->
-    <div class="page" id="page-indicators">
-      <div class="page-content">
-        <div class="wip-container">
-          <div class="wip-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-              <path d="M3 3v18h18" stroke="#66A3FF" stroke-width="1.5" stroke-linecap="round"/>
-              <path d="M7 16l4-6 4 2 4-6" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 2"/>
-            </svg>
-          </div>
-          <h2 class="wip-title" data-i18n="wip.title">В разработке</h2>
-          <p class="wip-desc" data-i18n-html="wip.ind.desc">Индикаторы для TradingView<br/>скоро будут доступны здесь.</p>
-          <div class="wip-progress">
-            <div class="progress-bar"><div class="progress-fill" style="width:40%"></div></div>
-            <span class="progress-label" data-i18n="wip.ind.progress">Разработка...</span>
-          </div>
-          <div class="wip-features">
-            <div class="wip-feature"><span class="feature-dot"></span><span data-i18n="wip.ind.1">Индикаторы для MEXC Futures Prediction</span></div>
-            <div class="wip-feature"><span class="feature-dot"></span><span data-i18n="wip.ind.2">Инструкции по установке</span></div>
-            <div class="wip-feature"><span class="feature-dot"></span><span data-i18n="wip.ind.3">Настройка оповещений</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <!-- /INDICATORS PAGE -->
 
     <!-- ARTICLES PAGE -->
     <div class="page" id="page-articles">

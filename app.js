@@ -52,7 +52,6 @@ const pageTitleKeys = {
   'home': 'title.fp',
   'futures-prediction': 'title.fp',
   'futures-strategy': 'title.fs',
-  'indicators': 'title.ind',
   'articles': 'title.art',
   'statistics': 'title.stats',
   'stats-l30d': 'title.stats.l30d',

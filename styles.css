@@ -189,6 +189,27 @@ html, body {
   line-height: 1;
 }
 
+.menu-grid-compact {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 8px;
+}
+.menu-card.compact {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+}
+.menu-card.compact .card-icon {
+  width: 34px; height: 34px;
+  border-radius: 8px;
+}
+.menu-card.compact .card-content h3 {
+  font-size: 13px;
+}
+.menu-card.compact .card-content p {
+  font-size: 11px;
+}
+
 /* Stats preview */
 .stats-preview {
   margin: 8px 16px;

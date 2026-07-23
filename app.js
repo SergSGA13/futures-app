@@ -383,7 +383,7 @@ async function loadPnlL30dFromSignals(canvasId, key) {
 }
 
 // Total PNL за всё время — кумулятивная кривая из ALLsignal (модель +100 / −125)
-async function loadPnlAllFromSignals(canvasId, key) {
+async function loadPnlAllFromSignals(canvasId, key, mini = false) {
   if (pnlChartInstances[key]) return;
   try {
     const rows = await fetchAllSignals();
@@ -421,17 +421,26 @@ async function loadPnlAllFromSignals(canvasId, key) {
 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
-    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    const gradient = ctx.createLinearGradient(0, 0, 0, mini ? 90 : 200);
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
     gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
 
+    if (mini) {
+      const lastEl = document.getElementById(canvasId + 'Value');
+      if (lastEl) {
+        const last = pctData[pctData.length - 1];
+        lastEl.textContent = `${last >= 0 ? '+' : ''}${last}%`;
+        lastEl.classList.toggle('neg', last < 0);
+      }
+    }
+
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: mini ? 1.6 : 2, pointRadius: 0, fill: true, tension: 0.35 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
-        scales: {
+        plugins: { legend: { display: false }, tooltip: { enabled: !mini, callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+        scales: mini ? { x: { display: false }, y: { display: false } } : {
           x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
@@ -2968,7 +2977,7 @@ function refreshHome() {
   monthlyWrChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
-  Promise.all([loadStatsPreview(), loadTodaySignals()]).finally(() => {
+  Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {
     btn.classList.remove('spinning');
     if (currentPage === 'futures-prediction') renderSignalChart(true);
   });
@@ -3404,6 +3413,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateHeader('home');
   applyTranslations();
   loadStatsPreview();
+  loadPnlAllFromSignals('pnlChartHome', 'home', true);
   loadTodaySignals();
   initSignalChartUI();
   initCalculator();

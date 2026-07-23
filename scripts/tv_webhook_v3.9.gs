@@ -2,6 +2,20 @@
 // TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9.4: партнёрские потоки по тегам + ветка ALT10m с фильтрами.
+//   - Партнёр получает несколько потоков на ОДИН хук
+//     (PARTNER_WEBHOOK_URL), различает по полю "timing". У каждого
+//     свой переключатель CONFIG.PARTNER_STREAMS: "10m" (PRO, вкл),
+//     "ALT10m" (выкл), "MEXC_10m"/"MEXC_30m" (выкл). Мастер -
+//     PARTNER_WEBHOOK_ENABLED. Помощник postPartner_(data, tag).
+//   - Ветка ALT10m (CONFIG.ALT10M): берёт заблокированные основной
+//     веткой сигналы, прогоняет через СВОИ мягкие лимиты (окно 2 мин,
+//     ETH 3 / BTC 2, одинаковых цен ≤2). Прошедшие → ТГ-группа ALT10m
+//     и партнёр (тег "ALT10m"). Каждый прошедший помечается "ALT10m"
+//     в новой колонке листа BLOCKEDsignal. Заменяет прежний ALT_FEED
+//     (тот слал сырой поток без фильтров).
+//   - MEXC → партнёр (теги MEXC_10m/MEXC_30m) добавлен, но по
+//     умолчанию выключен; отдельный MEXC-хук (исполнитель) не тронут.
 // v3.9.3: скорость доставки + ALT-ветка + F6 выключен.
 //   - ПОРЯДОК ОБРАБОТКИ переставлен: PRO-группа и партнёрский хук
 //     получают сигнал СРАЗУ после фильтров основной ветки, не
@@ -118,11 +132,13 @@
 //   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
 //   резервная вкладка FAILED, честный флаг записи в ответе.
 // ============================================================
-// МИГРАЦИЯ v3.9.2 → v3.9.3: просто заменить код. Для ALT-ветки:
-//   1) Script Properties: ALT_TELEGRAM_CHAT_ID (chat_id канала;
-//      бот должен быть в нём админом) и ALT_TELEGRAM_BOT_TOKEN
-//      (токен отдельного бота; пусто = слать основным ботом).
-//   2) CONFIG.ALT_FEED.ENABLED = true.
+// МИГРАЦИЯ v3.9.3 → v3.9.4: заменить код. Включение потоков:
+//   - ALT10m: Script Properties ALT_TELEGRAM_CHAT_ID (+ опц.
+//     ALT_TELEGRAM_BOT_TOKEN), затем CONFIG.ALT10M.ENABLED = true.
+//     Партнёру ALT10m: CONFIG.PARTNER_STREAMS["ALT10m"] = true.
+//     В листе BLOCKEDsignal появится колонка ALT10m (для старого
+//     листа допиши заголовок "ALT10m" в первую свободную колонку J).
+//   - MEXC партнёру: CONFIG.PARTNER_STREAMS["MEXC_10m"/"MEXC_30m"]=true.
 //   Вернуть карантин F6: CONFIG.BADLIST.ENABLED = true.
 // МИГРАЦИЯ v3.8 → v3.9:
 //   1) Заменить код проекта этим файлом.
@@ -291,23 +307,37 @@ const CONFIG = {
   WRITE_RETRIES: 3,
   WRITE_RETRY_SLEEP_MS: 350,
 
-  // ─── Partner webhook ───
+  // ─── Partner webhook (v3.9.4: один хук, разные теги) ───
+  // Партнёр получает разные потоки на ОДИН URL и различает их по полю
+  // "timing". У каждого потока свой переключатель в PARTNER_STREAMS.
   PARTNER_WEBHOOK_URL: "https://signalapiwebhook1312.win/webhook/signal/74f9addb559e663d75047ed9d250edf6e526510cd47440be",
-  PARTNER_WEBHOOK_ENABLED: true,  // false — отключить без удаления кода
+  PARTNER_WEBHOOK_ENABLED: true,  // мастер-выключатель всей отправки партнёру
   PARTNER_WEBHOOK_TIMEOUT: 10,    // секунд
+  PARTNER_STREAMS: {
+    "10m":      true,    // PRO (основная ветка) - как было
+    "ALT10m":   false,   // из BLOCKEDsignal (свои фильтры - CONFIG.ALT10M)
+    "MEXC_10m": false,   // MEXC 10-мин - пока НЕ слать партнёру
+    "MEXC_30m": false,   // MEXC 30-мин - пока НЕ слать партнёру
+  },
 
-  // ─── ALT-ветка (v3.9.3): канал «обратных» сигналов ───
-  // Сигналы, ЗАБЛОКИРОВАННЫЕ фильтрами основной ветки (то, что пишется
-  // в BLOCKEDsignal), уходят отдельным сообщением в свой канал -
-  // масштабирование: часть подписчиков торгует основной поток PRO,
-  // часть - альтернативный. Бот и канал отдельные: Script Properties
-  // ALT_TELEGRAM_BOT_TOKEN (пусто = использовать основного бота) и
-  // ALT_TELEGRAM_CHAT_ID (chat_id канала/группы; бот должен быть там).
-  // 30-минутки MEXC сюда не попадают (они минуют основную ветку).
-  ALT_FEED: {
-    ENABLED: false,               // включить после заполнения Properties
-    BOT_TOKEN_PROP: "ALT_TELEGRAM_BOT_TOKEN",
-    CHAT_ID_PROP: "ALT_TELEGRAM_CHAT_ID",
+  // ─── Ветка ALT10m (v3.9.4): фильтрованный поток из BLOCKEDsignal ───
+  // Работает с сигналами, ЗАБЛОКИРОВАННЫМИ основной веткой. Свои, более
+  // мягкие лимиты (окно 2 мин, ETH 3 / BTC 2, одинаковых цен ≤2).
+  // Прошедшие фильтр → в Telegram-группу ALT10m (Script Properties
+  // ALT_TELEGRAM_CHAT_ID + ALT_TELEGRAM_BOT_TOKEN; пусто в токене =
+  // основной бот) и партнёру с тегом "ALT10m" (если PARTNER_STREAMS).
+  // Каждый прошедший помечается словом "ALT10m" в отдельной колонке
+  // листа BLOCKEDsignal. 30-минутки MEXC сюда не попадают.
+  ALT10M: {
+    ENABLED: false,                       // мастер-переключатель ветки
+    STATE_KEY: "signal_state_alt10m_v1",
+    WINDOW_MINUTES: 2,                    // окно/интервал лимитов
+    LIMITS: {
+      ETH: { MAX_SIGNALS_PER_WINDOW: 3, MAX_SAME_PRICE: 2 },
+      BTC: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 2 },
+    },
+    BOT_TOKEN_PROP: "ALT_TELEGRAM_BOT_TOKEN",  // пусто = основной бот
+    CHAT_ID_PROP: "ALT_TELEGRAM_CHAT_ID",      // пусто = не слать в ТГ
   },
 
 };
@@ -647,7 +677,7 @@ function doPost(e) {
   // сигнал так же немедленно уходит в ALT-канал (если включён).
   // Лок короткий и только вокруг решения (чтение/запись стейта).
   let decision = { status: "skipped", message: "MEXC-only timing" };
-  let tgOK = true, partnerOK = true, altNote = "off";
+  let tgOK = true, partnerOK = true, altNote = "off", altMarker = "";
   const lock = LockService.getScriptLock();
   if (!mexcOnly) {
     if (!lock.tryLock(25000)) {
@@ -667,11 +697,15 @@ function doPost(e) {
 
     if (decision.status === "sent") {
       try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
-      try { sendPartnerWebhook(data); } catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
+      // 10m → партнёр (тег "10m"), как было
+      try { partnerOK = postPartner_(data, "10m").indexOf("error") < 0; }
+      catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
     } else {
-      // ALT-ветка: заблокированные основной веткой сигналы - в свой канал
-      try { altNote = sendAltFeed_(data); }
-      catch (e3) { altNote = "error"; console.error("ALT feed fail:", e3); }
+      // Ветка ALT10m: заблокированные основной веткой сигналы проходят
+      // свой фильтр; прошедшие → ТГ-группа ALT10m + партнёр (тег ALT10m).
+      // altMarker пишется в колонку ALT10m листа BLOCKEDsignal.
+      try { const r = handleAlt10m_(data); altNote = r.note; altMarker = r.marker; }
+      catch (e3) { altNote = "error"; console.error("ALT10m fail:", e3); }
     }
   }
 
@@ -710,7 +744,7 @@ function doPost(e) {
       sheetOK = writeToSheets_(ss, data);
       if (!sheetOK) logFailed_safe_(ss, data, "ALLsignal write failed после " + CONFIG.WRITE_RETRIES + " попыток");
     } else if (decision.status === "blocked") {
-      sheetOK = logBlocked_(ss, data, decision.message);
+      sheetOK = logBlocked_(ss, data, decision.message, altMarker);
       if (!sheetOK) logFailed_safe_(ss, data, "BLOCKED write failed: " + decision.message);
     }
     if (decisionMexc && mexcDelivery) {
@@ -730,17 +764,94 @@ function doPost(e) {
   return buildResponse("blocked", decision.message + " (sheet:" + sheetOK + ", alt:" + altNote + ")" + mexcNote);
 }
 
-// ─── ALT-ветка: доставка заблокированных сигналов (v3.9.3) ───
-// Возвращает заметку для лога: "off" / "no-chat" / "sent".
-function sendAltFeed_(data) {
-  const af = CONFIG.ALT_FEED;
-  if (!af.ENABLED) return "off";
+// ─── Партнёрский хук: один URL, тег в поле "timing" (v3.9.4) ──
+// Возвращает заметку для лога: "off" / "off:<tag>" / "http NNN".
+// Гейт: мастер PARTNER_WEBHOOK_ENABLED + PARTNER_STREAMS[tag].
+function postPartner_(data, tag) {
+  if (!CONFIG.PARTNER_WEBHOOK_ENABLED) return "off";
+  if (!CONFIG.PARTNER_STREAMS[tag]) return "off:" + tag;
+  const payload = {
+    ticker:     data.ticker     || "",
+    direction:  data.direction  || "",
+    price:      data.price      || "",
+    volume:     data.volume     || "",
+    text:       data.text       || "",
+    bartime:    data.bartime    || "",
+    timing:     tag,                       // "10m"/"ALT10m"/"MEXC_10m"/"MEXC_30m"
+    receivedAt: data.receivedAt || new Date().toISOString(),
+  };
+  const resp = UrlFetchApp.fetch(CONFIG.PARTNER_WEBHOOK_URL, {
+    method: "post", contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true, deadline: CONFIG.PARTNER_WEBHOOK_TIMEOUT,
+  });
+  const code = resp.getResponseCode();
+  console.log("Partner[" + tag + "]:", code);
+  return "http " + code;
+}
+
+// ─── Ветка ALT10m: решение + доставка (v3.9.4) ───────────────
+// Возвращает { note, marker }: note - для лога, marker - "ALT10m"
+// или "" (что писать в колонку ALT10m листа BLOCKEDsignal).
+function handleAlt10m_(data) {
+  if (!CONFIG.ALT10M.ENABLED) return { note: "off", marker: "" };
+  // решение под своим локом (свой стейт, без сетевого IO)
+  const lock = LockService.getScriptLock();
+  let d = null;
+  if (lock.tryLock(25000)) {
+    try { d = decideAlt_(data); }
+    catch (err) { console.error("decideAlt error:", err); d = null; }
+    lock.releaseLock();
+  } else {
+    console.error("ALT10m lock timeout - пропуск");
+    return { note: "lock-timeout", marker: "" };
+  }
+  if (!d || d.status !== "sent") return { note: (d ? d.message : "err"), marker: "" };
+
+  // прошёл фильтр ALT10m → доставка
+  let tg = "-", partner = "-";
   const props = PropertiesService.getScriptProperties();
-  const chatId = props.getProperty(af.CHAT_ID_PROP);
-  if (!chatId) return "no-chat";
-  const token = props.getProperty(af.BOT_TOKEN_PROP);   // пусто = основной бот
-  sendTelegram(data, chatId, token || null);
-  return "sent";
+  const chatId = props.getProperty(CONFIG.ALT10M.CHAT_ID_PROP);
+  if (chatId) {
+    const token = props.getProperty(CONFIG.ALT10M.BOT_TOKEN_PROP);
+    try { sendTelegram(data, chatId, token || null); tg = "ok"; }
+    catch (e) { tg = "err"; console.error("ALT10m TG fail:", e); }
+  } else { tg = "no-chat"; }
+  try { partner = postPartner_(data, "ALT10m"); }
+  catch (e) { partner = "err"; console.error("ALT10m partner fail:", e); }
+  return { note: "sent (tg:" + tg + ", partner:" + partner + ")", marker: "ALT10m" };
+}
+
+// Лёгкое решение ветки ALT10m: только окно + лимит одинаковой цены,
+// по своим лимитам (CONFIG.ALT10M). Без time-фильтров/карантина/капа.
+function decideAlt_(data) {
+  const cfg = CONFIG.ALT10M;
+  const now = data.bartime ? new Date(data.bartime) : new Date();
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(cfg.STATE_KEY);
+  let state = raw ? JSON.parse(raw) : { sent: [] };
+  if (!state.sent) state.sent = [];
+  const windowMs = cfg.WINDOW_MINUTES * 60 * 1000;
+  state.sent = state.sent.filter(s => now.getTime() - s.t < windowMs);
+
+  const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
+  const dirUp = String(data.direction || "").toUpperCase();
+  const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" : ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
+  const price = (parseFloat(data.price) || 0).toFixed(2);
+  const lim = cfg.LIMITS[asset] || cfg.LIMITS.ETH;
+  const sameAsset = state.sent.filter(s => s.asset === asset);
+  const save = () => props.setProperty(cfg.STATE_KEY, JSON.stringify(state));
+
+  if (sameAsset.length >= lim.MAX_SIGNALS_PER_WINDOW) {
+    save(); return { status: "blocked", message: "ALT-окно " + asset + " (" + sameAsset.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")" };
+  }
+  const samePrice = sameAsset.filter(s => s.price === price).length;
+  if (samePrice >= lim.MAX_SAME_PRICE) {
+    save(); return { status: "blocked", message: "ALT-цена " + asset + " (" + samePrice + "/" + lim.MAX_SAME_PRICE + ")" };
+  }
+  state.sent.push({ t: now.getTime(), price: price, dir: dir, asset: asset });
+  save();
+  return { status: "sent", message: "ALT10m " + asset + " " + dir };
 }
 
 // ─── MEXC: доставка (v3.9.3, БЕЗ листов - они пишутся позже) ──
@@ -757,7 +868,7 @@ function mexcDeliver_(data, decisionMexc, payout) {
   const timing = mexcTiming_(data);
   const tLabel = mexcTimingLabel_(timing);   // "MEXC _10m" / "MEXC _30m"
   const pv = mexcPayoutFor_(payout, asset, nowMs, dir, timing);
-  const out = { tLabel: tLabel, pvCell: (pv.known ? pv.value : ""), tgOK: true, hookNote: "off" };
+  const out = { tLabel: tLabel, pvCell: (pv.known ? pv.value : ""), tgOK: true, hookNote: "off", partnerNote: "off" };
   if (decisionMexc.status !== "sent") return out;
 
   // Короткий формат для группы MEXC: шапка (тайминг + актив +
@@ -769,9 +880,12 @@ function mexcDeliver_(data, decisionMexc, payout) {
   const mexcText = header + "\n💰 Price: " + (data.price || "-");
   try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
   catch (e2) { out.tgOK = false; console.error("MEXC TG fail:", e2); }
-  // MEXC-хук (как партнёрский); сбой не мешает потоку
+  // MEXC-хук (отдельный получатель/исполнитель); сбой не мешает потоку
   try { out.hookNote = sendMexcWebhook_(data, tLabel, pv.known ? pv.value : null); }
   catch (eX) { out.hookNote = "error"; console.error("MEXC hook fail:", eX); }
+  // Партнёрский хук с тегом MEXC_10m / MEXC_30m (по умолчанию выключен)
+  try { out.partnerNote = postPartner_(data, "MEXC_" + timing + "m"); }
+  catch (eP) { out.partnerNote = "error"; console.error("MEXC partner fail:", eP); }
   return out;
 }
 
@@ -784,7 +898,7 @@ function mexcLogSheet_(ss, data, decisionMexc, d) {
       data.volume || "", data.text || "", data.Settings || "",
       data.direction1 || "", data.direction2 || "", d.pvCell, d.tLabel
     ]);
-    return "sent: " + decisionMexc.message + " (tg:" + d.tgOK + ", sheet:" + okW + ", hook:" + d.hookNote + ")";
+    return "sent: " + decisionMexc.message + " (tg:" + d.tgOK + ", sheet:" + okW + ", hook:" + d.hookNote + ", partner:" + d.partnerNote + ")";
   } else {
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
     const okB = appendRowSafe_(sheet, [
@@ -967,39 +1081,6 @@ function sendTelegram(data, chatIdOpt, tokenOpt) {
   }
 }
 
-// ─── PARTNER WEBHOOK ─────────────────────────────────────────
-// Шлём только прошедшие фильтры (вызов только при status==="sent").
-// Вызывается лишь в основной ветке (см. doPost) - значит, партнёру
-// уходят только 10-минутки; сигналы MEXC (в т.ч. 30-минутки) партнёру
-// НЕ передаются. secret и Settings тоже НЕ передаются.
-// Ошибка на их стороне не влияет на основной поток.
-function sendPartnerWebhook(data) {
-  if (!CONFIG.PARTNER_WEBHOOK_ENABLED) return;
-  const payload = {
-    ticker:     data.ticker     || "",
-    direction:  data.direction  || "",
-    price:      data.price      || "",
-    volume:     data.volume     || "",
-    text:       data.text       || "",
-    bartime:    data.bartime    || "",
-    timing:     "10m",   // партнёру уходят только 10-минутки основной ветки
-    receivedAt: data.receivedAt || new Date().toISOString(),   // время прихода, до мс (UTC)
-  };
-  try {
-    const response = UrlFetchApp.fetch(CONFIG.PARTNER_WEBHOOK_URL, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-      deadline: CONFIG.PARTNER_WEBHOOK_TIMEOUT,
-    });
-    console.log("Partner webhook:", response.getResponseCode(), response.getContentText());
-  } catch (err) {
-    console.error("Partner webhook failed:", err);
-    throw err; // пробрасываем чтобы partnerOK стал false в логе
-  }
-}
-
 // ─── НАДЁЖНАЯ ЗАПИСЬ ─────────────────────────────────────────
 function appendRowSafe_(sheet, row) {
   for (let i = 0; i < CONFIG.WRITE_RETRIES; i++) {
@@ -1032,7 +1113,7 @@ function getOrCreateSheet_(ss, name, header) {
 }
 
 const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2"];
-const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1"];
+const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1","ALT10m"];
 const HDR_FAILED = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Context"];
 const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout","Timing"];
 const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout","Timing"];
@@ -1052,13 +1133,13 @@ function writeToSheets_(ss, data) {
   }
 }
 
-function logBlocked_(ss, data, reason) {
+function logBlocked_(ss, data, reason, altMarker) {
   try {
     const sheet = getOrCreateSheet_(ss, CONFIG.BLOCKED_SHEET_NAME, HDR_BLOCK);
     return appendRowSafe_(sheet, [
       new Date(), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "", reason,
-      data.direction1 || ""
+      data.direction1 || "", altMarker || ""    // колонка ALT10m: "ALT10m" если ушёл в ветку
     ]);
   } catch (err) {
     console.error("logBlocked_ fatal:", err);
@@ -1095,9 +1176,11 @@ function buildResponse(status, message) {
 
 // ─── СБРОС СОСТОЯНИЯ ─────────────────────────────────────────
 function resetState() {
-  PropertiesService.getScriptProperties().deleteProperty("signal_state_v2");
-  PropertiesService.getScriptProperties().deleteProperty(CONFIG.MEXC.STATE_KEY);
-  console.log("State reset OK (обе ветки)");
+  const p = PropertiesService.getScriptProperties();
+  p.deleteProperty("signal_state_v2");
+  p.deleteProperty(CONFIG.MEXC.STATE_KEY);
+  p.deleteProperty(CONFIG.ALT10M.STATE_KEY);
+  console.log("State reset OK (основная, MEXC, ALT10m)");
 }
 
 // ─── САМОПРОВЕРКА (запусти руками один раз после деплоя) ─────
@@ -1117,14 +1200,20 @@ function selfTest() {
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
       "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + " " + CONFIG.MEXC.TIMINGS.join("/") + ")") : "ручной (setMexcPayoutManual)",
       "| MEXC-хук:", CONFIG.MEXC.WEBHOOK_ENABLED ? (CONFIG.MEXC.WEBHOOK_URL || "URL НЕ ЗАДАН") : "DISABLED",
-      "| ALT-ветка:", CONFIG.ALT_FEED.ENABLED
-        ? ("chat:" + !!PropertiesService.getScriptProperties().getProperty(CONFIG.ALT_FEED.CHAT_ID_PROP) +
-           " свой бот:" + !!PropertiesService.getScriptProperties().getProperty(CONFIG.ALT_FEED.BOT_TOKEN_PROP))
-        : "DISABLED",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
   } else {
     console.log("MEXC: ветка DISABLED");
   }
+  const props = PropertiesService.getScriptProperties();
+  console.log("Партнёрские потоки:",
+    "мастер:", CONFIG.PARTNER_WEBHOOK_ENABLED,
+    "| потоки:", JSON.stringify(CONFIG.PARTNER_STREAMS));
+  console.log("ALT10m:", CONFIG.ALT10M.ENABLED
+    ? ("ON | окно " + CONFIG.ALT10M.WINDOW_MINUTES + "мин, ETH " + CONFIG.ALT10M.LIMITS.ETH.MAX_SIGNALS_PER_WINDOW +
+       "/BTC " + CONFIG.ALT10M.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW + ", одинаковых ≤" + CONFIG.ALT10M.LIMITS.ETH.MAX_SAME_PRICE +
+       " | ТГ-группа: " + !!props.getProperty(CONFIG.ALT10M.CHAT_ID_PROP) +
+       " | партнёр: " + (CONFIG.PARTNER_STREAMS["ALT10m"] ? "ON" : "off"))
+    : "DISABLED");
   resetBadlistCache();
   const bl = loadBadlist_();
   console.log("OK → вкладки:", a.getName(), "/", b.getName(), "/", f.getName(),

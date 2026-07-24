@@ -390,29 +390,6 @@ html, body {
 .pl-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
 .pl-text { font-size: 13px; color: var(--text-muted); }
 
-/* Rules grid */
-.rules-grid { display: flex; flex-direction: column; gap: 8px; }
-.rule-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px;
-  background: var(--bg3);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-}
-.rule-num {
-  background: var(--gradient);
-  color: white;
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
 /* Risk list */
 .risk-list { display: flex; flex-direction: column; gap: 8px; }
 .risk-item {
@@ -740,31 +717,6 @@ html, body {
   flex-direction: column;
   gap: 5px;
 }
-
-/* Steps list */
-.steps-list { display: flex; flex-direction: column; gap: 0; }
-.step-item {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--card-border);
-}
-.step-item:last-child { border-bottom: none; }
-.step-num {
-  width: 28px; height: 28px;
-  background: var(--gradient);
-  color: white;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-.step-content strong { display: block; font-size: 14px; margin-bottom: 3px; }
-.step-content p { font-size: 13px; color: var(--text-muted); }
-.dir-up { color: var(--green); font-weight: 600; }
-.dir-down { color: var(--red); font-weight: 600; }
 
 /* Formula */
 .formula-block { margin-bottom: 14px; }
@@ -2323,24 +2275,7 @@ html, body {
 .fd-sub2 span:not(:last-child)::after { content: '•'; margin-left: 8px; color: var(--card-border); font-weight: 700; }
 .fd-sub2 b { font-weight: 800; margin-left: 2px; }
 
-/* ===== SOP PANEL — Futures Prediction v2 (preview) ===== */
-.sop-preview-badge {
-  display: flex; justify-content: center; margin-bottom: 14px; cursor: pointer;
-}
-.sop-preview-badge span {
-  font-size: 11px; font-weight: 700; letter-spacing: .3px;
-  padding: 6px 14px; border-radius: 20px;
-  background: rgba(157,80,255,.12); border: 1px solid rgba(157,80,255,.35);
-  color: var(--purple); text-shadow: 0 0 10px rgba(157,80,255,.5);
-  transition: border-color .2s, background .2s;
-}
-.sop-preview-badge:active span { background: rgba(157,80,255,.2); border-color: rgba(157,80,255,.5); }
-.sop-backlink {
-  display: block; text-align: center; font-size: 12px; color: var(--text-muted);
-  margin: 2px 0 16px; cursor: pointer;
-}
-.sop-backlink:active { color: var(--blue); }
-
+/* ===== SOP PANEL — Регламент работы с сигналом ===== */
 .sop-panel { margin-bottom: 4px; }
 .sop-sub { font-size: 12.5px; color: var(--text-muted); margin: -8px 0 16px; line-height: 1.4; }
 

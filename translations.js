@@ -36,12 +36,6 @@ ru: {
   'prin.lose.title':'Где теряем',
   'prin.lose.text':'На импульсах и переходах к новым ценовым диапазонам- это наша зона уязвимости',
   'prin.img':'Примеры отработок сигналов:',
-  'rules.title':'Базовые правила работы с сигналами',
-  'rule.1':'Размер позиции: <strong>1–5%</strong> от депозита на один сигнал',
-  'rule.2':'Время входа: исключительно <strong>10 минут</strong>. Открывать ставку сразу после сигнала.',
-  'rule.3':'Пропускайте вход, если <strong>цена ушла импульсом</strong> без откатов после сигнала',
-  'rule.4':'<strong>Строго одна ставка на каждый сигнал.</strong> Не удваивать, не усреднять',
-  'rule.5':'Если после сигнала <strong>цена резко вернулась против ставки за считанные секунды- вход пропускаем:</strong> преимущество сигнала уже потеряно',
   'risk.title':'⚠️ Риск-менеджмент',
   'risk.1':'НЕ завышайте риски','risk.2':'НЕ входите в сделку более одного раза на ускорении',
   'risk.3':'Сохраняйте хладнокровие','risk.4':'Держитесь плана',
@@ -56,10 +50,6 @@ ru: {
   'psych.4':'Убыток- не поражение, а рабочий элемент процесса',
   'psych.goal':'Цель: стабильная прибыль в долгосрочной перспективе, а не быстрые деньги',
   'psych.img':'Примеры успешных серий:',
-  'sop.preview.badge':'🆕 Превью нового дизайна раздела',
-  'sop.backlink':'← Вернуться к текущей версии',
-  'sop.opennew':'🆕 Предпросмотр нового дизайна раздела →',
-  'title.fp.v2':'Futures Prediction · Превью',
   'sop.title':'Регламент работы с сигналом','sop.sub':'Шаги: от сигнала до отметки результата',
   'sop.s1.title':'Алгоритм открытия ставки',
   'sop.s1.i1.t':'Сигнал в Telegram','sop.s1.i1.d':'Поступил сигнал',
@@ -138,7 +128,6 @@ ru: {
 <div class="article-highlight blue"><div class="insight-row"><div class="insight-icon insight-icon-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></div><strong>Главный вывод</strong></div><p>Профессионал отличается от новичка не инструментами, а мышлением. Меняется не стратегия- меняешься ты.</p><p>С переходом к качественной парадигме трейдинг становится работой, а не игрой в угадайку.</p></div>`,
 
   'art.whatis.body': `<p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют. Вы ставите ставку: вырастет цена или упадет за определенное время.</p>
-<div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Выберите базовый актив</strong><p>BTC или ETH на MEXC или Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Выберите время истечения (экспирации)</strong><p>10м, 30м, 1ч или 1д- в зависимости от ваших предпочтений</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Введите сумму</strong><p>Минимум: 5 USDT · Максимум: 250 USDT на сделку</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Выберите направление</strong><p><span class="dir-up">↑ Рост</span>- если ожидаете рост · <span class="dir-down">↓ Падение</span>- если ожидаете снижение</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Подтвердите и ждите</strong><p>Позицию нельзя закрыть досрочно- расчёт автоматически по истечении</p></div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Основные лимиты</h3><div class="limits-list"><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> Открытые позиции: не более 5 одновременно</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg> Сделок в день: до 100</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Нельзя закрыть позицию досрочно</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> API-торговля недоступна</div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Расчёт выплат</h3><div class="formula-block"><div class="formula">Сумма расчёта = основная сумма + прибыль</div><div class="formula">Прибыль = сумма × коэффициент выплат</div></div><div class="example-block"><div class="example-title">Пример (выплата 80%, вход 100 USDT):</div><div class="example-row win">✅ Верный прогноз: получаете 180 USDT (+80 USDT)</div><div class="example-row loss">❌ Неверный прогноз: теряете 100 USDT</div><div class="example-row draw">➖ Ничья (цена не изменилась): возврат 100 USDT</div></div></div>`,
 
@@ -186,12 +175,6 @@ en: {
   'prin.lose.title':'Where we lose',
   'prin.lose.text':'On impulses and transitions to new price ranges- this is our vulnerability zone',
   'prin.img':'Signal execution examples:',
-  'rules.title':'Basic Rules for Working with Signals',
-  'rule.1':'Position size: <strong>1–5%</strong> of deposit per signal',
-  'rule.2':'Entry time: exclusively <strong>10 minutes</strong>. Place the bet immediately after the signal.',
-  'rule.3':'Skip entry if <strong>price moved impulsively</strong> without pullbacks after the signal',
-  'rule.4':'<strong>Strictly one bet per signal.</strong> Do not double, do not average',
-  'rule.5':'If after the signal <strong>price sharply reversed against the bet within seconds - skip the entry:</strong> the signal\'s edge is already lost',
   'risk.title':'⚠️ Risk Management',
   'risk.1':'Do NOT oversize risks','risk.2':'Do NOT enter a trade more than once on acceleration',
   'risk.3':'Stay calm','risk.4':'Stick to the plan',
@@ -206,10 +189,6 @@ en: {
   'psych.4':'A loss is not a defeat - it\'s a working element of the process',
   'psych.goal':'Goal: consistent long-term profit, not quick money',
   'psych.img':'Successful streak examples:',
-  'sop.preview.badge':'🆕 New section design preview',
-  'sop.backlink':'← Back to current version',
-  'sop.opennew':'🆕 Preview the new section design →',
-  'title.fp.v2':'Futures Prediction · Preview',
   'sop.title':'Signal Operating Procedure','sop.sub':'Steps: from signal to result mark',
   'sop.s1.title':'Bet Opening Algorithm',
   'sop.s1.i1.t':'Signal in Telegram','sop.s1.i1.d':'Signal received',
@@ -288,7 +267,6 @@ en: {
 <div class="article-highlight blue"><div class="insight-row"><div class="insight-icon insight-icon-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></div><strong>The main takeaway</strong></div><p>A professional differs from a beginner not in tools, but in mindset. It's not the strategy that changes- it's you.</p><p>When you shift to the qualitative paradigm, trading becomes work, not a guessing game.</p></div>`,
 
   'art.whatis.body': `<p>Futures Prediction is an opportunity to profit by predicting cryptocurrency prices. You place a bet: will the price go up or down within a set time period.</p>
-<div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Choose the base asset</strong><p>BTC or ETH on MEXC or Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Choose expiration time</strong><p>10m, 30m, 1h or 1d- depending on your preference</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Enter the amount</strong><p>Minimum: 5 USDT · Maximum: 250 USDT per trade</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Choose the direction</strong><p><span class="dir-up">↑ Up</span>- if you expect growth · <span class="dir-down">↓ Down</span>- if you expect a decline</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Confirm and wait</strong><p>Positions cannot be closed early- settlement is automatic at expiration</p></div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Key Limits</h3><div class="limits-list"><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> Open positions: max 5 simultaneously</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg> Trades per day: up to 100</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Positions cannot be closed early</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> API trading not available</div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Payout Calculation</h3><div class="formula-block"><div class="formula">settlement = principal + profit</div><div class="formula">profit = amount × payout coefficient</div></div><div class="example-block"><div class="example-title">Example (80% payout, 100 USDT entry):</div><div class="example-row win">✅ Correct prediction: receive 180 USDT (+80 USDT)</div><div class="example-row loss">❌ Wrong prediction: lose 100 USDT</div><div class="example-row draw">➖ Draw (price unchanged): 100 USDT returned</div></div></div>`,
 
@@ -335,12 +313,6 @@ uk: {
   'prin.lose.title':'Де втрачаємо',
   'prin.lose.text':'На імпульсах та переходах до нових цінових діапазонів- це наша зона вразливості',
   'prin.img':'Приклади відпрацювань сигналів:',
-  'rules.title':'Базові правила роботи з сигналами',
-  'rule.1':'Розмір позиції: <strong>1–5%</strong> від депозиту на один сигнал',
-  'rule.2':'Час входу: виключно <strong>10 хвилин</strong>. Відкривати ставку одразу після сигналу.',
-  'rule.3':'Пропускайте вхід, якщо <strong>ціна пішла імпульсом</strong> без відкатів після сигналу',
-  'rule.4':'<strong>Строго одна ставка на кожен сигнал.</strong> Не подвоювати, не усереднювати',
-  'rule.5':'Якщо після сигналу <strong>ціна різко повернулась проти ставки за лічені секунди- вхід пропускаємо:</strong> перевага сигналу вже втрачена',
   'risk.title':'⚠️ Ризик-менеджмент',
   'risk.1':'НЕ завищуйте ризики','risk.2':'НЕ входьте в угоду більше одного разу на прискоренні',
   'risk.3':'Зберігайте холоднокровність','risk.4':'Тримайтеся плану',
@@ -355,10 +327,6 @@ uk: {
   'psych.4':'Збиток- не поразка, а робочий елемент процесу',
   'psych.goal':'Мета: стабільний прибуток у довгостроковій перспективі, а не швидкі гроші',
   'psych.img':'Приклади успішних серій:',
-  'sop.preview.badge':'🆕 Превʼю нового дизайну розділу',
-  'sop.backlink':'← Повернутися до поточної версії',
-  'sop.opennew':'🆕 Передперегляд нового дизайну розділу →',
-  'title.fp.v2':'Futures Prediction · Превʼю',
   'sop.title':'Регламент роботи із сигналом','sop.sub':'Кроки: від сигналу до відмітки результату',
   'sop.s1.title':'Алгоритм відкриття ставки',
   'sop.s1.i1.t':'Сигнал у Telegram','sop.s1.i1.d':'Надійшов сигнал',
@@ -437,7 +405,6 @@ uk: {
 <div class="article-highlight blue"><div class="insight-row"><div class="insight-icon insight-icon-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></div><strong>Головний висновок</strong></div><p>Професіонал відрізняється від новачка не інструментами, а мисленням. Змінюється не стратегія- змінюєшся ти.</p><p>З переходом до якісної парадигми трейдинг стає роботою, а не грою в угадайку.</p></div>`,
 
   'art.whatis.body': `<p>Ф'ючерсні прогнози- це можливість заробити на прогнозуванні ціни криптовалют. Ти ставиш ставку: зросте ціна чи впаде за певний час.</p>
-<div class="steps-list"><div class="step-item"><div class="step-num">1</div><div class="step-content"><strong>Обери базовий актив</strong><p>BTC або ETH на MEXC або Binance</p></div></div><div class="step-item"><div class="step-num">2</div><div class="step-content"><strong>Обери час експірації</strong><p>10хв, 30хв, 1год або 1д- залежно від твоїх вподобань</p></div></div><div class="step-item"><div class="step-num">3</div><div class="step-content"><strong>Введи суму</strong><p>Мінімум: 5 USDT · Максимум: 250 USDT на угоду</p></div></div><div class="step-item"><div class="step-num">4</div><div class="step-content"><strong>Обери напрямок</strong><p><span class="dir-up">↑ Зріст</span>- якщо очікуєш зріст · <span class="dir-down">↓ Падіння</span>- якщо очікуєш зниження</p></div></div><div class="step-item"><div class="step-num">5</div><div class="step-content"><strong>Підтверди і чекай</strong><p>Позицію не можна закрити достроково- розрахунок відбувається автоматично після закінчення</p></div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Основні ліміти</h3><div class="limits-list"><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg> Відкриті позиції: не більше 5 одночасно</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg> Угод на день: до 100</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Не можна закрити позицію достроково</div><div class="limit-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> API-торгівля недоступна</div></div></div>
 <div class="content-card"><h3 class="section-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Розрахунок виплат</h3><div class="formula-block"><div class="formula">сума розрахунку = основна сума + прибуток</div><div class="formula">прибуток = сума × коефіцієнт виплат</div></div><div class="example-block"><div class="example-title">Приклад (виплата 80%, вхід 100 USDT):</div><div class="example-row win">✅ Правильний прогноз: отримуєш 180 USDT (+80 USDT)</div><div class="example-row loss">❌ Неправильний прогноз: втрачаєш 100 USDT</div><div class="example-row draw">➖ Нічия (ціна не змінилась): повернення 100 USDT</div></div></div>`,
 

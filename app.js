@@ -434,13 +434,40 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
       }
     }
 
+    const refLine100 = {
+      id: 'refLine100',
+      afterDraw(chart) {
+        const { ctx: c, chartArea, scales: { y } } = chart;
+        if (!chartArea || y.min > 100 || y.max < 100) return;
+        const py = y.getPixelForValue(100);
+        c.save();
+        c.setLineDash([3, 3]);
+        c.strokeStyle = 'rgba(123, 132, 176, 0.5)';
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(chartArea.left, py);
+        c.lineTo(chartArea.right, py);
+        c.stroke();
+        c.setLineDash([]);
+        c.fillStyle = '#7B84B0';
+        c.font = '9px sans-serif';
+        c.textBaseline = 'bottom';
+        c.fillText('100%', chartArea.left + 2, py - 2);
+        c.restore();
+      }
+    };
+
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
       data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: mini ? 1.6 : 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      plugins: mini ? [refLine100] : [],
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: !mini, callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
-        scales: mini ? { x: { display: false }, y: { display: false } } : {
+        scales: mini ? {
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 4, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+          y: { min: 0, display: false }
+        } : {
           x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }

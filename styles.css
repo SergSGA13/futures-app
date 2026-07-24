@@ -258,7 +258,7 @@ html, body {
 }
 .stats-pnl-mini-wrap {
   position: relative;
-  height: 82px;
+  height: 118px;
   max-width: 100%;
 }
 .stats-pnl-mini-wrap canvas { max-width: 100% !important; }
@@ -274,19 +274,13 @@ html, body {
   transition: border-color 0.2s;
 }
 .stats-preview:active { border-color: rgba(102,163,255,0.3); }
-.stats-header {
+.stats-header-btn {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
-}
-.stats-label {
-  font-size: 14px;
-  font-weight: 600;
-}
-.stats-link {
-  font-size: 13px;
-  color: var(--blue);
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--card-border);
 }
 .stats-row {
   display: grid;

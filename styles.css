@@ -261,7 +261,10 @@ html, body {
   height: 118px;
   max-width: 100%;
 }
-.stats-pnl-mini-wrap canvas { max-width: 100% !important; }
+.stats-pnl-mini-wrap canvas {
+  max-width: 100% !important;
+  filter: drop-shadow(0 0 4px rgba(157,80,255,0.55)) drop-shadow(0 0 11px rgba(157,80,255,0.35)) drop-shadow(0 0 20px rgba(102,163,255,0.2));
+}
 
 /* Stats preview */
 .stats-preview {

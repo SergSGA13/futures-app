@@ -434,38 +434,57 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
       }
     }
 
-    const refLine100 = {
-      id: 'refLine100',
+    const refLinesHundreds = {
+      id: 'refLinesHundreds',
       afterDraw(chart) {
         const { ctx: c, chartArea, scales: { y } } = chart;
-        if (!chartArea || y.min > 100 || y.max < 100) return;
-        const py = y.getPixelForValue(100);
-        c.save();
-        c.setLineDash([3, 3]);
-        c.strokeStyle = 'rgba(123, 132, 176, 0.5)';
-        c.lineWidth = 1;
-        c.beginPath();
-        c.moveTo(chartArea.left, py);
-        c.lineTo(chartArea.right, py);
-        c.stroke();
-        c.setLineDash([]);
-        c.fillStyle = '#7B84B0';
-        c.font = '9px sans-serif';
-        c.textBaseline = 'bottom';
-        c.fillText('100%', chartArea.left + 2, py - 2);
-        c.restore();
+        if (!chartArea) return;
+        const maxMark = Math.floor(y.max / 100) * 100;
+        if (maxMark < 100) return;
+        let step = 100;
+        const lineCount = maxMark / 100;
+        if (lineCount > 8) step = Math.ceil(lineCount / 8) * 100;
+        for (let v = 100; v <= maxMark; v += step) {
+          if (v < y.min) continue;
+          const py = y.getPixelForValue(v);
+          if (py < chartArea.top || py > chartArea.bottom) continue;
+          c.save();
+          c.setLineDash([3, 3]);
+          c.strokeStyle = 'rgba(123, 132, 176, 0.4)';
+          c.lineWidth = 1;
+          c.beginPath();
+          c.moveTo(chartArea.left, py);
+          c.lineTo(chartArea.right, py);
+          c.stroke();
+          c.setLineDash([]);
+          c.fillStyle = '#7B84B0';
+          c.font = '9px sans-serif';
+          c.textBaseline = 'bottom';
+          c.fillText(`${v}%`, chartArea.left + 2, py - 2);
+          c.restore();
+        }
       }
     };
 
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
       data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: mini ? 1.6 : 2, pointRadius: 0, fill: true, tension: 0.35 }] },
-      plugins: mini ? [refLine100] : [],
+      plugins: mini ? [refLinesHundreds] : [],
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: !mini, callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: mini ? {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 4, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+          x: {
+            afterBuildTicks: scale => {
+              const n = labels.length;
+              const cnt = Math.min(4, n);
+              const idxs = new Set();
+              for (let k = 0; k < cnt; k++) idxs.add(Math.round((n - 1) * k / (cnt - 1 || 1)));
+              scale.ticks = [...idxs].map(i => ({ value: i }));
+            },
+            ticks: { color: '#7B84B0', maxRotation: 0, font: { size: 9 } },
+            grid: { display: false }
+          },
           y: { min: 0, display: false }
         } : {
           x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },

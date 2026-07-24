@@ -2322,3 +2322,111 @@ html, body {
 .fd-sub2 span { display: inline-flex; align-items: center; gap: 5px; margin: 0 8px; white-space: nowrap; }
 .fd-sub2 span:not(:last-child)::after { content: '•'; margin-left: 8px; color: var(--card-border); font-weight: 700; }
 .fd-sub2 b { font-weight: 800; margin-left: 2px; }
+
+/* ===== SOP PANEL — Futures Prediction v2 (preview) ===== */
+.sop-preview-badge {
+  display: flex; justify-content: center; margin-bottom: 14px; cursor: pointer;
+}
+.sop-preview-badge span {
+  font-size: 11px; font-weight: 700; letter-spacing: .3px;
+  padding: 6px 14px; border-radius: 20px;
+  background: rgba(157,80,255,.12); border: 1px solid rgba(157,80,255,.35);
+  color: var(--purple); text-shadow: 0 0 10px rgba(157,80,255,.5);
+  transition: border-color .2s, background .2s;
+}
+.sop-preview-badge:active span { background: rgba(157,80,255,.2); border-color: rgba(157,80,255,.5); }
+.sop-backlink {
+  display: block; text-align: center; font-size: 12px; color: var(--text-muted);
+  margin: 2px 0 16px; cursor: pointer;
+}
+.sop-backlink:active { color: var(--blue); }
+
+.sop-panel { margin-bottom: 4px; }
+.sop-sub { font-size: 12.5px; color: var(--text-muted); margin: -8px 0 16px; line-height: 1.4; }
+
+.sop-stepcard {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 16px 16px 6px;
+  margin-bottom: 12px;
+}
+.sop-stepcard.c-blue   { border-color: rgba(102,163,255,.28); box-shadow: 0 0 24px rgba(102,163,255,.06), inset 0 0 30px rgba(102,163,255,.025); }
+.sop-stepcard.c-yellow { border-color: rgba(255,209,102,.30); box-shadow: 0 0 24px rgba(255,209,102,.07), inset 0 0 30px rgba(255,209,102,.025); }
+.sop-stepcard.c-purple { border-color: rgba(157,80,255,.28);  box-shadow: 0 0 24px rgba(157,80,255,.07), inset 0 0 30px rgba(157,80,255,.025); }
+
+.sop-stepcard-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.sop-stepcard-head h3 { font-size: 15px; font-weight: 700; margin: 0; }
+.sop-num {
+  width: 28px; height: 28px; flex-shrink: 0;
+  background: var(--gradient); color: #fff;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800;
+  box-shadow: 0 0 14px rgba(157,80,255,.5);
+}
+
+.sop-flow { display: flex; flex-direction: column; }
+.sop-flow-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--card-border);
+}
+.sop-flow-item:last-child { border-bottom: none; }
+.sop-flow-icon {
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.sop-flow-icon.i-blue   { background: rgba(102,163,255,.14); box-shadow: 0 0 12px rgba(102,163,255,.28); }
+.sop-flow-icon.i-purple { background: rgba(157,80,255,.14);  box-shadow: 0 0 12px rgba(157,80,255,.28); }
+.sop-flow-icon.i-yellow { background: rgba(255,209,102,.14); box-shadow: 0 0 12px rgba(255,209,102,.28); }
+.sop-flow-icon.i-green  { background: rgba(78,255,160,.14);  box-shadow: 0 0 12px rgba(78,255,160,.28); }
+.sop-flow-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sop-flow-text strong { font-size: 13.5px; font-weight: 700; }
+.sop-flow-text span { font-size: 12px; color: var(--text-muted); }
+
+.sop-timer {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,209,102,.08); border: 1px solid rgba(255,209,102,.25);
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px;
+  font-size: 13px; font-weight: 700; color: var(--yellow);
+}
+.sop-list { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 0; counter-reset: sop-li; }
+.sop-list li {
+  counter-increment: sop-li;
+  font-size: 13px; color: var(--text); padding-left: 24px; position: relative; line-height: 1.4;
+}
+.sop-list li::before {
+  content: counter(sop-li); position: absolute; left: 0; top: 0;
+  width: 17px; height: 17px; border-radius: 50%; background: var(--bg3);
+  color: var(--blue); font-size: 10px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.sop-marks { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.sop-mark {
+  flex: 1; min-width: 140px; display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; padding: 8px 10px; border-radius: var(--radius-sm);
+}
+.sop-mark.win  { background: rgba(78,255,160,.09);  color: var(--green); border: 1px solid rgba(78,255,160,.25); }
+.sop-mark.lose { background: rgba(255,82,114,.09);   color: var(--red);   border: 1px solid rgba(255,82,114,.25); }
+.sop-note { font-size: 11.5px; color: var(--text-muted); font-style: italic; line-height: 1.4; padding-bottom: 12px; }
+
+.sop-rules { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+.sop-rule { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.45; }
+.sop-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--purple); box-shadow: 0 0 8px rgba(157,80,255,.7); margin-top: 6px; flex-shrink: 0; }
+
+.sop-cycle {
+  background: var(--bg3); border: 1px solid var(--card-border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px;
+}
+.sop-cycle-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 700; color: var(--green); margin-bottom: 10px;
+}
+.sop-cycle-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.sop-chip {
+  font-size: 11px; font-weight: 600; padding: 6px 10px; border-radius: 20px;
+  background: rgba(102,163,255,.10); border: 1px solid rgba(102,163,255,.25); color: var(--text);
+  white-space: nowrap;
+}
+.sop-chip.win-lose { background: rgba(78,255,160,.10); border-color: rgba(78,255,160,.3); color: var(--green); }
+.sop-chip-arrow { color: var(--text-muted); font-size: 12px; }

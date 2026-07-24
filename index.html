@@ -182,6 +182,10 @@
           </a>
         </div>
 
+        <div class="sop-preview-badge" style="margin: 14px 0 0" onclick="navigate('futures-prediction-v2')">
+          <span data-i18n="sop.opennew">🆕 Предпросмотр нового дизайна раздела →</span>
+        </div>
+
         <h2 class="section-title" style="margin: 20px 0 10px" data-i18n="art.whatis.full">Что такое Futures Prediction?</h2>
         <div class="article-body" data-i18n-html="art.whatis.body">
           <p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют.</p>
@@ -232,6 +236,147 @@
       </div>
     </div>
     <!-- /FUTURES PREDICTION PAGE -->
+
+    <!-- FUTURES PREDICTION PAGE V2 (design preview / copy for comparison) -->
+    <div class="page" id="page-futures-prediction-v2">
+      <div class="page-content">
+
+        <div class="sop-preview-badge"><span data-i18n="sop.preview.badge">🆕 Превью нового дизайна раздела</span></div>
+        <span class="sop-backlink" onclick="navigate('futures-prediction')" data-i18n="sop.backlink">← Вернуться к текущей версии</span>
+
+        <div class="sop-panel">
+          <h2 class="section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg><span data-i18n="sop.title">Регламент работы с сигналом</span></h2>
+          <p class="sop-sub" data-i18n="sop.sub">Шаги: от сигнала до отметки результата</p>
+
+          <!-- STEP 1: ALGORITHM -->
+          <div class="sop-stepcard c-blue">
+            <div class="sop-stepcard-head">
+              <span class="sop-num">1</span>
+              <h3 data-i18n="sop.s1.title">Алгоритм открытия ставки</h3>
+            </div>
+            <div class="sop-flow">
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-blue"><svg width="17" height="17" viewBox="0 0 24 24" fill="#66A3FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i1.t">Сигнал в Telegram</strong><span data-i18n="sop.s1.i1.d">Поступил сигнал</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-purple"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i2.t">Binance › Фьючерсы › Ивенты</strong><span data-i18n="sop.s1.i2.d">Открыть раздел</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-blue"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i3.t">Выбрать актив</strong><span data-i18n="sop.s1.i3.d">ETH или BTC — как в сигнале</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-yellow"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i4.t">Временной шаг</strong><span data-i18n="sop.s1.i4.d">10 минут</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-green"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i5.t">Сумма ставки (max 5%)</strong><span data-i18n="sop.s1.i5.d">BTC 5–250 USDT · ETH 5–125 USDT</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-purple"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i6.t">Направление</strong><span data-i18n="sop.s1.i6.d">Вырастет = UP · Снизится = Down</span></div>
+              </div>
+              <div class="sop-flow-item">
+                <div class="sop-flow-icon i-green"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+                <div class="sop-flow-text"><strong data-i18n="sop.s1.i7.t">Подтвердить</strong><span data-i18n="sop.s1.i7.d">Открыть ставку</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 2: RESULT MARKING -->
+          <div class="sop-stepcard c-yellow">
+            <div class="sop-stepcard-head">
+              <span class="sop-num">2</span>
+              <h3 data-i18n="sop.s2.title">Отметка отработки</h3>
+            </div>
+            <div class="sop-timer">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12M6 22h12M6 2c0 6 6 6 6 10s-6 4-6 10M18 2c0 6-6 6-6 10s6 4 6 10"/></svg>
+              <span data-i18n="sop.s2.timer">Через 10 минут — проверить результат</span>
+            </div>
+            <ol class="sop-list">
+              <li data-i18n="sop.s2.i1">Открыть раздел Ивенты и проверить отработку сигнала</li>
+              <li data-i18n="sop.s2.i2">Поставить отметку на сообщение сигнала в Telegram</li>
+            </ol>
+            <div class="sop-marks">
+              <span class="sop-mark win">✓ <span data-i18n="sop.s2.win">зелёная галочка — если WIN</span></span>
+              <span class="sop-mark lose">✕ <span data-i18n="sop.s2.lose">красный крестик — если LOSE</span></span>
+            </div>
+            <p class="sop-note" data-i18n="sop.s2.note">Поставленная отметка помогает каналу собирать объективную статистику</p>
+          </div>
+
+          <!-- STEP 3: MAIN RULES -->
+          <div class="sop-stepcard c-purple">
+            <div class="sop-stepcard-head">
+              <span class="sop-num">3</span>
+              <h3 data-i18n="sop.s3.title">Основные правила</h3>
+            </div>
+            <div class="sop-rules">
+              <div class="sop-rule"><span class="sop-dot"></span><span data-i18n-html="sop.s3.i1"><strong>1 ставка = 1 сигнал.</strong> Не удваивать, не усреднять</span></div>
+              <div class="sop-rule"><span class="sop-dot"></span><span data-i18n-html="sop.s3.i2">Открывать <strong>сразу после сигнала.</strong> Задержка ≤ 1 мин — только при лучшей цене</span></div>
+              <div class="sop-rule"><span class="sop-dot"></span><span data-i18n-html="sop.s3.i3">Пропуск импульсного движения: если цена резко ушла против ставки за секунды — <strong>не входим</strong></span></div>
+            </div>
+          </div>
+
+          <!-- CYCLE SUMMARY -->
+          <div class="sop-cycle">
+            <div class="sop-cycle-title">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
+              <span data-i18n="sop.s4.title">Цикл по каждому сигналу</span>
+            </div>
+            <div class="sop-cycle-chips">
+              <span class="sop-chip" data-i18n="sop.s4.c1">Сигнал</span><span class="sop-chip-arrow">→</span>
+              <span class="sop-chip" data-i18n="sop.s4.c2">Открыть ставку</span><span class="sop-chip-arrow">→</span>
+              <span class="sop-chip" data-i18n="sop.s4.c3">Ждать экспирацию</span><span class="sop-chip-arrow">→</span>
+              <span class="sop-chip" data-i18n="sop.s4.c4">Проверить в Ивентах</span><span class="sop-chip-arrow">→</span>
+              <span class="sop-chip win-lose" data-i18n="sop.s4.c5">✓ / ✕ в Telegram</span>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="section-title" style="margin: 20px 0 10px" data-i18n="art.whatis.full">Что такое Futures Prediction?</h2>
+        <div class="article-body" data-i18n-html="art.whatis.body">
+          <p>Фьючерсные прогнозы- это возможность заработать на прогнозировании цены криптовалют.</p>
+        </div>
+
+        <div class="article-img-card">
+          <p class="img-caption" data-i18n="prin.img">Примеры отработок сигналов:</p>
+          <img src="FP1.png" alt="" class="article-img" />
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span data-i18n="psych.title">Психология торговли</span></h2>
+          <div class="psychology-grid">
+            <div class="psych-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg><span data-i18n="psych.1">Дисциплина важнее прибыли</span></div>
+            <div class="psych-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span data-i18n="psych.2">Контроль рисков- основа успеха</span></div>
+            <div class="psych-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="psych.3">Терпение на дистанции окупается</span></div>
+            <div class="psych-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span data-i18n="psych.4">Убыток- не поражение, а рабочий элемент процесса</span></div>
+          </div>
+          <div class="goal-block"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg><span data-i18n="psych.goal">Цель: стабильная прибыль в долгосрочной перспективе</span></div>
+        </div>
+
+        <div class="article-img-card">
+          <p class="img-caption" data-i18n="psych.img">Примеры успешных серий:</p>
+          <img src="FP.png" alt="" class="article-img" />
+          <img src="FP2.png" alt="" class="article-img" />
+        </div>
+
+        <div class="content-card">
+          <h2 class="section-title" data-i18n="ulinks.title">🔗 Полезные ссылки</h2>
+          <div class="useful-links">
+            <a href="https://t.me/+Bx9PHt1Dy743ZTgy" target="_blank" class="useful-link"><span>📢</span> <span data-i18n="ulinks.channel">Основной канал</span></a>
+            <a href="https://youtube.com/shorts/1zcRLGRpLR8?si=TuMt3svf7b6xGSVW" target="_blank" class="useful-link"><span>▶️</span> <span data-i18n="ulinks.video">Видео-гайд: открытие позиций</span></a>
+            <a href="https://t.me/c/2809766098/5608" target="_blank" class="useful-link"><span>📌</span> <span data-i18n="ulinks.example">Пример открытия по «лучшей цене»</span></a>
+          </div>
+        </div>
+
+        <span class="sop-backlink" onclick="navigate('futures-prediction')" data-i18n="sop.backlink">← Вернуться к текущей версии</span>
+
+      </div>
+    </div>
+    <!-- /FUTURES PREDICTION PAGE V2 -->
 
     <!-- FUTURES STRATEGY PAGE -->
     <div class="page" id="page-futures-strategy">

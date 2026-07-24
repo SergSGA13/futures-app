@@ -51,6 +51,7 @@ const navMap = {
 const pageTitleKeys = {
   'home': 'title.fp',
   'futures-prediction': 'title.fp',
+  'futures-prediction-v2': 'title.fp.v2',
   'futures-strategy': 'title.fs',
   'articles': 'title.art',
   'statistics': 'title.stats',

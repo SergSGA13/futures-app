@@ -718,40 +718,6 @@ html, body {
   gap: 5px;
 }
 
-/* Formula */
-.formula-block { margin-bottom: 14px; }
-.formula {
-  background: var(--bg3);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  font-size: 13px;
-  font-family: 'SF Mono', monospace;
-  margin-bottom: 6px;
-  color: var(--blue);
-}
-.example-block { display: flex; flex-direction: column; gap: 6px; }
-.example-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
-.example-row {
-  padding: 9px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-}
-.example-row.win { background: rgba(78,255,160,0.08); color: var(--green); }
-.example-row.loss { background: rgba(255,82,114,0.08); color: var(--red); }
-.example-row.draw { background: var(--bg3); color: var(--text-muted); }
-
-/* Limits */
-.limits-list { display: flex; flex-direction: column; gap: 8px; }
-.limit-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  padding: 10px;
-  background: var(--bg3);
-  border-radius: var(--radius-sm);
-}
-
 /* Source link */
 .source-link {
   display: inline-block;

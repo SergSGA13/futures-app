@@ -1100,6 +1100,21 @@ html, body {
   line-height: 1.45;
   margin-bottom: 12px;
 }
+.dev-branch-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 14px 0 8px;
+}
+.dev-branch-sub:first-of-type { margin-top: 0; }
+.dev-branch-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 .dev-src-summary {
   font-size: 12px;
   color: var(--text-muted);

@@ -181,6 +181,7 @@ function parseCSV(text) {
 let analL7dRows = null;
 let allSignalRows = null;
 let blockedSignalRows = null;
+let mexcSignalRows = null;
 let monthlyWrChartInstance = null;
 
 async function fetchAllSignals() {
@@ -203,6 +204,19 @@ async function fetchBlockedSignals() {
   const text = await res.text();
   blockedSignalRows = parseCSV(text);
   return blockedSignalRows;
+}
+
+// Сигналы ветки MEXC (10м и 30м вместе). Колонки: A Time ("dd.mm.yyyy HH:mm:ss"),
+// B Ticker, C Direction, ... M(12) Result (WIN/LOSE) - добавлена вручную в листе,
+// в исходном наборе колонок хука её нет.
+async function fetchMexcSignals() {
+  if (mexcSignalRows) return mexcSignalRows;
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=MEXCsignal`;
+  const res = await fetch(url);
+  const text = await res.text();
+  mexcSignalRows = parseCSV(text);
+  return mexcSignalRows;
 }
 
 async function fetchAnalL7d() {
@@ -929,6 +943,19 @@ function devParseSignal(r) {
   };
 }
 
+// MEXCsignal: колонка результата (M/12) добавлена вручную поверх исходных
+// колонок хука, дата - единая строка "dd.mm.yyyy HH:mm:ss" в колонке A(0).
+function mexcParseSignal(r) {
+  if (!r) return null;
+  const res = String(r[12] || '').trim();
+  if (res !== 'WIN' && res !== 'LOSE') return null;
+  const datePart = String(r[0] || '').trim().split(' ')[0];
+  const dk = devDateKey(datePart);
+  if (!dk) return null;
+  const dir = String(r[2] || '').trim().toUpperCase();
+  return { res, dk, dir: dir === 'UP' ? 'UP' : 'DOWN', pair: sigPairBase(r[1]) };
+}
+
 // BLOCKEDsignal отличается от ALLsignal раскладкой: блок [результат,
 // время, дата, индикатор] идёт четырьмя колонками подряд, а его начало
 // «съезжает» при добавлении колонок слева (напр. "after 10min").
@@ -1032,6 +1059,61 @@ function devShowTable(tableId, cardId, html) {
   if (!el || !card) return;
   el.innerHTML = html;
   card.style.display = 'block';
+}
+
+// ===== "Результаты по веткам" - PRO / MEXC / ALT10m за последние 7 дней =====
+function devLast7dCutoff_() {
+  const n = new Date();
+  const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6); // 7 дней включительно с сегодня
+  return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
+}
+
+function devBranchEmptyHtml_() {
+  return '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет сигналов за последние 7 дней.</div></div>';
+}
+
+async function devRenderBranchesTables() {
+  const cutoff = devLast7dCutoff_();
+  const card = document.getElementById('devBranchesCard');
+  if (card) card.style.display = 'block';
+
+  // PRO - те же данные, что в основной статистике (лист ANAL L7D), просто
+  // продублированы здесь для удобства сравнения с MEXC и ALT10m.
+  try {
+    const anal = await fetchAnalL7d();
+    const el = document.getElementById('devBranchProTable');
+    if (el && anal && anal.length) {
+      el.innerHTML = buildAnalTableCols([
+        { label: 'ETH',   row: anal[16] },
+        { label: 'BTC',   row: anal[17] },
+        { label: 'TOTAL', row: anal[18] },
+      ], 1) || devBranchEmptyHtml_();
+    }
+  } catch (e) { console.log('DEV branches PRO error:', e); }
+
+  // MEXC - лист MEXCsignal, результат в колонке M(12).
+  try {
+    const rows = await fetchMexcSignals();
+    const el = document.getElementById('devBranchMexcTable');
+    if (el) {
+      const sigsMexc = (rows && rows.length > 1) ? rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff) : [];
+      const groups = devAggregate(sigsMexc, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
+      el.innerHTML = devBuildTable(['ETH', 'BTC'], groups) || devBranchEmptyHtml_();
+    }
+  } catch (e) { console.log('DEV branches MEXC error:', e); }
+
+  // ALT10m - лист BLOCKEDsignal, только строки с меткой "ALT10m" (в любой
+  // колонке - её позиция зависит от того, как сейчас разложены колонки листа).
+  try {
+    const rows = await fetchBlockedSignals();
+    const el = document.getElementById('devBranchAltTable');
+    if (el) {
+      const altRaw = (rows && rows.length > 1) ? rows.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
+      const sigsAlt = altRaw.map(devNormalizeBlockedRow).map(devParseSignal).filter(s => s && s.dk >= cutoff);
+      const groups = devAggregate(sigsAlt, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
+      el.innerHTML = devBuildTable(['ETH', 'BTC'], groups) || devBranchEmptyHtml_();
+    }
+  } catch (e) { console.log('DEV branches ALT10m error:', e); }
 }
 
 function devRenderPnlChart(sigs) {
@@ -2325,6 +2407,7 @@ async function renderDevL30d() {
     if (sum) {
       sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
     }
+    try { devRenderBranchesTables(); } catch (e) { console.log('DEV branches error:', e); }
     if (!sigs.length) return;
 
     const dateKeys = devDailyDateRange(30);
@@ -2422,6 +2505,7 @@ function refreshDevL30d() {
   btn?.classList.add('spinning');
   allSignalRows = null;
   blockedSignalRows = null;
+  mexcSignalRows = null;
   devL30dRendered = false;
   ['l30dDev', 'l30dDevEth', 'l30dDevBtc', 'l30dDrawdown'].forEach(k => {
     pnlChartInstances[k]?.destroy();

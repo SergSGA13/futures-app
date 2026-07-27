@@ -943,12 +943,18 @@ function devParseSignal(r) {
   };
 }
 
-// MEXCsignal: колонка результата (M/12) добавлена вручную поверх исходных
-// колонок хука, дата - единая строка "dd.mm.yyyy HH:mm:ss" в колонке A(0).
+// MEXCsignal: колонка результата добавлена вручную поверх исходных колонок
+// хука и минимум раз уже уезжала вправо из-за новых вставленных колонок -
+// как и в BLOCKEDsignal, якоримся на ячейку со значением WIN/LOSE, а не на
+// фиксированный индекс. Дата - единая строка "dd.mm.yyyy HH:mm:ss" в A(0).
 function mexcParseSignal(r) {
   if (!r) return null;
-  const res = String(r[12] || '').trim();
-  if (res !== 'WIN' && res !== 'LOSE') return null;
+  let res = null;
+  for (let i = 9; i < r.length; i++) {
+    const v = String(r[i] || '').trim();
+    if (v === 'WIN' || v === 'LOSE') { res = v; break; }
+  }
+  if (!res) return null;
   const datePart = String(r[0] || '').trim().split(' ')[0];
   const dk = devDateKey(datePart);
   if (!dk) return null;
@@ -1091,7 +1097,7 @@ async function devRenderBranchesTables() {
     }
   } catch (e) { console.log('DEV branches PRO error:', e); }
 
-  // MEXC - лист MEXCsignal, результат в колонке M(12).
+  // MEXC - лист MEXCsignal, колонка результата ищется по значению (см. mexcParseSignal).
   try {
     const rows = await fetchMexcSignals();
     const el = document.getElementById('devBranchMexcTable');

@@ -184,6 +184,17 @@ let blockedSignalRows = null;
 let mexcSignalRows = null;
 let monthlyWrChartInstance = null;
 
+// Индексы колонок ALLsignal (0-based). Лист уже минимум дважды правили руками
+// (вставляли колонки), из-за чего результат/время/дата/индикатор уезжали
+// вправо - держим индексы в одном месте, чтобы очередной сдвиг чинился
+// правкой этих 4 строк, а не поиском по всему файлу.
+// Текущая раскладка (проверено на скриншоте 31.07.2026): результат K(10),
+// время M(12), дата N(13), индикатор W(22).
+const COL_RESULT = 10;
+const COL_TIME = 12;
+const COL_DATE = 13;
+const COL_INDICATOR = 22;
+
 async function fetchAllSignals() {
   if (allSignalRows) return allSignalRows;
   const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
@@ -344,8 +355,8 @@ async function loadPnlL30dFromSignals(canvasId, key) {
 
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
-      const dateStr = (rows[i][12] || '').trim();
-      const result  = rows[i][9];
+      const dateStr = (rows[i][COL_DATE] || '').trim();
+      const result  = rows[i][COL_RESULT];
       if (!dateStr) continue;
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
@@ -405,8 +416,8 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
 
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
-      const dateStr = (rows[i][12] || '').trim();
-      const result  = rows[i][9];
+      const dateStr = (rows[i][COL_DATE] || '').trim();
+      const result  = rows[i][COL_RESULT];
       if (!dateStr) continue;
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
@@ -632,7 +643,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
 // Минимальная выборка для доверия к винрейту (решённых сигналов WIN+LOSE)
 const MIN_SAMPLE = 5;
 
-// Колонки ALLsignal: C(2)=направление, J(9)=результат, M(12)=дата, V(21)=код индикатора
+// Колонки ALLsignal: C(2)=направление, остальные - см. COL_RESULT/COL_DATE/COL_INDICATOR
 // Группировка только по коду индикатора (таймфрейм в данных почти везде пуст).
 // pairFilter: 'ETH' | 'BTC' | null (без фильтра — все пары)
 function aggregateByIndicator(rows, indCol, daysFilter, pairFilter) {
@@ -644,14 +655,14 @@ function aggregateByIndicator(rows, indCol, daysFilter, pairFilter) {
   }
   const g = {};
   for (let i = 1; i < rows.length; i++) {
-    const res = (rows[i][9] || '').trim();
+    const res = (rows[i][COL_RESULT] || '').trim();
     const dir = (rows[i][2] || '').trim();
     // WIN & LOSE не учитываем в подсчёте — чтобы Total совпадал с 5293
     if (res === 'WIN & LOSE') continue;
     if (pairFilter && sigPairBase(rows[i][1]) !== pairFilter) continue;
     // Фильтр окна только для L30D; в ALL дату не трогаем, чтобы не терять сигналы
     if (cutoff) {
-      const p = (rows[i][12] || '').split('.');
+      const p = (rows[i][COL_DATE] || '').split('.');
       if (p.length < 3) continue; // без корректной даты нельзя отнести к окну 30 дней
       const dk = `${p[2].substring(0,4)}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
       if (dk < cutoff) continue;
@@ -714,7 +725,7 @@ async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
   try {
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) return;
-    const html = buildIndicatorTable(aggregateByIndicator(rows, 21, daysFilter), MIN_SAMPLE);
+    const html = buildIndicatorTable(aggregateByIndicator(rows, COL_INDICATOR, daysFilter), MIN_SAMPLE);
     if (!html) return;
     document.getElementById(targetTableId).innerHTML = html;
     document.getElementById(targetCardId).style.display = 'block';
@@ -924,11 +935,11 @@ function devExtractConfidence(r) {
 // Разбор строки листа в сигнал; null — строка без результата или без корректной даты
 function devParseSignal(r) {
   if (!r) return null;
-  const res = (r[9] || '').trim();
+  const res = (r[COL_RESULT] || '').trim();
   if (!DEV_RESOLVED.has(res)) return null;
-  const dk = devDateKey(r[12]);
+  const dk = devDateKey(r[COL_DATE]);
   if (!dk) return null;
-  const tp = String(r[11] || '').trim().match(/^(\d{1,2}):(\d{1,2})/);
+  const tp = String(r[COL_TIME] || '').trim().match(/^(\d{1,2}):(\d{1,2})/);
   const hour = tp ? parseInt(tp[1], 10) : NaN;
   const minute = tp ? parseInt(tp[2], 10) : NaN;
   const dir = (r[2] || '').trim().toUpperCase();
@@ -936,7 +947,7 @@ function devParseSignal(r) {
     res, dk,
     dir: dir === 'UP' ? 'UP' : 'DOWN',
     pair: sigPairBase(r[1]),
-    ind: (r[21] || '').trim() || '-',
+    ind: (r[COL_INDICATOR] || '').trim() || '-',
     conf: devExtractConfidence(r),
     hour: (hour >= 0 && hour <= 23) ? hour : null,
     minute: (minute >= 0 && minute <= 59) ? minute : null,
@@ -967,8 +978,8 @@ function mexcParseSignal(r) {
 // «съезжает» при добавлении колонок слева (напр. "after 10min").
 // Поэтому не хардкодим индексы, а ЯКОРИМСЯ на колонку результата
 // (WIN/LOSE) и берём время/дату/индикатор сразу за ней. Приводим к
-// раскладке ALLsignal, которую читает devParseSignal: результат J(9),
-// время L(11), дата M(12), индикатор V(21).
+// раскладке ALLsignal, которую читает devParseSignal: см. COL_RESULT/
+// COL_TIME/COL_DATE/COL_INDICATOR.
 function devNormalizeBlockedRow(r) {
   if (!r) return r;
   const c = r.slice();
@@ -977,10 +988,10 @@ function devNormalizeBlockedRow(r) {
     if (DEV_RESOLVED.has(String(c[i] || '').trim())) { ri = i; break; }
   }
   if (ri < 0) return c;          // результат не найден — оставляем как есть
-  c[9]  = r[ri];                 // результат  → J
-  c[11] = r[ri + 1];             // время      → L
-  c[12] = r[ri + 2];             // дата       → M
-  c[21] = r[ri + 3];             // индикатор  → V
+  c[COL_RESULT]    = r[ri];
+  c[COL_TIME]      = r[ri + 1];
+  c[COL_DATE]      = r[ri + 2];
+  c[COL_INDICATOR] = r[ri + 3];
   return c;
 }
 
@@ -1342,7 +1353,7 @@ function devInsightPairDir(sigs) {
 function devInsightIndicatorCells(combinedRaw) {
   const out = [];
   for (const pair of ['ETH', 'BTC']) {
-    const combos = aggregateByIndicator(combinedRaw, 21, 30, pair);
+    const combos = aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, pair);
     for (const o of combos) {
       if (o.ind === '-') continue; // сигналы без кода индикатора отключать не предлагаем
       if (!devIsDisabledConfig(pair, o.ind, 'UP')) out.push({ pair, ind: o.ind, dir: 'UP',   label: `${pair} ${o.ind} ↑ UP`,   w: o.upW, l: o.upL, decided: o.upW + o.upL, wr: devWrOf(o.upW, o.upL) });
@@ -1615,8 +1626,8 @@ function devMarkOppDone(type, pair, ind, dir) {
 
 function devBuildOpportunitySection(sigs, combinedRaw) {
   const totalsByPair = {
-    ETH: aggregateByIndicator(combinedRaw, 21, 30, 'ETH'),
-    BTC: aggregateByIndicator(combinedRaw, 21, 30, 'BTC'),
+    ETH: aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, 'ETH'),
+    BTC: aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, 'BTC'),
   };
   const strong = devInsightIndicatorCells(combinedRaw)
     .filter(x => x.ind !== '-' && x.decided >= DEV_OPP_MIN_SAMPLE && x.wr != null && x.wr >= WR_GREEN);
@@ -2479,9 +2490,9 @@ async function renderDevL30d() {
     try { devShowTable('devShareBlock', 'devShareCard', devBuildShareSection(sigs)); } catch (e) { console.log('DEV share error:', e); }
 
     // By Indicator — общая + отдельно ETH и BTC, по объединённым строкам
-    devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, null), MIN_SAMPLE));
-    devShowTable('devCrossEthTable', 'devCrossEthCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'ETH'), MIN_SAMPLE));
-    devShowTable('devCrossBtcTable', 'devCrossBtcCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, 21, 30, 'BTC'), MIN_SAMPLE));
+    devShowTable('devCrossTable', 'devCrossCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, null), MIN_SAMPLE));
+    devShowTable('devCrossEthTable', 'devCrossEthCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, 'ETH'), MIN_SAMPLE));
+    devShowTable('devCrossBtcTable', 'devCrossBtcCard', buildIndicatorTable(aggregateByIndicator(combinedRaw, COL_INDICATOR, 30, 'BTC'), MIN_SAMPLE));
 
     // Углублённая аналитика — каждый блок независим, ошибка в одном не должна гасить остальные
     try { devShowTable('devTrendBlock', 'devTrendCard', devBuildTrendSection(sigs)); } catch (e) { console.log('DEV trend error:', e); }
@@ -2550,9 +2561,9 @@ async function renderDowChart(canvasId, daysFilter, rowsOverride) {
     const dowMap = [0,1,2,3,4,5,6].map(() => ({ w: 0, l: 0 }));
 
     for (let i = 1; i < rows.length; i++) {
-      const res = rows[i][9];
+      const res = rows[i][COL_RESULT];
       if (res !== 'WIN' && res !== 'LOSE') continue;
-      const dateStr = (rows[i][12] || '').trim();
+      const dateStr = (rows[i][COL_DATE] || '').trim();
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
       const d = parts[0].padStart(2,'0');
@@ -2689,9 +2700,9 @@ async function renderMonthlyWrChart() {
     let totalWins = 0, totalLosses = 0;
 
     for (let i = 1; i < rows.length; i++) {
-      const result = rows[i][9];
+      const result = rows[i][COL_RESULT];
       if (result !== 'WIN' && result !== 'LOSE') continue;
-      const dateStr = (rows[i][12] || '').trim();
+      const dateStr = (rows[i][COL_DATE] || '').trim();
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
       const m = parseInt(parts[1], 10);
@@ -2818,13 +2829,12 @@ async function loadTodaySignals() {
     const rows = parseCSV(text);
     const today = todayStr(); // DD.MM.YYYY
 
-    // M (index 12) contains date DD.MM.YYYY — filter by today
-    const todayRows = rows.filter((r, i) => i > 0 && r[12] === today);
+    const todayRows = rows.filter((r, i) => i > 0 && r[COL_DATE] === today);
 
     // Показываем сигнал только после появления результата в таблице.
     // Живые (ещё не закрытые) сигналы в приложении не отображаются — они идут в приватную группу PRO.
     const RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
-    const resolvedRows = todayRows.filter(r => RESOLVED.has((r[9] || '').trim()));
+    const resolvedRows = todayRows.filter(r => RESOLVED.has((r[COL_RESULT] || '').trim()));
 
     const list = document.getElementById('signalsList');
 
@@ -2834,9 +2844,9 @@ async function loadTodaySignals() {
       return;
     }
 
-    // Time is at index 11 (col L = HH:MM) — по последнему ЗАКРЫТОМУ сигналу
+    // По последнему ЗАКРЫТОМУ сигналу
     const lastRow = resolvedRows[resolvedRows.length - 1];
-    const lastTime = lastRow[11];
+    const lastTime = lastRow[COL_TIME];
 
     // Start live timer
     if (signalTimerInterval) clearInterval(signalTimerInterval);
@@ -2852,8 +2862,8 @@ async function loadTodaySignals() {
       const pair   = r[1]  || '-';
       const dir    = r[2]  || '-';
       const price  = r[3]  || '';
-      const result = r[9]  || '';
-      const time   = (r[11] || '').substring(0, 8) || '-'; // HH:MM:SS col L
+      const result = r[COL_RESULT]  || '';
+      const time   = (r[COL_TIME] || '').substring(0, 8) || '-'; // HH:MM:SS
 
       const isUp    = dir === 'UP';
       const isWin   = result === 'WIN';
@@ -2891,8 +2901,8 @@ async function loadTodaySignals() {
     }).join('');
 
     // Summary line (WIN & LOSE excluded from WR calculation) — по закрытым сигналам
-    const wins   = resolvedRows.filter(r => r[9] === 'WIN').length;
-    const losses = resolvedRows.filter(r => r[9] === 'LOSE').length;
+    const wins   = resolvedRows.filter(r => r[COL_RESULT] === 'WIN').length;
+    const losses = resolvedRows.filter(r => r[COL_RESULT] === 'LOSE').length;
     const wr     = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
@@ -2937,13 +2947,13 @@ function buildSignalMarkers(rows, coin, candles, tfSec) {
   const sigs = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
-    if (!r || r[12] !== today) continue;
+    if (!r || r[COL_DATE] !== today) continue;
     if (sigPairBase(r[1]) !== coin) continue;
-    const res = (r[9] || '').trim();
+    const res = (r[COL_RESULT] || '').trim();
     if (!RESOLVED.has(res)) continue;
     const dir = (r[2] || '').trim().toUpperCase();
     const price = parseFloat(String(r[3]).replace(',', '.')) || 0;
-    const tp = (r[11] || '0:0:0').split(':');
+    const tp = (r[COL_TIME] || '0:0:0').split(':');
     const hh = parseInt(tp[0]) || 0, mm = parseInt(tp[1]) || 0, ss = parseInt(tp[2]) || 0;
     const baseUnix = Math.floor(Date.UTC(yy, mo - 1, dd, hh, mm, ss) / 1000);
     sigs.push({ baseUnix, dir, res, price });
@@ -3024,10 +3034,10 @@ async function fetchSigCandles5m(sym, days) {
 // мини-статистика по выбранной монете за сегодня
 function sigCoinStat(rows, coin) {
   const today = todayStr();
-  const day = rows.filter((r, i) => i > 0 && r && r[12] === today && sigPairBase(r[1]) === coin);
-  const wins = day.filter(r => (r[9] || '').trim() === 'WIN').length;
-  const losses = day.filter(r => (r[9] || '').trim() === 'LOSE').length;
-  const resolved = day.filter(r => ['WIN', 'LOSE', 'WIN & LOSE'].includes((r[9] || '').trim())).length;
+  const day = rows.filter((r, i) => i > 0 && r && r[COL_DATE] === today && sigPairBase(r[1]) === coin);
+  const wins = day.filter(r => (r[COL_RESULT] || '').trim() === 'WIN').length;
+  const losses = day.filter(r => (r[COL_RESULT] || '').trim() === 'LOSE').length;
+  const resolved = day.filter(r => ['WIN', 'LOSE', 'WIN & LOSE'].includes((r[COL_RESULT] || '').trim())).length;
   const wr = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : null;
   return { resolved, wins, losses, wr };
 }
@@ -3255,13 +3265,13 @@ async function runCalculator() {
       const row = rows[i];
       const instr = (row[1] || '').toUpperCase();
       const dir   = (row[2] || '').toUpperCase();
-      const res   = row[9]  || '';
+      const res   = row[COL_RESULT]  || '';
       if (res !== 'WIN' && res !== 'LOSE') continue;
 
-      const hour = calcExtractHour(row[19] || row[11] || row[17]);
+      const hour = calcExtractHour(row[19] || row[COL_TIME] || row[17]);
       if (isNaN(hour)) continue;
 
-      const dt = calcParseDate(row[12]);
+      const dt = calcParseDate(row[COL_DATE]);
       if (!dt) continue;
 
       const isETH = instr.includes('ETH');
@@ -3290,7 +3300,7 @@ async function runCalculator() {
       st[key].w += win ? 1 : 0;
       st[key].l += win ? 0 : 1;
       st[key].p += win ? wP : lP;
-      tradeDays[row[12]] = true;
+      tradeDays[row[COL_DATE]] = true;
 
       // === NEW: Monthly accumulation ===
       const monthKey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;

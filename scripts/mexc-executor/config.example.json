@@ -1,0 +1,47 @@
+{
+  "_comment": "Скопируйте в config.json и настройте. Секрет можно переопределить переменной окружения EXECUTOR_SECRET, телеграм — TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.",
+
+  "port": 8787,
+  "secret": "ПОМЕНЯЙТЕ-НА-ДЛИННУЮ-СЛУЧАЙНУЮ-СТРОКУ",
+
+  "dryRun": true,
+  "headless": false,
+
+  "stakeUsdt": 125,
+
+  "minPayoutPct": 80,
+  "maxSignalAgeSec": 45,
+
+  "globalCap": { "maxBets": 5, "windowMinutes": 11 },
+
+  "symbols": {
+    "ETH": "ETH_USDT",
+    "BTC": "BTC_USDT"
+  },
+
+  "payoutUrl": "https://www.mexc.com/api/platform/futures/api/v1/event_contract/detail",
+  "payoutTimeoutMs": 4000,
+
+  "userDataDir": "./mexc-profile",
+  "screenshotsDir": "./screenshots",
+  "logCsv": "./executor_log.csv",
+  "payoutCsv": "./payout_log.csv",
+  "monitorPollSec": 20,
+
+  "telegram": {
+    "botToken": "",
+    "chatId": ""
+  },
+
+  "ui": {
+    "_comment": "Тексты интерфейса MEXC (английская локаль). Для русской: proTab='Pro', кнопки '^\\\\s*Рост\\\\s*$' / '^\\\\s*Падение\\\\s*$', payout 'Выплата при росте\\\\s*([\\\\d.]+)\\\\s*%'.",
+    "proTab": "Pro",
+    "timeUnitText": { "10": "10m", "30": "30m" },
+    "upPayoutRegex": "Up Payout\\s*([\\d.]+)\\s*%",
+    "downPayoutRegex": "Down Payout\\s*([\\d.]+)\\s*%",
+    "upButton": "^\\s*Up\\s*$",
+    "downButton": "^\\s*Down\\s*$",
+    "amountPlaceholderContains": "~",
+    "confirmButtons": ["Confirm", "OK", "Подтвердить"]
+  }
+}

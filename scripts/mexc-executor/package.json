@@ -1,0 +1,17 @@
+{
+  "name": "mexc-event-futures-executor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Исполнитель ставок на событийных фьючерсах MEXC: приёмник MEXC-хука из tv_webhook v3.9.6",
+  "main": "server.js",
+  "scripts": {
+    "login": "node login.js",
+    "start": "node server.js",
+    "monitor": "node monitor.js",
+    "test": "node test.js && node test-server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "^1.45.0"
+  }
+}

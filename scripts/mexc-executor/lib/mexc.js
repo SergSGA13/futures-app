@@ -151,6 +151,26 @@ class MexcEventFutures {
     return this.readPayoutsDom(symbol, timingMin);
   }
 
+  // Поле суммы. Перебираем варианты, а не один селектор: вёрстка
+  // вкладок Simple и Pro различается, а плейсхолдер («1 ~ 150 USDT»)
+  // зависит от локали и лимитов аккаунта. Возвращает локатор или null.
+  async findAmountInput(page) {
+    const candidates = [
+      `input[placeholder*="${this.cfg.ui.amountPlaceholderContains}"]`,
+      'input[placeholder*="USDT"]',
+      'input[inputmode="decimal"]',
+      'input[type="number"]',
+    ];
+    for (const sel of candidates) {
+      const loc = page.locator(sel).first();
+      try {
+        await loc.waitFor({ state: "visible", timeout: 2500 });
+        return { loc, selector: sel };
+      } catch (_) { /* пробуем следующий */ }
+    }
+    return null;
+  }
+
   // direction: "UP" | "DOWN". Возвращает объект-отчёт для лога.
   async placeBet(symbol, direction, timingMin, stakeUsdt, { dryRun = true } = {}) {
     const dir = String(direction).toUpperCase() === "UP" ? "UP" : "DOWN";
@@ -158,28 +178,38 @@ class MexcEventFutures {
     // EV-контроль прямо перед кликом: payout мог упасть после FM-фильтра
     const payouts = await this.getPayout(symbol, timingMin);
     const payout = dir === "UP" ? payouts.up : payouts.down;
+    const src = payouts.source;
     if (payout == null) {
-      return { ok: false, reason: "payout-not-found", payouts };
+      return { ok: false, reason: "payout-not-found", payouts, source: src };
     }
     if (payout < this.cfg.minPayoutPct) {
-      return { ok: false, reason: `payout ${payout}% < min ${this.cfg.minPayoutPct}% (EV<0)`, payout, payouts };
+      return { ok: false, reason: `payout ${payout}% < min ${this.cfg.minPayoutPct}% (источник: ${src})`, payout, payouts, source: src };
     }
 
     const page = await this.openSymbol(symbol, timingMin);
 
-    // Сумма ставки
-    const amount = page.locator(`input[placeholder*="${this.cfg.ui.amountPlaceholderContains}"]`).first();
-    await amount.waitFor({ state: "visible", timeout: 8000 });
-    await amount.fill(String(stakeUsdt));
+    // Любой сбой на форме — снимаем экран ПЕРЕД тем, как бросить ошибку.
+    // Без снимка причина («не нашлось поле суммы») не отличима от
+    // разлогина, капчи и незагрузившейся страницы.
+    let amount, button;
+    try {
+      const found = await this.findAmountInput(page);
+      if (!found) throw new Error("не найдено поле суммы ни по одному из селекторов");
+      amount = found.loc;
+      await amount.fill(String(stakeUsdt));
 
-    // Кнопка направления
-    const btnRe = new RegExp(dir === "UP" ? this.cfg.ui.upButton : this.cfg.ui.downButton);
-    const button = page.getByRole("button").filter({ hasText: btnRe }).first();
-    await button.waitFor({ state: "visible", timeout: 8000 });
+      const btnRe = new RegExp(dir === "UP" ? this.cfg.ui.upButton : this.cfg.ui.downButton);
+      button = page.getByRole("button").filter({ hasText: btnRe }).first();
+      await button.waitFor({ state: "visible", timeout: 8000 });
+    } catch (err) {
+      const shot = await this._screenshot(page, symbol, dir, "fail");
+      err.message += shot ? ` | снимок экрана: ${shot}` : "";
+      throw err;
+    }
 
     if (dryRun) {
       const shot = await this._screenshot(page, symbol, dir, "dryrun");
-      return { ok: true, dryRun: true, payout, payouts, stake: stakeUsdt, screenshot: shot };
+      return { ok: true, dryRun: true, payout, payouts, source: src, stake: stakeUsdt, screenshot: shot };
     }
 
     await button.click();
@@ -195,7 +225,7 @@ class MexcEventFutures {
 
     await page.waitForTimeout(1500);
     const shot = await this._screenshot(page, symbol, dir, "placed");
-    return { ok: true, dryRun: false, payout, payouts, stake: stakeUsdt, screenshot: shot };
+    return { ok: true, dryRun: false, payout, payouts, source: src, stake: stakeUsdt, screenshot: shot };
   }
 
   async _screenshot(page, symbol, dir, tag) {

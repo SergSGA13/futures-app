@@ -13,7 +13,7 @@ const express = require("express");
 
 const { BetWindow, checkAdmission } = require("./guards");
 
-const LOG_HEADER = "ts,asset,dir,timing,price,payoutHook,payoutLive,stake,ageSec,latencyMs,status,detail\n";
+const LOG_HEADER = "ts,asset,dir,timing,price,payoutHook,payoutLive,payoutSrc,stake,ageSec,latencyMs,status,detail\n";
 
 function createApp({ cfg, driver, notify }) {
   const betWindow = new BetWindow(cfg.globalCap);
@@ -56,7 +56,7 @@ function createApp({ cfg, driver, notify }) {
     const ageNow = (Date.now() - stampMs) / 1000;
     if (ageNow > cfg.maxSignalAgeSec) {
       state.rejected++;
-      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, "", stake,
+      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, "", "", stake,
         ageNow.toFixed(1), Date.now() - acceptedAtMs, "rejected", `stale-in-queue ${ageNow.toFixed(1)}с`]);
       return;
     }
@@ -66,16 +66,17 @@ function createApp({ cfg, driver, notify }) {
       result = await driver.placeBet(symbol, dir, timing, stake, { dryRun: !!cfg.dryRun });
     } catch (err) {
       state.errors++;
-      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, "", stake,
+      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, "", "", stake,
         ageNow.toFixed(1), Date.now() - acceptedAtMs, "error", err.message]);
       await say(`⚠️ MEXC executor: ошибка ставки ${asset} ${dir} ${timing}м — ${err.message}`);
       return;
     }
 
     const livePayout = result.payout != null ? result.payout : "";
+    const liveSrc = result.source || "";
     if (!result.ok) {
       state.rejected++;
-      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, livePayout, stake,
+      logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, livePayout, liveSrc, stake,
         ageNow.toFixed(1), Date.now() - acceptedAtMs, "rejected", result.reason]);
       // Расхождение с фильтром FM — единственная причина, о которой
       // стоит сказать вслух: значит payout упал за время доставки.
@@ -88,7 +89,7 @@ function createApp({ cfg, driver, notify }) {
     // прогон честно моделировал занятость слотов).
     betWindow.record(Date.now());
     state.placed++;
-    logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, livePayout, stake,
+    logRow([new Date().toISOString(), asset, dir, timing, payload.price, payload.payout, livePayout, liveSrc, stake,
       ageNow.toFixed(1), Date.now() - acceptedAtMs, result.dryRun ? "dry-run" : "placed", result.screenshot || ""]);
     console.log(`${result.dryRun ? "[DRY]" : "[LIVE]"} ${asset} ${dir} ${timing}м ` +
       `payout ${livePayout}% stake ${stake} задержка ${((Date.now() - acceptedAtMs) / 1000).toFixed(1)}с`);
@@ -113,7 +114,7 @@ function createApp({ cfg, driver, notify }) {
     if (!admission.ok) {
       state.rejected++;
       logRow([new Date().toISOString(), payload.ticker || "", payload.direction || "",
-        payload.timing || "", payload.price || "", payload.payout, "", "", "", 0, "rejected", admission.reason]);
+        payload.timing || "", payload.price || "", payload.payout, "", "", "", "", 0, "rejected", admission.reason]);
       return res.status(200).json({ status: "rejected", reason: admission.reason });
     }
 

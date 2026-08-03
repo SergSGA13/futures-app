@@ -469,10 +469,16 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
         let step = 100;
         const lineCount = maxMark / 100;
         if (lineCount > 8) step = Math.ceil(lineCount / 8) * 100;
+        // Линия, прижатая к верхнему краю, не оставляет места под свою
+        // подпись. Уводить подпись вниз нельзя - она сядет на подпись
+        // следующей линии (так «900%» и «700%» слипались на главной).
+        // Поэтому такую линию просто не рисуем: это декоративная сетка
+        // выше фактических данных, терять там нечего.
+        const LABEL_H = 11;
         for (let v = 100; v <= maxMark; v += step) {
           if (v < y.min) continue;
           const py = y.getPixelForValue(v);
-          if (py < chartArea.top || py > chartArea.bottom) continue;
+          if (py < chartArea.top + LABEL_H || py > chartArea.bottom) continue;
           c.save();
           c.setLineDash([3, 3]);
           c.strokeStyle = 'rgba(123, 132, 176, 0.4)';
@@ -484,11 +490,8 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
           c.setLineDash([]);
           c.fillStyle = '#7B84B0';
           c.font = '9px sans-serif';
-          // сверху может не хватить места - тогда подписываем под линией,
-          // иначе верхнее значение обрезает край канваса
-          const fits = (py - 2) > (chartArea.top + 9);
-          c.textBaseline = fits ? 'bottom' : 'top';
-          c.fillText(`${v}%`, chartArea.left + 2, fits ? py - 2 : py + 2);
+          c.textBaseline = 'bottom';
+          c.fillText(`${v}%`, chartArea.left + 2, py - 2);
           c.restore();
         }
       }

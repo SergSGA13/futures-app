@@ -84,7 +84,7 @@ function navigate(pageId) {
   if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
-  if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
+  if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
 
@@ -2072,6 +2072,90 @@ function devBuildStreakSection(sigs) {
 // ===== ТЕПЛОВАЯ КАРТА: День недели × Час (4-часовые интервалы) =====
 const DEV_HEATMAP_MIN = 5; // минимум решённых сигналов в клетке, чтобы красить по WR
 
+// ===== ТЕПЛОВАЯ КАРТА ЗА ВСЁ ВРЕМЯ (день недели × час) =====
+// В DEV карта укрупнена до блоков по 4 часа: за 30 дней сетка 7×24 была бы
+// пустой. На всей истории (тысячи сигналов) час уже набирает выборку, и
+// разрешение можно не терять.
+// Часы - строками, дни - столбцами: 7 столбцов помещаются в телефон, а
+// 24 столбца потребовали бы горизонтальной прокрутки.
+const ALL_HEATMAP_MIN = 10;   // клетки меньше - серым, без раскраски по WR
+
+function allHeatmapBuild(sigs) {
+  const grid = Array.from({ length: 24 }, () => Array.from({ length: 7 }, () => ({ w: 0, l: 0 })));
+  for (const s of sigs) {
+    if ((s.res !== 'WIN' && s.res !== 'LOSE') || s.hour == null) continue;
+    const [y, m, d] = s.dk.split('-').map(Number);
+    const raw = new Date(y, m - 1, d).getDay();     // 0=Вс
+    const dayIdx = raw === 0 ? 6 : raw - 1;         // Пн=0 … Вс=6
+    if (s.res === 'WIN') grid[s.hour][dayIdx].w++; else grid[s.hour][dayIdx].l++;
+  }
+  return grid;
+}
+
+function buildAllHeatmapSection(sigs) {
+  const grid = allHeatmapBuild(sigs);
+  const dayLabels = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'),
+                     t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
+
+  let html = `<div class="heatmap-wrap"><table class="heatmap-table"><thead><tr><th>${t('hm.hour')}</th>`;
+  dayLabels.forEach(d => { html += `<th>${d}</th>`; });
+  html += '</tr></thead><tbody>';
+
+  let shown = 0;
+  for (let h = 0; h < 24; h++) {
+    // час, в котором не набралось ни одной значимой клетки, строкой не рисуем -
+    // иначе карта наполовину состоит из прочерков
+    const anyData = grid[h].some(c => c.w + c.l >= ALL_HEATMAP_MIN);
+    if (!anyData) continue;
+    shown++;
+    html += `<tr><td class="hm-day">${String(h).padStart(2, '0')}</td>`;
+    for (let d = 0; d < 7; d++) {
+      const { w, l } = grid[h][d];
+      const dec = w + l;
+      if (dec < ALL_HEATMAP_MIN) {
+        html += '<td class="hm-empty">-</td>';
+      } else {
+        const wr = Math.round(w / dec * 100);
+        html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return shown ? html + wrLegendHtml() : '';
+}
+
+// ===== СБОРКА РАЗДЕЛА ALL PERIODS =====
+// Обе секции считаются из одного разбора ALLsignal, поэтому парсим один раз.
+let allTimeSectionsRendered = false;
+
+async function renderAllTimeSections() {
+  if (allTimeSectionsRendered) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+    const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
+    if (!sigs.length) return;
+    allTimeSectionsRendered = true;
+
+    renderDrawdownInto({
+      sigs, key: 'allDrawdown',
+      canvasId: 'allDrawdownChart', noteId: 'allDrawdownNote',
+      emptyNote: t('dd.none'),
+    });
+    const ddCard = document.getElementById('allDrawdownCard');
+    if (ddCard) ddCard.style.display = 'block';
+
+    const heatHtml = buildAllHeatmapSection(sigs);
+    if (heatHtml) {
+      document.getElementById('allHeatmapBlock').innerHTML = heatHtml;
+      document.getElementById('allHeatmapCard').style.display = 'block';
+    }
+  } catch (e) {
+    console.log('ALL periods sections error:', e);
+  }
+}
+
 function devHeatmapBuild(sigs) {
   const hourBuckets = [[0, 3], [4, 7], [8, 11], [12, 15], [16, 19], [20, 23]];
   const dayLabels = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'), t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
@@ -2207,29 +2291,39 @@ function devComputeDrawdown(sigs) {
 }
 
 function devRenderDrawdownChart(sigs) {
-  if (pnlChartInstances['l30dDrawdown']) return;
+  renderDrawdownInto({
+    sigs, key: 'l30dDrawdown',
+    canvasId: 'devDrawdownChart', noteId: 'devDrawdownNote',
+    emptyNote: 'Просадок не было - кривая PNL за месяц ни разу не опускалась ниже локального пика.',
+  });
+}
+
+// Общий рендер просадки: DEV-раздел за 30 дней и пользовательский
+// ALL Periods считают одним кодом, различаются только холстом и текстом.
+function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote }) {
+  if (pnlChartInstances[key]) return;
   const dd = devComputeDrawdown(sigs);
   if (!dd) return;
 
-  const noteEl = document.getElementById('devDrawdownNote');
+  const noteEl = document.getElementById(noteId);
   if (noteEl) {
     noteEl.innerHTML = dd.maxDdPct < 0
-      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита, с ${devFmtDk(dd.maxDdStart)} по ${devFmtDk(dd.maxDdEnd)}.`
-      : 'Просадок не было - кривая PNL за месяц ни разу не опускалась ниже локального пика.';
+      ? `${t('dd.max')}: <b style="color:#FF5272">${dd.maxDdPct}%</b> ${t('dd.ofdep')} ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
+      : emptyNote;
   }
 
-  const ctx = document.getElementById('devDrawdownChart')?.getContext('2d');
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
   if (!ctx) return;
   const gradient = ctx.createLinearGradient(0, 0, 0, 140);
   gradient.addColorStop(0, 'rgba(255, 82, 114, 0.05)');
   gradient.addColorStop(1, 'rgba(255, 82, 114, 0.4)');
 
-  pnlChartInstances['l30dDrawdown'] = new Chart(ctx, {
+  pnlChartInstances[key] = new Chart(ctx, {
     type: 'line',
     data: { labels: dd.labels, datasets: [{ data: dd.ddData, borderColor: '#FF5272', backgroundColor: gradient, borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.25 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `Просадка: ${c.parsed.y}%` } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${t('dd.tooltip')}: ${c.parsed.y}%` } } },
       scales: {
         x: { ticks: { color: '#7B84B0', maxTicksLimit: 8, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
         y: { max: 0, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
@@ -3319,6 +3413,7 @@ function refreshHome() {
   monthlyWrChartInstance = null;
   wrDailyChartInstance?.destroy();
   wrDailyChartInstance = null;
+  allTimeSectionsRendered = false;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
   Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {

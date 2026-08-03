@@ -81,7 +81,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderAnalTables(); }
+  if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
@@ -2125,6 +2125,129 @@ function buildAllHeatmapSection(sigs) {
   return shown ? html + wrLegendHtml() : '';
 }
 
+// ===== WINRATE ПО ЧАСАМ (ALL Periods) =====
+// Таблица «By Hour Zone» рядом даёт те же данные с разбивкой UP/DOWN,
+// но чтобы увидеть в ней провальные часы, надо прочитать 24 строки.
+// График с чертой безубытка отвечает на это одним взглядом.
+let hourWrChartInstance = null;
+
+function renderHourWrChart(canvasId, sigs) {
+  if (hourWrChartInstance) return;
+  const buckets = Array.from({ length: 24 }, () => ({ w: 0, l: 0 }));
+  for (const s of sigs) {
+    if ((s.res !== 'WIN' && s.res !== 'LOSE') || s.hour == null) continue;
+    if (s.res === 'WIN') buckets[s.hour].w++; else buckets[s.hour].l++;
+  }
+
+  const labels = [], data = [], counts = [], colors = [];
+  for (let h = 0; h < 24; h++) {
+    const { w, l } = buckets[h];
+    const tot = w + l;
+    labels.push(String(h).padStart(2, '0'));
+    counts.push(tot);
+    const wr = tot ? (w / tot * 100) : 0;
+    data.push(tot ? parseFloat(wr.toFixed(1)) : null);
+    colors.push(tot < ALL_HEATMAP_MIN ? 'rgba(123,132,176,0.4)' : wrRgba(wr));
+  }
+  if (!counts.some(c => c > 0)) return;
+
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
+  const range = wrAxisRange(data.filter(v => v != null), 6, 6);
+
+  hourWrChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.92 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `WR ${c.parsed.y}% · ${counts[c.dataIndex]}` } }
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+        y: { min: range.min, max: range.max, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    },
+    plugins: [breakevenLinePlugin()]
+  });
+}
+
+// ===== СРАВНЕНИЕ ПЕРИОДОВ =====
+// «Стало хуже или лучше» сейчас требует переключения между тремя
+// страницами и удержания цифр в голове. Таблица отвечает сама.
+const PERIOD_ROWS = [
+  { days: 7,    key: 'per.7d' },
+  { days: 30,   key: 'per.30d' },
+  { days: null, key: 'per.all' },
+];
+
+function periodStats(sigs, days) {
+  let cutoff = null;
+  if (days) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (days - 1));
+    cutoff = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  let w = 0, l = 0;
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    if (cutoff && s.dk < cutoff) continue;
+    if (s.res === 'WIN') w++; else l++;
+  }
+  const tot = w + l;
+  return { tot, w, wr: tot ? (w / tot * 100) : null };
+}
+
+function buildPeriodComparison(sigs) {
+  const rows = PERIOD_ROWS.map(p => ({ ...p, ...periodStats(sigs, p.days) }));
+  const base = rows[rows.length - 1].wr;         // всё время - точка отсчёта
+  if (!rows.some(r => r.tot > 0)) return '';
+
+  let html = `<table class="anal-table"><thead><tr>
+    <th>${t('per.col.period')}</th><th>${t('per.col.signals')}</th><th>WR%</th><th>${t('per.col.delta')}</th>
+  </tr></thead><tbody>`;
+  for (const r of rows) {
+    const isAll = r.days == null;
+    if (!r.tot) continue;
+    // Дельта считается к общему WR: он и есть «норма» этой системы.
+    // У самой строки «всё время» дельты нет - сравнивать не с чем.
+    let delta = '—';
+    if (!isAll && base != null && r.wr != null) {
+      const d = r.wr - base;
+      const cls = d >= 0 ? 'wr-green' : 'wr-red';
+      delta = `<span class="${cls}">${d >= 0 ? '+' : ''}${d.toFixed(1)}</span>`;
+    }
+    html += `<tr class="${isAll ? 'anal-total' : ''}">
+      <td>${t(r.key)}</td>
+      <td>${r.tot}</td>
+      <td class="${wrClass(r.wr)}">${r.wr.toFixed(1)}%</td>
+      <td>${delta}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return `<div class="stats-table-wrap">${html}</div>` + wrLegendHtml();
+}
+
+let periodCmpRendered = false;
+
+async function renderPeriodComparison() {
+  if (periodCmpRendered) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+    const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
+    const html = buildPeriodComparison(sigs);
+    if (!html) return;
+    periodCmpRendered = true;
+    document.getElementById('periodCmpTable').innerHTML = html;
+    document.getElementById('periodCmpCard').style.display = 'block';
+  } catch (e) {
+    console.log('Period comparison error:', e);
+  }
+}
+
 // ===== СБОРКА РАЗДЕЛА ALL PERIODS =====
 // Обе секции считаются из одного разбора ALLsignal, поэтому парсим один раз.
 let allTimeSectionsRendered = false;
@@ -2145,6 +2268,10 @@ async function renderAllTimeSections() {
     });
     const ddCard = document.getElementById('allDrawdownCard');
     if (ddCard) ddCard.style.display = 'block';
+
+    renderHourWrChart('allHourWrChart', sigs);
+    const hourCard = document.getElementById('allHourWrCard');
+    if (hourCard) hourCard.style.display = 'block';
 
     const heatHtml = buildAllHeatmapSection(sigs);
     if (heatHtml) {
@@ -3414,6 +3541,9 @@ function refreshHome() {
   wrDailyChartInstance?.destroy();
   wrDailyChartInstance = null;
   allTimeSectionsRendered = false;
+  periodCmpRendered = false;
+  hourWrChartInstance?.destroy();
+  hourWrChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
   Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {

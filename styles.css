@@ -2314,16 +2314,41 @@ html, body {
   box-shadow: 0 0 14px rgba(157,80,255,.5);
 }
 
+/* Шаги регламента - визуальная цепочка, а не список.
+   Соединитель проходит через центр иконок (34px → центр 17px, линия 2px
+   → left 16px) и обрывается на первом и последнем шаге, чтобы у цепочки
+   были начало и конец. Иконки лежат поверх линии (z-index). */
 .sop-flow { display: flex; flex-direction: column; }
 .sop-flow-item {
+  position: relative;
   display: flex; align-items: center; gap: 12px;
   padding: 11px 0;
-  border-bottom: 1px solid var(--card-border);
 }
-.sop-flow-item:last-child { border-bottom: none; }
+.sop-flow-item::before {
+  content: '';
+  position: absolute;
+  left: 16px; top: 0; bottom: 0; width: 2px;
+  background: linear-gradient(180deg, rgba(102,163,255,.30), rgba(157,80,255,.30));
+  border-radius: 1px;
+}
+.sop-flow-item:first-child::before { top: 50%; }
+.sop-flow-item:last-child::before  { bottom: 50%; }
+/* единственный шаг - соединять нечего */
+.sop-flow-item:first-child:last-child::before { display: none; }
 .sop-flow-icon {
+  position: relative; z-index: 1;
   width: 34px; height: 34px; flex-shrink: 0; border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
+}
+/* Подложка цвета карточки: заливка иконок полупрозрачная, без неё
+   соединитель просвечивал бы сквозь иконку. Отдельным слоем, а не
+   border - иначе перебьётся box-shadow-свечение у .i-* классов. */
+.sop-flow-icon::after {
+  content: '';
+  position: absolute; inset: -3px;
+  border-radius: 12px;
+  background: var(--card);
+  z-index: -1;
 }
 .sop-flow-icon.i-blue   { background: rgba(102,163,255,.14); box-shadow: 0 0 12px rgba(102,163,255,.28); }
 .sop-flow-icon.i-purple { background: rgba(157,80,255,.14);  box-shadow: 0 0 12px rgba(157,80,255,.28); }

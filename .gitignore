@@ -9,3 +9,10 @@ fut_strat*.csv
 
 __pycache__/
 *.pyc
+
+# MEXC Executor: локальные секреты/сессия/логи - НИКОГДА не коммитить
+scripts/mexc-executor/config.json
+scripts/mexc-executor/profile/
+scripts/mexc-executor/logs/
+scripts/mexc-executor/node_modules/
+scripts/mexc-executor/package*.json

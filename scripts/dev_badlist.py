@@ -14,6 +14,10 @@
 
 Результат пишется во вкладку DEV_BADLIST; приложение показывает её в разделе
 Last 30 Days · DEV. Запуск - GitHub Actions ежедневно в ~05:00 по Варшаве.
+
+Тем же проходом строится вкладка DEV_TOPLIST - "кормильцы": активные
+конфигурации с наибольшим положительным PnL за 30 дней (много сработок ×
+высокий EV), ранжирование по PnL 30д, порог MIN_N_TOP сигналов.
 """
 
 import datetime as dt
@@ -32,8 +36,18 @@ SOURCE_SHEETS = ["ALLsignal", "BLOCKEDsignal"]
 OUTPUT_TAB = "DEV_BADLIST"
 WARSAW = ZoneInfo("Europe/Warsaw")
 
+# "Кормильцы": топ прибыльных конфигураций за 30 дней (DEV_TOPLIST).
+# Приоритет - много сработок И высокий PnL/EV: ранжируем по PnL 30д
+# (он и есть N × EV), мелкие выборки отсекаем порогом MIN_N_TOP.
+TOP_TAB = "DEV_TOPLIST"
+MIN_N_TOP = 20           # минимум решённых сигналов за 30д для попадания в топ
+TOP_LIMIT = 10           # сколько строк держим в топе
+
 HEADERS = ["Конфигурация", "Сигналов 4д", "WR 4д %", "PnL 4д",
            "Сигналов 30д", "WR 30д %", "Последний сигнал", "Обновлено"]
+
+TOP_HEADERS = ["Конфигурация", "Сигналов 30д", "WR 30д %", "PnL 30д", "EV/сигнал",
+               "Сигналов 4д", "WR 4д %", "PnL 4д", "Последний сигнал", "Обновлено"]
 
 
 def is_setting(s):
@@ -134,7 +148,8 @@ def analyze(sheets_values, now):
             if ts is None or ts.year < 2020:
                 continue
             g = groups.setdefault(setting, dict(
-                n4=0, w4=0, pnl4=0.0, has_pnl=False, n30=0, w30=0, last=None))
+                n4=0, w4=0, pnl4=0.0, has_pnl=False,
+                n30=0, w30=0, pnl30=0.0, has_pnl30=False, last=None))
             if g["last"] is None or ts > g["last"]:
                 g["last"] = ts
             outcome = classify_result(cell(col["result"])) if col["result"] >= 0 else None
@@ -146,6 +161,9 @@ def analyze(sheets_values, now):
             if ts >= d_window:
                 g["n30"] += 1
                 g["w30"] += win
+                if pnl is not None:
+                    g["pnl30"] += pnl
+                    g["has_pnl30"] = True
             if ts >= d_recent:
                 g["n4"] += 1
                 g["w4"] += win
@@ -169,7 +187,32 @@ def analyze(sheets_values, now):
                         pnl4=(round(g["pnl4"], 2) if g["has_pnl"] else ""),
                         n30=g["n30"], wr30=wr30, last=g["last"]))
     bad.sort(key=lambda x: x["wr4"])       # худшие сверху
-    return bad
+
+    # ── Кормильцы: активные конфиги с большим положительным PnL 30д ──
+    top = []
+    for setting, g in groups.items():
+        if g["last"] is None or g["last"] < d_active:
+            continue                       # интересуют только работающие сейчас
+        if g["n30"] < MIN_N_TOP:
+            continue                       # мало сработок - не "кормилец"
+        wr30 = g["w30"] / g["n30"] * 100.0
+        if wr30 <= BE_WR:
+            continue                       # ниже безубытка - не топ
+        if g["has_pnl30"] and g["pnl30"] <= 0:
+            continue
+        wr4 = (g["w4"] / g["n4"] * 100.0) if g["n4"] else None
+        top.append(dict(
+            setting=setting, n30=g["n30"], wr30=wr30,
+            pnl30=(round(g["pnl30"], 2) if g["has_pnl30"] else ""),
+            ev30=(round(g["pnl30"] / g["n30"], 1) if g["has_pnl30"] else ""),
+            n4=g["n4"], wr4=wr4,
+            pnl4=(round(g["pnl4"], 2) if g["has_pnl"] else ""),
+            last=g["last"]))
+    # PnL 30д = N × EV: ранжирование сразу учитывает и объём, и кромку;
+    # без PnL (нет колонки) - fallback на WR × N
+    top.sort(key=lambda x: (x["pnl30"] if x["pnl30"] != "" else (x["wr30"] - BE_WR) * x["n30"]),
+             reverse=True)
+    return bad, top[:TOP_LIMIT]
 
 
 def main():
@@ -185,7 +228,7 @@ def main():
     if not sheets_values:
         raise RuntimeError("Ни одна вкладка-источник не прочитана")
 
-    bad = analyze(sheets_values, now)
+    bad, top = analyze(sheets_values, now)
     updated = dt.datetime.now(WARSAW).strftime("%d.%m.%Y %H:%M")
 
     rows = [HEADERS]
@@ -201,6 +244,20 @@ def main():
 
     update_tab(sh, OUTPUT_TAB, rows)
     progress(f"DEV_BADLIST: {len(bad)} кандидатов на удаление (обновлено {updated} Варшава)")
+
+    top_rows = [TOP_HEADERS]
+    if top:
+        for x in top:
+            top_rows.append([
+                x["setting"], x["n30"], round(x["wr30"], 1), x["pnl30"], x["ev30"],
+                x["n4"], round(x["wr4"], 1) if x["wr4"] is not None else "", x["pnl4"],
+                x["last"].strftime("%d.%m %H:%M"), updated,
+            ])
+    else:
+        top_rows.append(["OK", "", "", "", "", "", "", "", "", updated])
+
+    update_tab(sh, TOP_TAB, top_rows)
+    progress(f"DEV_TOPLIST: {len(top)} кормильцев (обновлено {updated} Варшава)")
 
 
 if __name__ == "__main__":

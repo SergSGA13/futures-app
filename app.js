@@ -81,7 +81,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { loadPnlAllFromSignals('pnlChart', 'main'); renderAnalTables(); }
+  if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderAnalTables(); }
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); }
@@ -332,8 +332,8 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { ...(daysFilter ? {} : { min: 0 }), ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ...(daysFilter ? {} : { min: 0 }), grace: '8%', ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });
@@ -397,8 +397,8 @@ async function loadPnlL30dFromSignals(canvasId, key) {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { grace: '8%', ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });
@@ -484,8 +484,11 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
           c.setLineDash([]);
           c.fillStyle = '#7B84B0';
           c.font = '9px sans-serif';
-          c.textBaseline = 'bottom';
-          c.fillText(`${v}%`, chartArea.left + 2, py - 2);
+          // сверху может не хватить места - тогда подписываем под линией,
+          // иначе верхнее значение обрезает край канваса
+          const fits = (py - 2) > (chartArea.top + 9);
+          c.textBaseline = fits ? 'bottom' : 'top';
+          c.fillText(`${v}%`, chartArea.left + 2, fits ? py - 2 : py + 2);
           c.restore();
         }
       }
@@ -510,10 +513,10 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
             ticks: { color: '#7B84B0', maxRotation: 0, font: { size: 9 } },
             grid: { display: false }
           },
-          y: { min: 0, display: false }
+          y: { min: 0, grace: '10%', display: false }
         } : {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { min: 0, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { min: 0, grace: '8%', ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });
@@ -543,6 +546,145 @@ function wrRgba(pct) {
   return n >= WR_GREEN ? 'rgba(78,255,160,0.65)' : n >= WR_BREAKEVEN ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)';
 }
 
+// ===== БЕЗУБЫТОК: единая опора для всех WR-графиков и таблиц =====
+// При выплате 0.8 сделка окупается на WR = 1/(1+0.8) = 55.6%. Ниже этой
+// черты положительный винрейт всё ещё означает убыток - без явной отметки
+// цифру 52% не отличить от 58% на глаз.
+const WR_PAYOUT = 0.8;
+
+// Плагин Chart.js: горизонтальная черта безубытка с подписью.
+// Подпись уходит под линию, если сверху не хватает места (иначе её
+// обрезает верхний край канваса).
+function breakevenLinePlugin() {
+  return {
+    id: 'breakevenLine',
+    afterDatasetsDraw(chart) {
+      const { ctx: c, chartArea, scales: { y } } = chart;
+      if (!chartArea || !y) return;
+      if (WR_BREAKEVEN < y.min || WR_BREAKEVEN > y.max) return;
+      const py = y.getPixelForValue(WR_BREAKEVEN);
+      c.save();
+      c.setLineDash([4, 4]);
+      c.strokeStyle = 'rgba(255,209,102,0.75)';
+      c.lineWidth = 1.2;
+      c.beginPath();
+      c.moveTo(chartArea.left, py);
+      c.lineTo(chartArea.right, py);
+      c.stroke();
+      c.setLineDash([]);
+      // Подпись ложится поверх столбцов, поэтому под неё нужна подложка -
+      // жёлтый текст на зелёной заливке иначе не читается.
+      const label = `${t('wr.be.short')} ${WR_BREAKEVEN}%`;
+      c.font = '600 9px sans-serif';
+      const w = c.measureText(label).width;
+      const above = (py - 3) > (chartArea.top + 11);
+      const ty = above ? py - 3 : py + 3;
+      c.fillStyle = 'rgba(10,12,24,0.78)';
+      c.fillRect(chartArea.right - w - 7, above ? ty - 11 : ty - 1, w + 6, 12);
+      c.fillStyle = '#FFD166';
+      c.textAlign = 'right';
+      c.textBaseline = above ? 'bottom' : 'top';
+      c.fillText(label, chartArea.right - 4, ty);
+      c.restore();
+    }
+  };
+}
+
+// Диапазон оси Y для WR-графика, гарантированно включающий безубыток:
+// без этого черта просто не попадёт в область рисования.
+function wrAxisRange(values, padLow = 8, padHigh = 6) {
+  const vals = values.filter(v => typeof v === 'number' && !isNaN(v));
+  const lo = Math.min(WR_BREAKEVEN, ...(vals.length ? vals : [WR_BREAKEVEN]));
+  const hi = Math.max(WR_BREAKEVEN, ...(vals.length ? vals : [WR_BREAKEVEN]));
+  return {
+    min: Math.max(0, Math.floor(lo - padLow)),
+    max: Math.min(100, Math.ceil(hi + padHigh)),
+  };
+}
+
+// ===== WINRATE ПО ДНЯМ (верх страницы «Статистика») =====
+// Раньше здесь стоял тот же график Total PNL, что и на главной. Кривая
+// накопленной прибыли отвечает на вопрос «сколько заработано всего», но
+// не на вопрос «в каком состоянии система сейчас» - а открывают статистику
+// именно с ним. Дневной WR с чертой безубытка отвечает на второй.
+let wrDailyChartInstance = null;
+
+async function renderWrDailyChart(canvasId, days = 30) {
+  if (wrDailyChartInstance) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - (days - 1));
+
+    const map = {};
+    for (let i = 1; i < rows.length; i++) {
+      const res = rows[i][COL_RESULT];
+      if (res !== 'WIN' && res !== 'LOSE') continue;
+      const parts = String(rows[i][COL_DATE] || '').trim().split('.');
+      if (parts.length < 3) continue;
+      const d = parts[0].padStart(2, '0'), m = parts[1].padStart(2, '0'), y = parts[2].substring(0, 4);
+      if (y.length < 4 || isNaN(parseInt(y, 10))) continue;
+      const dt = new Date(+y, +m - 1, +d);
+      if (isNaN(dt.getTime()) || dt < cutoff) continue;
+      const dk = `${y}-${m}-${d}`;
+      if (!map[dk]) map[dk] = { label: `${d}.${m}`, w: 0, l: 0 };
+      if (res === 'WIN') map[dk].w++; else map[dk].l++;
+    }
+
+    const keys = Object.keys(map).sort();
+    if (keys.length < 3) return;
+
+    const labels = [], data = [], counts = [], colors = [];
+    for (const k of keys) {
+      const { label, w, l } = map[k];
+      const tot = w + l;
+      const wr = tot ? (w / tot * 100) : 0;
+      labels.push(label);
+      data.push(parseFloat(wr.toFixed(1)));
+      counts.push(tot);
+      // День с 1-2 сигналами даёт 0% или 100% и сбивает чтение графика,
+      // поэтому малую выборку гасим серым, а не красим по WR.
+      colors.push(tot < MIN_SAMPLE ? 'rgba(123,132,176,0.4)' : wrRgba(wr));
+    }
+
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+    const range = wrAxisRange(data);
+
+    wrDailyChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.9 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => `WR ${c.parsed.y}% · ${counts[c.dataIndex]}` } }
+        },
+        scales: {
+          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+          y: { min: range.min, max: range.max, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      },
+      plugins: [breakevenLinePlugin()]
+    });
+  } catch (e) {
+    console.log('WR daily chart error:', e);
+  }
+}
+
+// Легенда под таблицами WR: объясняет раскраску и называет безубыток.
+// data-i18n оставляем, чтобы переключение языка подхватывало текст.
+function wrLegendHtml() {
+  return `<div class="wr-legend">
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-red"></i><span data-i18n="wr.legend.red">${t('wr.legend.red')}</span></span>
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-yellow"></i><span data-i18n="wr.legend.yellow">${t('wr.legend.yellow')}</span></span>
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-green"></i><span data-i18n="wr.legend.green">${t('wr.legend.green')}</span></span>
+  </div>`;
+}
+
 // ===== ANAL TABLES (generalized) =====
 // dataColStart=1 for L7D (cols B-H), =12 for ALL (cols M-S), =25 for L30D (cols Z-AF)
 function buildAnalTableCols(configs, dataColStart) {
@@ -570,7 +712,7 @@ function buildAnalTableCols(configs, dataColStart) {
     html += '</tr>';
   }
   html += '</tbody></table>';
-  return `<div class="stats-table-wrap">${html}</div>`;
+  return `<div class="stats-table-wrap">${html}</div>` + wrLegendHtml();
 }
 
 // hourCol=11 for ALL (col L), =24 for L30D (col Y); dataColStart = hourCol+1
@@ -636,7 +778,7 @@ function buildHourTableCols(rows, hourCol, dataColStart) {
   }
 
   html += '</tbody></table>';
-  return dataFound ? `<div class="stats-table-wrap">${html}</div>` : '';
+  return dataFound ? `<div class="stats-table-wrap">${html}</div>` + wrLegendHtml() : '';
 }
 
 // ===== CROSS TABLE (Indicator × Timeframe) =====
@@ -718,7 +860,7 @@ function buildIndicatorTable(combos, minSample) {
     <td>${tot.dnT}</td><td>${tot.dnW}</td><td class="${dnT.cls}">${dnT.v}</td>
     <td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return `<div class="stats-table-wrap">${html}</div>`;
+  return `<div class="stats-table-wrap">${html}</div>` + wrLegendHtml();
 }
 
 async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
@@ -734,6 +876,55 @@ async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
   }
 }
 
+// ===== ВЫВОД ПО НАПРАВЛЕНИЯМ (над таблицей пар) =====
+// Расхождение UP/DOWN — самое дорогое, что бывает в недельной статистике,
+// но в таблице оно разложено на шесть чисел и на глаз не читается.
+// Минимальная выборка на сторону: ниже неё вывод не делаем - на 5 сигналах
+// разница направлений неотличима от случайности.
+const DIR_INSIGHT_MIN = 15;
+// Ставка модели PNL - та же, что в кривой доходности (125 USDT, выплата 0.8):
+// WIN = +100, LOSE = -125.
+const DIR_STAKE = 125;
+
+function dirPnl(wins, total) {
+  return wins * DIR_STAKE * WR_PAYOUT - (total - wins) * DIR_STAKE;
+}
+
+function fillTpl(tpl, vars) {
+  return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
+}
+
+function buildDirectionInsight(row, dataColStart) {
+  if (!row) return '';
+  const num = v => {
+    const n = parseFloat(String(v == null ? '' : v).replace('%', '').replace(/\s/g, ''));
+    return isNaN(n) ? null : n;
+  };
+  const upT = num(row[dataColStart]),     upW = num(row[dataColStart + 1]);
+  const dnT = num(row[dataColStart + 3]), dnW = num(row[dataColStart + 4]);
+  if ([upT, upW, dnT, dnW].some(v => v == null)) return '';
+  if (upT < DIR_INSIGHT_MIN || dnT < DIR_INSIGHT_MIN) return '';
+
+  const upWr = upT ? (upW / upT * 100) : 0;
+  const dnWr = dnT ? (dnW / dnT * 100) : 0;
+  const upBad = upWr < WR_BREAKEVEN, dnBad = dnWr < WR_BREAKEVEN;
+
+  let key, cls;
+  if (upBad && dnBad)        { key = 'wr.ins.bad';   cls = 'bad'; }
+  else if (upBad !== dnBad)  { key = 'wr.ins.split'; cls = 'warn'; }
+  else                       { key = 'wr.ins.good';  cls = 'good'; }
+
+  const text = fillTpl(t(key), {
+    upWr: upWr.toFixed(0) + '%',
+    dnWr: dnWr.toFixed(0) + '%',
+    upPnl: devFmtUsdt(dirPnl(upW, upT)),
+    dnPnl: devFmtUsdt(dirPnl(dnW, dnT)),
+    be: WR_BREAKEVEN + '%',
+    stake: DIR_STAKE,
+  });
+  return `<div class="dir-insight ${cls}">${devEscapeHtml(text)}</div>`;
+}
+
 async function renderAnalTables() {
   try {
     const rows = await fetchAnalL7d();
@@ -745,7 +936,8 @@ async function renderAnalTables() {
       { label: 'BTC',   row: rows[17] },
       { label: 'TOTAL', row: rows[18] },
     ], 1);
-    document.getElementById('analPairsTable').innerHTML = pairsHtml;
+    document.getElementById('analPairsTable').innerHTML =
+      buildDirectionInsight(rows[18], 1) + pairsHtml;
     document.getElementById('analPairsCard').style.display = 'block';
 
   } catch(e) {
@@ -1166,7 +1358,7 @@ function devRenderPnlChart(sigs) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
       scales: {
-        x: { ticks: { color: '#7B84B0', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
         y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
       }
     }
@@ -2674,14 +2866,15 @@ async function renderDowChart(canvasId, daysFilter, rowsOverride) {
             grid: { color: 'rgba(255,255,255,0.04)' }
           },
           y: {
-            min: Math.floor(Math.max(0, Math.min(...winRates.filter(v => v > 0)) - 10)),
-            max: Math.ceil(Math.min(100, Math.max(...winRates) + 5)),
+            // диапазон обязан включать безубыток, иначе его черта не попадёт
+            // в область рисования и график снова нечем будет мерить
+            ...wrAxisRange(winRates.filter(v => v > 0), 10, 5),
             ticks: { color: '#7B84B0', font: { size: 10 }, precision: 0, stepSize: 5, callback: v => Math.round(v) + '%' },
             grid: { color: 'rgba(255,255,255,0.04)' }
           }
         }
       },
-      plugins: [labelsPlugin]
+      plugins: [labelsPlugin, breakevenLinePlugin()]
     });
   } catch(e) {
     console.log('DOW chart error:', e);
@@ -2777,7 +2970,7 @@ async function renderMonthlyWrChart() {
           y: { min: yMin, max: yMax, ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       },
-      plugins: [barLabelsPlugin]
+      plugins: [barLabelsPlugin, breakevenLinePlugin()]
     });
   } catch(e) {
     console.log('Monthly WR chart error:', e);
@@ -3121,6 +3314,8 @@ function refreshHome() {
   Object.keys(pnlChartInstances).forEach(k => delete pnlChartInstances[k]);
   monthlyWrChartInstance?.destroy();
   monthlyWrChartInstance = null;
+  wrDailyChartInstance?.destroy();
+  wrDailyChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
   Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {

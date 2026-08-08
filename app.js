@@ -1220,6 +1220,65 @@ async function devFetchSignals30d() {
   return { sigs, cntAll, cntBlocked, combinedRaw };
 }
 
+// ===== СТАВКИ DEV-БЛОКА (30 дней) =====
+// Ставка зависит и от актива, и от ветки, поэтому плоская модель
+// «+100 / −125» здесь больше не применяется. Все денежные расчёты
+// DEV-раздела идут через devPnl* ниже.
+// Пользовательские страницы (главная, ALL Periods) остаются на прежней
+// фиксированной модели 125 USDT - там своя аудитория и свой смысл.
+const DEV_PAYOUT = 0.8;
+const DEV_STAKES = {
+  PRO:    { ETH: 125, BTC: 250 },
+  MEXC:   { ETH: 150, BTC: 250 },
+  ALT10m: { ETH: 125, BTC: 250 },
+};
+
+function devStake(pair, branch) {
+  const tbl = DEV_STAKES[branch] || DEV_STAKES.PRO;
+  return tbl[pair] != null ? tbl[pair] : tbl.ETH;
+}
+
+// Итог по агрегату (w побед, l поражений) для конкретного актива
+function devPnlOf(w, l, pair, branch) {
+  const st = devStake(pair, branch);
+  return w * st * DEV_PAYOUT - l * st;
+}
+
+// Итог по одному сигналу - для накопительных кривых и просадки
+function devPnlSig(s, branch) {
+  if (s.res === 'WIN')  return devStake(s.pair, branch) * DEV_PAYOUT;
+  if (s.res === 'LOSE') return -devStake(s.pair, branch);
+  return 0;   // «WIN & LOSE» - ничья
+}
+
+// Прежняя модель пользовательских разделов: фиксированные 125 USDT
+function pnlSigFlat(s) {
+  if (s.res === 'WIN')  return 100;
+  if (s.res === 'LOSE') return -125;
+  return 0;
+}
+
+// Итоговая строка под таблицей ветки: сколько это в деньгах и какой WR
+function devBranchSummaryHtml(groups, branch) {
+  let w = 0, l = 0, pnl = 0;
+  for (const pair of ['ETH', 'BTC']) {
+    const o = groups[pair];
+    if (!o) continue;
+    const pw = o.upW + o.dnW, pl = o.upL + o.dnL;
+    w += pw; l += pl;
+    pnl += devPnlOf(pw, pl, pair, branch);
+  }
+  const dec = w + l;
+  if (!dec) return '';
+  const wr = w / dec * 100;
+  const st = DEV_STAKES[branch] || DEV_STAKES.PRO;
+  return `<div class="dev-branch-total">
+    <span>PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b></span>
+    <span>WR <b class="${wrClass(wr)}">${wr.toFixed(1)}%</b></span>
+    <span class="dev-branch-stake">ETH ${st.ETH} · BTC ${st.BTC} USDT</span>
+  </div>`;
+}
+
 function devAggregate(sigs, keyFn) {
   const g = {};
   for (const s of sigs) {
@@ -1273,12 +1332,6 @@ function devShowTable(tableId, cardId, html) {
   card.style.display = 'block';
 }
 
-// ===== "Результаты по веткам" - PRO / MEXC / ALT10m за последние 7 дней =====
-function devLast7dCutoff_() {
-  const n = new Date();
-  const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6); // 7 дней включительно с сегодня
-  return `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
-}
 
 function devBranchEmptyHtml_() {
   return '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет сигналов за последние 7 дней.</div></div>';
@@ -1333,11 +1386,11 @@ let devBranchPnlChartInstance = null;
 
 // Накопленный PNL по общей оси дат: дни без сигналов держат прежний
 // уровень, иначе ветки с редкими сигналами рвали бы линию.
-function devBranchPnlSeries(sigs, dateKeys) {
+function devBranchPnlSeries(sigs, dateKeys, branch) {
   const daily = {};
   for (const s of sigs) {
     if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
-    daily[s.dk] = (daily[s.dk] || 0) + (s.res === 'WIN' ? 100 : -125);
+    daily[s.dk] = (daily[s.dk] || 0) + devPnlSig(s, branch);
   }
   let cum = 0;
   return dateKeys.map(dk => { cum += (daily[dk] || 0); return cum; });
@@ -1349,32 +1402,21 @@ async function devRenderBranchPnlChart() {
   const cutoff = dateKeys[0];
 
   const series = {};
-  try {
-    const rows = await fetchAllSignals();
-    series.PRO = (rows && rows.length > 1)
-      ? rows.slice(1).map(devParseSignal).filter(s => s && s.dk >= cutoff) : [];
-  } catch (e) { console.log('DEV branch PNL: PRO error', e); series.PRO = []; }
-
-  try {
-    const rows = await fetchMexcSignals();
-    series.MEXC = (rows && rows.length > 1)
-      ? rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff) : [];
-  } catch (e) { console.log('DEV branch PNL: MEXC error', e); series.MEXC = []; }
-
-  try {
-    const rows = await fetchBlockedSignals();
-    const altRaw = (rows && rows.length > 1)
-      ? rows.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
-    series.ALT10m = altRaw.map(devNormalizeBlockedRow).map(devParseSignal)
-      .filter(s => s && s.dk >= cutoff);
-  } catch (e) { console.log('DEV branch PNL: ALT10m error', e); series.ALT10m = []; }
+  for (const name of Object.keys(DEV_BRANCH_COLORS)) {
+    try {
+      series[name] = await devBranchSignals(name, cutoff);
+    } catch (e) {
+      console.log('DEV branch PNL: ' + name + ' error', e);
+      series[name] = [];
+    }
+  }
 
   const names = Object.keys(DEV_BRANCH_COLORS).filter(n => series[n] && series[n].length);
   if (!names.length) return;
 
   const labels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
   const seriesData = {};
-  for (const name of names) seriesData[name] = devBranchPnlSeries(series[name], dateKeys);
+  for (const name of names) seriesData[name] = devBranchPnlSeries(series[name], dateKeys, name);
 
   // Градиент привязан к НУЛЮ, а не к краям холста: заливка наливается
   // цветом у экстремума и гаснет к нулевой линии. Симметрично вниз, чтобы
@@ -1486,57 +1528,60 @@ async function devRenderBranchPnlChart() {
   }
 }
 
+// Все три ветки считаются одинаково - из сырых листов за одно и то же окно.
+// Раньше PRO бралась из готового листа ANAL L7D, поэтому её нельзя было
+// перевести на 30 дней и посчитать по ней PNL с нужными ставками.
+async function devBranchSignals(branch, cutoff) {
+  const okPair = s => s && (s.pair === 'ETH' || s.pair === 'BTC');
+  if (branch === 'PRO') {
+    const rows = await fetchAllSignals();
+    return (rows && rows.length > 1)
+      ? rows.slice(1).map(devParseSignal).filter(s => okPair(s) && s.dk >= cutoff) : [];
+  }
+  if (branch === 'MEXC') {
+    const rows = await fetchMexcSignals();
+    return (rows && rows.length > 1)
+      ? rows.slice(1).map(mexcParseSignal).filter(s => okPair(s) && s.dk >= cutoff) : [];
+  }
+  // ALT10m - строки BLOCKEDsignal с меткой "ALT10m" в любой колонке:
+  // её позиция зависит от того, как сейчас разложены колонки листа.
+  const rows = await fetchBlockedSignals();
+  const raw = (rows && rows.length > 1)
+    ? rows.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
+  return raw.map(devNormalizeBlockedRow).map(devParseSignal)
+    .filter(s => okPair(s) && s.dk >= cutoff);
+}
+
 async function devRenderBranchesTables() {
-  const cutoff = devLast7dCutoff_();
+  const cutoff = devDailyDateRange(DEV_BRANCH_PNL_DAYS)[0];
   const card = document.getElementById('devBranchesCard');
   if (card) card.style.display = 'block';
 
-  // PRO - те же данные, что в основной статистике (лист ANAL L7D), просто
-  // продублированы здесь для удобства сравнения с MEXC и ALT10m.
-  try {
-    const anal = await fetchAnalL7d();
-    const el = document.getElementById('devBranchProTable');
-    if (el && anal && anal.length) {
-      el.innerHTML = buildAnalTableCols([
-        { label: 'ETH',   row: anal[16] },
-        { label: 'BTC',   row: anal[17] },
-        { label: 'TOTAL', row: anal[18] },
-      ], 1) || devBranchEmptyHtml_();
+  for (const [branch, elId] of [['PRO', 'devBranchProTable'], ['MEXC', 'devBranchMexcTable'], ['ALT10m', 'devBranchAltTable']]) {
+    try {
+      const el = document.getElementById(elId);
+      if (!el) continue;
+      const sigs = await devBranchSignals(branch, cutoff);
+      const groups = devAggregate(sigs, s => s.pair);
+      const table = devBuildTable(['ETH', 'BTC'], groups);
+      el.innerHTML = table ? table + devBranchSummaryHtml(groups, branch) : devBranchEmptyHtml_();
+    } catch (e) {
+      console.log('DEV branches ' + branch + ' error:', e);
     }
-  } catch (e) { console.log('DEV branches PRO error:', e); }
+  }
 
-  // MEXC - лист MEXCsignal, колонка результата ищется по значению (см. mexcParseSignal).
-  try {
-    const rows = await fetchMexcSignals();
-    const el = document.getElementById('devBranchMexcTable');
-    if (el) {
-      const sigsMexc = (rows && rows.length > 1) ? rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff) : [];
-      const groups = devAggregate(sigsMexc, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
-      el.innerHTML = devBuildTable(['ETH', 'BTC'], groups) || devBranchEmptyHtml_();
-    }
-  } catch (e) { console.log('DEV branches MEXC error:', e); }
-
-  // ALT10m - лист BLOCKEDsignal, только строки с меткой "ALT10m" (в любой
-  // колонке - её позиция зависит от того, как сейчас разложены колонки листа).
-  try {
-    const rows = await fetchBlockedSignals();
-    const el = document.getElementById('devBranchAltTable');
-    if (el) {
-      const altRaw = (rows && rows.length > 1) ? rows.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
-      const sigsAlt = altRaw.map(devNormalizeBlockedRow).map(devParseSignal).filter(s => s && s.dk >= cutoff);
-      const groups = devAggregate(sigsAlt, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
-      el.innerHTML = devBuildTable(['ETH', 'BTC'], groups) || devBranchEmptyHtml_();
-    }
-  } catch (e) { console.log('DEV branches ALT10m error:', e); }
+  // Легенда раскраски WR - одна на карточку: повторять её под каждой из
+  // трёх таблиц было бы шумом.
+  const legend = document.getElementById('devBranchLegend');
+  if (legend) legend.innerHTML = wrLegendHtml();
 }
 
 function devRenderPnlChart(sigs) {
   if (pnlChartInstances['l30dDev']) return;
   const dailyMap = {};
   for (const s of sigs) {
-    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
-    if (s.res === 'WIN') dailyMap[s.dk].wins++;
-    else if (s.res === 'LOSE') dailyMap[s.dk].losses++;
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { pnl: 0 };
+    dailyMap[s.dk].pnl += devPnlSig(s, 'PRO');
   }
   const sortedDays = Object.keys(dailyMap).sort();
   if (!sortedDays.length) return;
@@ -1544,8 +1589,7 @@ function devRenderPnlChart(sigs) {
   let cumPnl = 0;
   const labels = [], pctData = [];
   for (const dk of sortedDays) {
-    const { wins, losses } = dailyMap[dk];
-    cumPnl += wins * 100 - losses * 125;
+    cumPnl += dailyMap[dk].pnl;
     labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
     pctData.push(Math.round((cumPnl / 5000) * 100));
   }
@@ -1586,14 +1630,13 @@ function devDailyDateRange(days) {
 function devCumulativePnlPct(sigs, dateKeys) {
   const dailyMap = {};
   for (const s of sigs) {
-    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
-    if (s.res === 'WIN') dailyMap[s.dk].wins++;
-    else if (s.res === 'LOSE') dailyMap[s.dk].losses++;
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { pnl: 0 };
+    dailyMap[s.dk].pnl += devPnlSig(s, 'PRO');
   }
   let cum = 0;
   return dateKeys.map(dk => {
     const d = dailyMap[dk];
-    if (d) cum += d.wins * 100 - d.losses * 125;
+    if (d) cum += d.pnl;
     return Math.round((cum / 5000) * 100);
   });
 }
@@ -1718,9 +1761,10 @@ function devWrOf(w, l) {
 // Ожидаемый результат ОДНОГО сигнала при данном WR% (в USDT, модель WIN +100 / LOSE -125).
 // Используется, чтобы перевести любую находку (тренд, калибровка, волатильность, BLOCKED)
 // в одну и ту же валюту — "сколько это стоит в деньгах за месяц" — и ранжировать по этому.
-function devEvPerSignal(wrPct) {
+function devEvPerSignal(wrPct, pair, branch) {
   const p = wrPct / 100;
-  return p * 100 - (1 - p) * 125;
+  const st = devStake(pair, branch);
+  return p * st * DEV_PAYOUT - (1 - p) * st;
 }
 
 // [{label:'ETH ↑ UP', pair, dir, w, l, decided, wr}, ...] по всем 4 комбинациям пара×направление
@@ -2171,9 +2215,12 @@ function devConfidenceBins(sigs) {
     if (s.conf == null || (s.res !== 'WIN' && s.res !== 'LOSE')) continue;
     const start = Math.floor(s.conf / 5) * 5;
     const key = `${start}-${start + 4}%`;
-    if (!bins[key]) bins[key] = { key, start, w: 0, l: 0, declaredSum: 0, n: 0 };
+    if (!bins[key]) bins[key] = { key, start, w: 0, l: 0, declaredSum: 0, n: 0, pnl: 0 };
     bins[key].declaredSum += s.conf;
     bins[key].n++;
+    // бакет смешивает ETH и BTC, поэтому PNL копим посигнально -
+    // по агрегату (w, l) его уже не восстановить с разными ставками
+    bins[key].pnl += devPnlSig(s, 'PRO');
     if (s.res === 'WIN') bins[key].w++; else bins[key].l++;
   }
   return Object.values(bins)
@@ -2595,12 +2642,13 @@ function devBuildQuarterHeatmapSection(sigs) {
 }
 
 // ===== ПРОСАДКА (DRAWDOWN): насколько глубоко проваливалась кривая PNL от локального пика =====
-function devComputeDrawdown(sigs) {
+function devComputeDrawdown(sigs, pnlFn) {
+  const pnlOf = pnlFn || pnlSigFlat;
   const dailyMap = {};
   for (const s of sigs) {
     if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
-    if (!dailyMap[s.dk]) dailyMap[s.dk] = { wins: 0, losses: 0 };
-    if (s.res === 'WIN') dailyMap[s.dk].wins++; else dailyMap[s.dk].losses++;
+    if (!dailyMap[s.dk]) dailyMap[s.dk] = { pnl: 0 };
+    dailyMap[s.dk].pnl += pnlOf(s);
   }
   const sortedDays = Object.keys(dailyMap).sort();
   if (!sortedDays.length) return null;
@@ -2608,8 +2656,7 @@ function devComputeDrawdown(sigs) {
   let cum = 0, peak = 0, peakDk = null, maxDd = 0, maxDdStart = null, maxDdEnd = null;
   const labels = [], ddData = [];
   for (const dk of sortedDays) {
-    const { wins, losses } = dailyMap[dk];
-    cum += wins * 100 - losses * 125;
+    cum += dailyMap[dk].pnl;
     if (cum > peak) { peak = cum; peakDk = dk; }
     const dd = cum - peak; // <= 0
     if (dd < maxDd) { maxDd = dd; maxDdStart = peakDk; maxDdEnd = dk; }
@@ -2621,7 +2668,7 @@ function devComputeDrawdown(sigs) {
 
 function devRenderDrawdownChart(sigs) {
   renderDrawdownInto({
-    sigs, key: 'l30dDrawdown',
+    sigs, key: 'l30dDrawdown', pnlFn: (x) => devPnlSig(x, 'PRO'),
     canvasId: 'devDrawdownChart', noteId: 'devDrawdownNote',
     emptyNote: 'Просадок не было - кривая PNL за месяц ни разу не опускалась ниже локального пика.',
   });
@@ -2629,9 +2676,9 @@ function devRenderDrawdownChart(sigs) {
 
 // Общий рендер просадки: DEV-раздел за 30 дней и пользовательский
 // ALL Periods считают одним кодом, различаются только холстом и текстом.
-function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote }) {
+function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote, pnlFn }) {
   if (pnlChartInstances[key]) return;
-  const dd = devComputeDrawdown(sigs);
+  const dd = devComputeDrawdown(sigs, pnlFn);
   if (!dd) return;
 
   const noteEl = document.getElementById(noteId);
@@ -2762,7 +2809,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
   const badCells = cells.filter(x => x.wr < WR_BREAKEVEN);
 
   badCells.forEach(x => {
-    const impact = x.w * 100 - x.l * 125;
+    const impact = devPnlOf(x.w, x.l, x.pair);
     const label = `${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}`;
     const parent = pairDirMap[`${x.pair}|${x.dir}`];
     if (parent && parent.wr >= WR_GREEN) {
@@ -2780,14 +2827,14 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
   });
 
   pairDir.filter(x => x.wr >= WR_GREEN && !badCells.some(c => c.pair === x.pair && c.dir === x.dir)).forEach(s => {
-    const impact = s.w * 100 - s.l * 125;
+    const impact = devPnlOf(s.w, s.l, s.pair);
     findings.push({ impact, cls: 'dev-insight-good',
       title: `✅ ${s.label} - чистая сильная сторона`,
       body: [`WR <b>${s.wr.toFixed(1)}%</b> на <b>${s.decided}</b> сигналах, без слабых индикаторов внутри. Вклад в PNL: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
   });
 
   pairDir.filter(x => x.wr < WR_BREAKEVEN).forEach(w => {
-    const impact = w.w * 100 - w.l * 125;
+    const impact = devPnlOf(w.w, w.l, w.pair);
     findings.push({ impact, cls: 'dev-insight-bad',
       title: `⚠️ ${w.label} - слабое направление целиком`,
       body: [`WR <b>${w.wr.toFixed(1)}%</b> на <b>${w.decided}</b> сигналах - ниже безубытка (${WR_BREAKEVEN}%). Итог направления: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
@@ -2796,7 +2843,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
   // ── Тренд по неделям ─────────────────────────────────────────────────
   const TREND_DELTA = 15;
   devTrendCells(sigs).filter(x => Math.abs(x.delta) >= TREND_DELTA).forEach(x => {
-    const impact = x.secondDec * (devEvPerSignal(x.secondWr) - devEvPerSignal(x.firstWr));
+    const impact = x.secondDec * (devEvPerSignal(x.secondWr, x.pair) - devEvPerSignal(x.firstWr, x.pair));
     const worsening = x.delta < 0;
     findings.push({ impact, cls: worsening ? 'dev-insight-bad' : 'dev-insight-good',
       title: `${worsening ? '📉' : '📈'} ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'} ${worsening ? 'слабеет' : 'набирает силу'}`,
@@ -2810,7 +2857,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
     if (bDec < DEV_BLOCKED_MIN_SAMPLE || eDec < DEV_BLOCKED_MIN_SAMPLE) return;
     const bWr = devWrOf(c.blocked.w, c.blocked.l), eWr = devWrOf(c.exec.w, c.exec.l);
     if (bWr - eWr < 10) return;
-    const impact = bDec * (devEvPerSignal(bWr) - devEvPerSignal(eWr));
+    const impact = bDec * (devEvPerSignal(bWr, c.pair) - devEvPerSignal(eWr, c.pair));
     findings.push({ impact, cls: 'dev-insight-good',
       title: `⬆️ ${c.pair} ${c.ind} ${c.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: повысить приоритет на вход`,
       body: [`В заблокированных WR <b>${bWr.toFixed(0)}%</b> (n=${bDec}) выше, чем у исполненных <b>${eWr.toFixed(0)}%</b> (n=${eDec}). Оценочный потенциал: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
@@ -2820,7 +2867,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
   devConfidenceBins(sigs).forEach(b => {
     const gap = b.realizedWr - b.avgDeclared;
     if (Math.abs(gap) < DEV_CONF_GAP) return;
-    const impact = b.w * 100 - b.l * 125;
+    const impact = b.pnl;
     findings.push({ impact, cls: impact < 0 ? 'dev-insight-bad' : 'dev-insight-good',
       title: `${gap < 0 ? '⚠️' : '👀'} Бакет уверенности ${b.key}: модель ${gap < 0 ? 'завышает' : 'занижает'} уверенность`,
       body: [`Заявлено <b>${b.avgDeclared.toFixed(0)}%</b>, реальный WR <b>${b.realizedWr.toFixed(0)}%</b> на ${b.decided} сигналах. Фактический результат бакета: <b>${devFmtUsdt(impact)}</b> за месяц.`] });
@@ -2828,13 +2875,13 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
 
   // ── Серии побед/проигрышей ───────────────────────────────────────────
   devStreaksOfType(sigs, 'LOSE').forEach(x => {
-    const impact = -(x.maxStreak * 125);
+    const impact = -(x.maxStreak * devStake(x.pair));
     findings.push({ impact, cls: 'dev-insight-bad',
       title: `🔥 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} проигрышей подряд`,
       body: [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}. Прямой убыток от серии: <b>${devFmtUsdt(impact)}</b>.`] });
   });
   devStreaksOfType(sigs, 'WIN').forEach(x => {
-    const impact = x.maxStreak * 100;
+    const impact = x.maxStreak * devStake(x.pair) * DEV_PAYOUT;
     findings.push({ impact, cls: 'dev-insight-good',
       title: `🏆 ${x.pair} ${x.ind} ${x.dir === 'UP' ? '↑ UP' : '↓ DOWN'}: серия из ${x.maxStreak} побед подряд`,
       body: [`${devFmtDk(x.maxStart)}-${devFmtDk(x.maxEnd)}. Прямая прибыль от серии: <b>${devFmtUsdt(impact)}</b>.`] });
@@ -2855,7 +2902,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
       const s = devVolatilitySplit(sigs, pair, volMap);
       if (!s || s.loWr == null || s.hiWr == null || s.loDec < 10 || s.hiDec < 10) return;
       if (Math.abs(s.hiWr - s.loWr) < 10) return;
-      const impact = s.hiDec * (devEvPerSignal(s.hiWr) - devEvPerSignal(s.loWr));
+      const impact = s.hiDec * (devEvPerSignal(s.hiWr, pair) - devEvPerSignal(s.loWr, pair));
       findings.push({ impact, cls: impact < 0 ? 'dev-insight-bad' : 'dev-insight-good',
         title: `〰️ ${pair}: результат заметно ${impact < 0 ? 'хуже' : 'лучше'} на волатильных днях`,
         body: [`Спокойные: WR ${s.loWr.toFixed(0)}% (n=${s.loDec}). Волатильные: WR ${s.hiWr.toFixed(0)}% (n=${s.hiDec}). Влияние: <b>${devFmtUsdt(impact)}</b> за волатильные дни в выборке.`] });

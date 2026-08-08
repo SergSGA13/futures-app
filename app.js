@@ -1290,6 +1290,44 @@ function devBranchEmptyHtml_() {
 // накопленные кривые на общей оси отвечают на это сразу.
 // Цвета совпадают с точками у таблиц веток (см. dev-branch-dot).
 const DEV_BRANCH_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A', ALT10m: '#9D50FF' };
+
+// #RRGGBB → rgba(): нужен для градиентных заливок в цвет ветки
+function hexA(hex, a) {
+  const h = String(hex).replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+// Неоновое свечение линий: Chart.js рисует каждый датасет своим вызовом,
+// поэтому тень ставим перед ним и снимаем после - иначе размытие уедет
+// на сетку и подписи осей.
+//
+// globalCompositeOperation = 'lighter' - аддитивное наложение: там, где
+// заливки веток перекрываются, цвета СКЛАДЫВАЮТСЯ и дают свечение, а не
+// смешиваются в мутный серо-бежевый, как при обычной прозрачности.
+// Работает только на тёмном фоне - на светлом всё уходит в белый.
+// Заливки и линии разведены по разным слоям (флаги fillOnly / neon):
+//   - заливки рисуются обычным наложением. Аддитивное здесь не годится:
+//     синий и оранжевый складываются в белёсое пятно там, где ветки
+//     перекрываются, и обе теряются;
+//   - линии рисуются аддитивно и со свечением - на тёмном фоне это и
+//     даёт неон, а пересечения линий вспыхивают ярче.
+const neonGlowPlugin = {
+  id: 'neonGlow',
+  beforeDatasetDraw(chart, args) {
+    const ds = chart.data.datasets[args.index];
+    const c = chart.ctx;
+    c.save();
+    if (ds.neon) {
+      c.globalCompositeOperation = 'lighter';
+      c.shadowColor = ds.borderColor;
+      c.shadowBlur = 18;
+    }
+  },
+  afterDatasetDraw(chart) {
+    chart.ctx.restore();
+  },
+};
 const DEV_BRANCH_PNL_DAYS = 30;
 let devBranchPnlChartInstance = null;
 
@@ -1335,16 +1373,56 @@ async function devRenderBranchPnlChart() {
   if (!names.length) return;
 
   const labels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
-  const datasets = names.map(name => ({
-    label: name,
-    data: devBranchPnlSeries(series[name], dateKeys),
-    borderColor: DEV_BRANCH_COLORS[name],
-    backgroundColor: DEV_BRANCH_COLORS[name],
-    borderWidth: 2,
+  const seriesData = {};
+  for (const name of names) seriesData[name] = devBranchPnlSeries(series[name], dateKeys);
+
+  // Градиент привязан к НУЛЮ, а не к краям холста: заливка наливается
+  // цветом у экстремума и гаснет к нулевой линии. Симметрично вниз, чтобы
+  // ветка в минусе выглядела так же плотно, как растущая.
+  const fillGradient = (color) => (c) => {
+    const { ctx: cc, chartArea, scales } = c.chart;
+    if (!chartArea || !scales || !scales.y) return 'transparent';
+    const h = chartArea.bottom - chartArea.top;
+    if (h <= 0) return 'transparent';
+    const zero = (scales.y.getPixelForValue(0) - chartArea.top) / h;
+    const stop = Math.min(0.999, Math.max(0.001, zero));
+    const g = cc.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+    g.addColorStop(0, hexA(color, 0.42));
+    g.addColorStop(stop, hexA(color, 0.0));
+    g.addColorStop(1, hexA(color, 0.42));
+    return g;
+  };
+
+  // Сначала все заливки, следом все линии: так линия ветки не оказывается
+  // придавлена заливкой соседней.
+  const fills = names.map(name => ({
+    label: name + ' fill',
+    data: seriesData[name],
+    fillOnly: true,
+    borderWidth: 0,
     pointRadius: 0,
+    pointHitRadius: 0,
+    fill: 'origin',
+    tension: 0.25,
+    backgroundColor: fillGradient(DEV_BRANCH_COLORS[name]),
+  }));
+
+  const lines = names.map(name => ({
+    label: name,
+    data: seriesData[name],
+    neon: true,
+    borderColor: DEV_BRANCH_COLORS[name],
+    borderWidth: 2.6,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    pointHoverBackgroundColor: DEV_BRANCH_COLORS[name],
+    pointHoverBorderColor: '#0A0B14',
+    pointHoverBorderWidth: 2,
     fill: false,
     tension: 0.25,
   }));
+
+  const datasets = [...fills, ...lines];
 
   const ctx = document.getElementById('devBranchPnlChart')?.getContext('2d');
   if (!ctx) return;
@@ -1358,9 +1436,18 @@ async function devRenderBranchPnlChart() {
       plugins: {
         legend: {
           display: true,
-          labels: { color: '#C9CEEB', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } },
+          // слои-заливки в легенду и подсказку не пускаем - иначе каждая
+          // ветка двоится
+          labels: {
+            color: '#C9CEEB', boxWidth: 10, boxHeight: 10,
+            usePointStyle: true, pointStyle: 'circle', font: { size: 11 },
+            filter: (item, data) => !data.datasets[item.datasetIndex].fillOnly,
+          },
         },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${devFmtUsdt(c.parsed.y)}` } },
+        tooltip: {
+          filter: (item) => !item.dataset.fillOnly,
+          callbacks: { label: c => `${c.dataset.label}: ${devFmtUsdt(c.parsed.y)}` },
+        },
       },
       scales: {
         x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
@@ -1368,7 +1455,7 @@ async function devRenderBranchPnlChart() {
       },
     },
     // нулевая линия: без неё не видно, где ветка ушла в минус
-    plugins: [{
+    plugins: [neonGlowPlugin, {
       id: 'devZeroLine',
       afterDatasetsDraw(chart) {
         const { ctx: c, chartArea, scales: { y } } = chart;
@@ -1390,7 +1477,7 @@ async function devRenderBranchPnlChart() {
   // Итоги ветки под графиком - чтобы не наводиться на линию ради числа
   const sumEl = document.getElementById('devBranchPnlSummary');
   if (sumEl) {
-    sumEl.innerHTML = datasets.map(d => {
+    sumEl.innerHTML = lines.map(d => {
       const last = d.data[d.data.length - 1];
       const cls = last >= 0 ? 'wr-green' : 'wr-red';
       return `<span class="dev-branch-sum"><i class="dev-branch-dot" style="background:${d.borderColor}"></i>` +

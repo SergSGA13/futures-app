@@ -612,67 +612,65 @@ function wrAxisRange(values, padLow = 8, padHigh = 6) {
 // именно с ним. Дневной WR с чертой безубытка отвечает на второй.
 let wrDailyChartInstance = null;
 
+// Отрисовка дневного WR по уже разобранным сигналам. Вынесена отдельно,
+// чтобы страница «Статистика» и DEV-блок рисовали один и тот же график,
+// различаясь только источником сигналов.
+function drawDailyWrChart(canvasId, sigs, days) {
+  const cutoff = devDailyDateRange(days)[0];
+
+  const map = {};
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    if (!s.dk || s.dk < cutoff) continue;
+    if (!map[s.dk]) map[s.dk] = { label: `${s.dk.slice(8, 10)}.${s.dk.slice(5, 7)}`, w: 0, l: 0 };
+    if (s.res === 'WIN') map[s.dk].w++; else map[s.dk].l++;
+  }
+
+  const keys = Object.keys(map).sort();
+  if (keys.length < 3) return null;
+
+  const labels = [], data = [], counts = [], colors = [];
+  for (const k of keys) {
+    const { label, w, l } = map[k];
+    const tot = w + l;
+    const wr = tot ? (w / tot * 100) : 0;
+    labels.push(label);
+    data.push(parseFloat(wr.toFixed(1)));
+    counts.push(tot);
+    // День с 1-2 сигналами даёт 0% или 100% и сбивает чтение графика,
+    // поэтому малую выборку гасим серым, а не красим по WR.
+    colors.push(tot < MIN_SAMPLE ? 'rgba(123,132,176,0.4)' : wrRgba(wr));
+  }
+
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return null;
+  const range = wrAxisRange(data);
+
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.9 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `WR ${c.parsed.y}% · ${counts[c.dataIndex]}` } }
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+        y: { min: range.min, max: range.max, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    },
+    plugins: [breakevenLinePlugin()]
+  });
+}
+
 async function renderWrDailyChart(canvasId, days = 30) {
   if (wrDailyChartInstance) return;
   try {
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) return;
-
-    const cutoff = new Date();
-    cutoff.setHours(0, 0, 0, 0);
-    cutoff.setDate(cutoff.getDate() - (days - 1));
-
-    const map = {};
-    for (let i = 1; i < rows.length; i++) {
-      const res = rows[i][COL_RESULT];
-      if (res !== 'WIN' && res !== 'LOSE') continue;
-      const parts = String(rows[i][COL_DATE] || '').trim().split('.');
-      if (parts.length < 3) continue;
-      const d = parts[0].padStart(2, '0'), m = parts[1].padStart(2, '0'), y = parts[2].substring(0, 4);
-      if (y.length < 4 || isNaN(parseInt(y, 10))) continue;
-      const dt = new Date(+y, +m - 1, +d);
-      if (isNaN(dt.getTime()) || dt < cutoff) continue;
-      const dk = `${y}-${m}-${d}`;
-      if (!map[dk]) map[dk] = { label: `${d}.${m}`, w: 0, l: 0 };
-      if (res === 'WIN') map[dk].w++; else map[dk].l++;
-    }
-
-    const keys = Object.keys(map).sort();
-    if (keys.length < 3) return;
-
-    const labels = [], data = [], counts = [], colors = [];
-    for (const k of keys) {
-      const { label, w, l } = map[k];
-      const tot = w + l;
-      const wr = tot ? (w / tot * 100) : 0;
-      labels.push(label);
-      data.push(parseFloat(wr.toFixed(1)));
-      counts.push(tot);
-      // День с 1-2 сигналами даёт 0% или 100% и сбивает чтение графика,
-      // поэтому малую выборку гасим серым, а не красим по WR.
-      colors.push(tot < MIN_SAMPLE ? 'rgba(123,132,176,0.4)' : wrRgba(wr));
-    }
-
-    const ctx = document.getElementById(canvasId)?.getContext('2d');
-    if (!ctx) return;
-    const range = wrAxisRange(data);
-
-    wrDailyChartInstance = new Chart(ctx, {
-      type: 'bar',
-      data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.9 }] },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: c => `WR ${c.parsed.y}% · ${counts[c.dataIndex]}` } }
-        },
-        scales: {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
-          y: { min: range.min, max: range.max, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
-        }
-      },
-      plugins: [breakevenLinePlugin()]
-    });
+    const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
+    wrDailyChartInstance = drawDailyWrChart(canvasId, sigs, days);
   } catch (e) {
     console.log('WR daily chart error:', e);
   }
@@ -1627,6 +1625,35 @@ async function devRenderBranchTotals() {
 
   const card = document.getElementById('devTotalsCard');
   if (card) card.style.display = 'block';
+}
+
+// ===== WINRATE ПО ДНЯМ, СУММАРНО ПО ВЕТКАМ (DEV) =====
+// Тот же график, что на странице «Статистика», но по сигналам ВСЕХ веток
+// вместе. Там он считается только по PRO (лист ALLsignal), здесь - по PRO,
+// MEXC и ALT10m разом, поэтому дни выглядят иначе.
+// Ветки частично пересекаются: сигнал, исполненный и в PRO, и в MEXC,
+// входит в день дважды. Для WR это допустимо - веса ветвей и так разные
+// по объёму, а картина дня от этого не искажается.
+let devWrDailyChartInstance = null;
+
+async function devRenderWrDaily() {
+  if (devWrDailyChartInstance) return;
+  const cutoff = devDailyDateRange(DEV_BRANCH_PNL_DAYS)[0];
+  try {
+    let all = [];
+    for (const branch of Object.keys(DEV_BRANCH_COLORS)) {
+      const sigs = await devBranchSignalsCached(branch, cutoff);
+      all = all.concat(sigs);
+    }
+    if (!all.length) return;
+    devWrDailyChartInstance = drawDailyWrChart('devWrDailyChart', all, DEV_BRANCH_PNL_DAYS);
+    if (devWrDailyChartInstance) {
+      const card = document.getElementById('devWrDailyCard');
+      if (card) card.style.display = 'block';
+    }
+  } catch (e) {
+    console.log('DEV WR daily error:', e);
+  }
 }
 
 async function devRenderBranchesTables() {
@@ -3167,6 +3194,7 @@ async function renderDevL30d() {
       sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
     }
     try { devRenderBranchTotals(); } catch (e) { console.log('DEV totals error:', e); }
+    try { devRenderWrDaily(); } catch (e) { console.log('DEV WR daily error:', e); }
     try { devRenderBranchesTables(); } catch (e) { console.log('DEV branches error:', e); }
     try { devRenderBranchPnlChart(); } catch (e) { console.log('DEV branch PNL error:', e); }
     if (!sigs.length) return;
@@ -3273,6 +3301,8 @@ function refreshDevL30d() {
   Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
   devBranchPnlChartInstance?.destroy();
   devBranchPnlChartInstance = null;
+  devWrDailyChartInstance?.destroy();
+  devWrDailyChartInstance = null;
   ['l30dDev', 'l30dDevEth', 'l30dDevBtc', 'l30dDrawdown'].forEach(k => {
     pnlChartInstances[k]?.destroy();
     delete pnlChartInstances[k];
@@ -3878,6 +3908,12 @@ function refreshHome() {
   Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
   hourWrChartInstance?.destroy();
   hourWrChartInstance = null;
+  // графики DEV-блока охраняются собственными флагами, поэтому общий
+  // сброс кэшей обязан гасить и их - иначе останутся старые числа
+  devBranchPnlChartInstance?.destroy();
+  devBranchPnlChartInstance = null;
+  devWrDailyChartInstance?.destroy();
+  devWrDailyChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
   Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {

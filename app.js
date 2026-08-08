@@ -1284,6 +1284,121 @@ function devBranchEmptyHtml_() {
   return '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет сигналов за последние 7 дней.</div></div>';
 }
 
+// ===== СРАВНЕНИЕ PNL ПО ВЕТКАМ (одна картинка, три линии) =====
+// Таблицы рядом дают итог за 7 дней, но не показывают, КАК ветки шли к
+// этому итогу: кто рос ровно, кто отыгрался в последний день. Три
+// накопленные кривые на общей оси отвечают на это сразу.
+// Цвета совпадают с точками у таблиц веток (см. dev-branch-dot).
+const DEV_BRANCH_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A', ALT10m: '#9D50FF' };
+const DEV_BRANCH_PNL_DAYS = 30;
+let devBranchPnlChartInstance = null;
+
+// Накопленный PNL по общей оси дат: дни без сигналов держат прежний
+// уровень, иначе ветки с редкими сигналами рвали бы линию.
+function devBranchPnlSeries(sigs, dateKeys) {
+  const daily = {};
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    daily[s.dk] = (daily[s.dk] || 0) + (s.res === 'WIN' ? 100 : -125);
+  }
+  let cum = 0;
+  return dateKeys.map(dk => { cum += (daily[dk] || 0); return cum; });
+}
+
+async function devRenderBranchPnlChart() {
+  if (devBranchPnlChartInstance) return;
+  const dateKeys = devDailyDateRange(DEV_BRANCH_PNL_DAYS);
+  const cutoff = dateKeys[0];
+
+  const series = {};
+  try {
+    const rows = await fetchAllSignals();
+    series.PRO = (rows && rows.length > 1)
+      ? rows.slice(1).map(devParseSignal).filter(s => s && s.dk >= cutoff) : [];
+  } catch (e) { console.log('DEV branch PNL: PRO error', e); series.PRO = []; }
+
+  try {
+    const rows = await fetchMexcSignals();
+    series.MEXC = (rows && rows.length > 1)
+      ? rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff) : [];
+  } catch (e) { console.log('DEV branch PNL: MEXC error', e); series.MEXC = []; }
+
+  try {
+    const rows = await fetchBlockedSignals();
+    const altRaw = (rows && rows.length > 1)
+      ? rows.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
+    series.ALT10m = altRaw.map(devNormalizeBlockedRow).map(devParseSignal)
+      .filter(s => s && s.dk >= cutoff);
+  } catch (e) { console.log('DEV branch PNL: ALT10m error', e); series.ALT10m = []; }
+
+  const names = Object.keys(DEV_BRANCH_COLORS).filter(n => series[n] && series[n].length);
+  if (!names.length) return;
+
+  const labels = dateKeys.map(dk => `${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+  const datasets = names.map(name => ({
+    label: name,
+    data: devBranchPnlSeries(series[name], dateKeys),
+    borderColor: DEV_BRANCH_COLORS[name],
+    backgroundColor: DEV_BRANCH_COLORS[name],
+    borderWidth: 2,
+    pointRadius: 0,
+    fill: false,
+    tension: 0.25,
+  }));
+
+  const ctx = document.getElementById('devBranchPnlChart')?.getContext('2d');
+  if (!ctx) return;
+
+  devBranchPnlChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: '#C9CEEB', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } },
+        },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${devFmtUsdt(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}` }, grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+    // нулевая линия: без неё не видно, где ветка ушла в минус
+    plugins: [{
+      id: 'devZeroLine',
+      afterDatasetsDraw(chart) {
+        const { ctx: c, chartArea, scales: { y } } = chart;
+        if (!chartArea || y.min > 0 || y.max < 0) return;
+        const py = y.getPixelForValue(0);
+        c.save();
+        c.setLineDash([3, 3]);
+        c.strokeStyle = 'rgba(232,234,255,0.35)';
+        c.lineWidth = 1;
+        c.beginPath(); c.moveTo(chartArea.left, py); c.lineTo(chartArea.right, py); c.stroke();
+        c.restore();
+      }
+    }],
+  });
+
+  const card = document.getElementById('devBranchPnlCard');
+  if (card) card.style.display = 'block';
+
+  // Итоги ветки под графиком - чтобы не наводиться на линию ради числа
+  const sumEl = document.getElementById('devBranchPnlSummary');
+  if (sumEl) {
+    sumEl.innerHTML = datasets.map(d => {
+      const last = d.data[d.data.length - 1];
+      const cls = last >= 0 ? 'wr-green' : 'wr-red';
+      return `<span class="dev-branch-sum"><i class="dev-branch-dot" style="background:${d.borderColor}"></i>` +
+             `${d.label} <b class="${cls}">${devFmtUsdt(last)}</b></span>`;
+    }).join('');
+  }
+}
+
 async function devRenderBranchesTables() {
   const cutoff = devLast7dCutoff_();
   const card = document.getElementById('devBranchesCard');
@@ -2841,6 +2956,7 @@ async function renderDevL30d() {
       sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
     }
     try { devRenderBranchesTables(); } catch (e) { console.log('DEV branches error:', e); }
+    try { devRenderBranchPnlChart(); } catch (e) { console.log('DEV branch PNL error:', e); }
     if (!sigs.length) return;
 
     const dateKeys = devDailyDateRange(30);

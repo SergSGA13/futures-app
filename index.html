@@ -697,6 +697,13 @@
           <div id="devBranchAltTable"></div>
         </div>
 
+        <div class="pnl-chart-card" id="devBranchPnlCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Сравнение PNL по веткам - 30 дней <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:10px">Накопленный результат каждой ветки на общей оси. Таблицы выше дают итог за 7 дней, график показывает, как ветки к нему шли. Ставка 125 USDT, выплата 0.8.</p>
+          <div class="pnl-chart-wrap" style="height:200px"><canvas id="devBranchPnlChart"></canvas></div>
+          <div id="devBranchPnlSummary" class="dev-branch-sums"></div>
+        </div>
+
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> PNL - Last 30 Days <span class="dev-chip">DEV</span></div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartL30dDev"></canvas></div>

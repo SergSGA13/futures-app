@@ -1404,7 +1404,7 @@ async function devRenderBranchPnlChart() {
   const series = {};
   for (const name of Object.keys(DEV_BRANCH_COLORS)) {
     try {
-      series[name] = await devBranchSignals(name, cutoff);
+      series[name] = await devBranchSignalsCached(name, cutoff);
     } catch (e) {
       console.log('DEV branch PNL: ' + name + ' error', e);
       series[name] = [];
@@ -1552,6 +1552,83 @@ async function devBranchSignals(branch, cutoff) {
     .filter(s => okPair(s) && s.dk >= cutoff);
 }
 
+// Разбор сигналов ветки нужен трижды за отрисовку страницы (итоги, таблицы,
+// график). Сырые листы кэшируются на уровне fetch*, но парсинг тысяч строк
+// повторять незачем - держим разобранное до обновления анализа.
+const devBranchSigCache = {};
+
+async function devBranchSignalsCached(branch, cutoff) {
+  const key = branch + '|' + cutoff;
+  if (!devBranchSigCache[key]) devBranchSigCache[key] = devBranchSignals(branch, cutoff);
+  return devBranchSigCache[key];
+}
+
+// ===== ИТОГО ПО ВЕТКАМ (шапка DEV-блока) =====
+// Сводка того, что ниже разложено по трём таблицам: сколько принесла каждая
+// ветка и сколько они дают вместе.
+// ВАЖНО: ветки работают с общим потоком сигналов и частично пересекаются -
+// один и тот же сигнал может быть исполнен и в PRO, и в MEXC. Сумма имеет
+// смысл как «результат всех веток вместе, если торговать их одновременно»,
+// а не как результат одного счёта.
+async function devRenderBranchTotals() {
+  const cutoff = devDailyDateRange(DEV_BRANCH_PNL_DAYS)[0];
+  const el = document.getElementById('devTotalsBlock');
+  if (!el) return;
+
+  const rows = [];
+  for (const branch of Object.keys(DEV_BRANCH_COLORS)) {
+    try {
+      const sigs = await devBranchSignalsCached(branch, cutoff);
+      let w = 0, l = 0, pnl = 0;
+      for (const s of sigs) {
+        if (s.res === 'WIN') w++;
+        else if (s.res === 'LOSE') l++;
+        else continue;
+        pnl += devPnlSig(s, branch);
+      }
+      const dec = w + l;
+      if (dec) rows.push({ branch, dec, wr: w / dec * 100, pnl });
+    } catch (e) {
+      console.log('DEV totals ' + branch + ' error:', e);
+    }
+  }
+  if (!rows.length) return;
+
+  const totalPnl = rows.reduce((a, r) => a + r.pnl, 0);
+  const totalDec = rows.reduce((a, r) => a + r.dec, 0);
+  const totalWr = rows.reduce((a, r) => a + r.wr * r.dec, 0) / totalDec;
+
+  const stakeLine = Object.keys(DEV_STAKES)
+    .map(b => `${b} ETH ${DEV_STAKES[b].ETH} / BTC ${DEV_STAKES[b].BTC}`)
+    .join(' · ');
+
+  el.innerHTML = `
+    <div class="dev-totals-hero">
+      <div class="dev-totals-pnl ${totalPnl >= 0 ? 'pos' : 'neg'}">${devFmtUsdt(totalPnl)}</div>
+      <div class="dev-totals-sub">${totalDec} сигналов · WR <b class="${wrClass(totalWr)}">${totalWr.toFixed(1)}%</b></div>
+    </div>
+    <table class="anal-table dev-totals-table"><thead><tr>
+      <th>Ветка</th><th>Сигналов</th><th>WR%</th><th>PNL</th>
+    </tr></thead><tbody>
+      ${rows.map(r => `<tr>
+        <td><span class="dev-branch-dot" style="display:inline-block;background:${DEV_BRANCH_COLORS[r.branch]};margin-right:6px"></span>${r.branch}</td>
+        <td>${r.dec}</td>
+        <td class="${wrClass(r.wr)}">${r.wr.toFixed(1)}%</td>
+        <td class="${r.pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(r.pnl)}</td>
+      </tr>`).join('')}
+      <tr class="anal-total">
+        <td>ВСЕГО</td><td>${totalDec}</td>
+        <td class="${wrClass(totalWr)}">${totalWr.toFixed(1)}%</td>
+        <td class="${totalPnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(totalPnl)}</td>
+      </tr>
+    </tbody></table>
+    <p class="dev-note" style="margin-top:10px">Ставки: ${stakeLine} USDT, выплата ${DEV_PAYOUT}.
+    Ветки идут из общего потока и частично пересекаются - сумма показывает результат всех веток вместе, а не одного счёта.</p>`;
+
+  const card = document.getElementById('devTotalsCard');
+  if (card) card.style.display = 'block';
+}
+
 async function devRenderBranchesTables() {
   const cutoff = devDailyDateRange(DEV_BRANCH_PNL_DAYS)[0];
   const card = document.getElementById('devBranchesCard');
@@ -1561,7 +1638,7 @@ async function devRenderBranchesTables() {
     try {
       const el = document.getElementById(elId);
       if (!el) continue;
-      const sigs = await devBranchSignals(branch, cutoff);
+      const sigs = await devBranchSignalsCached(branch, cutoff);
       const groups = devAggregate(sigs, s => s.pair);
       const table = devBuildTable(['ETH', 'BTC'], groups);
       el.innerHTML = table ? table + devBranchSummaryHtml(groups, branch) : devBranchEmptyHtml_();
@@ -3089,6 +3166,7 @@ async function renderDevL30d() {
     if (sum) {
       sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
     }
+    try { devRenderBranchTotals(); } catch (e) { console.log('DEV totals error:', e); }
     try { devRenderBranchesTables(); } catch (e) { console.log('DEV branches error:', e); }
     try { devRenderBranchPnlChart(); } catch (e) { console.log('DEV branch PNL error:', e); }
     if (!sigs.length) return;
@@ -3190,6 +3268,11 @@ function refreshDevL30d() {
   blockedSignalRows = null;
   mexcSignalRows = null;
   devL30dRendered = false;
+  // разобранные сигналы веток тоже устарели - иначе кнопка обновит
+  // сырые листы, а итоги и график останутся на прежних числах
+  Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
+  devBranchPnlChartInstance?.destroy();
+  devBranchPnlChartInstance = null;
   ['l30dDev', 'l30dDevEth', 'l30dDevBtc', 'l30dDrawdown'].forEach(k => {
     pnlChartInstances[k]?.destroy();
     delete pnlChartInstances[k];
@@ -3871,6 +3954,7 @@ function refreshHome() {
   wrDailyChartInstance = null;
   allTimeSectionsRendered = false;
   periodCmpRendered = false;
+  Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
   hourWrChartInstance?.destroy();
   hourWrChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);

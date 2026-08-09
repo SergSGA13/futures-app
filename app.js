@@ -2473,42 +2473,55 @@ function renderHourWrChart(canvasId, sigs) {
 // ===== СРАВНЕНИЕ ПЕРИОДОВ =====
 // «Стало хуже или лучше» сейчас требует переключения между тремя
 // страницами и удержания цифр в голове. Таблица отвечает сама.
+// Периоды берём из ЛИСТА ANAL L7D - того же источника, что плитки на
+// главной и таблицы по парам. Параллельный подсчёт из сырого ALLsignal
+// давал другие числа: набор строк тот же, но у листа своя граница окна
+// «последние 7 дней», и на ней расходилось под полсотни сигналов.
+// Сводить два определения одного периода на одной странице нельзя -
+// пользователь видит два разных «факта».
+// Раскладка листа: строка 18 - TOTAL, блоки колонок
+//   L7D  - с 1 (B-H), ALL - с 12 (M-S), L30D - с 25 (Z-AF)
+// внутри блока: ↑Total, ↑Win, ↑WR%, ↓Total, ↓Win, ↓WR%, Total
 const PERIOD_ROWS = [
-  { days: 7,    key: 'per.7d' },
-  { days: 30,   key: 'per.30d' },
-  { days: null, key: 'per.all' },
+  { col: 1,  key: 'per.7d' },
+  { col: 25, key: 'per.30d' },
+  { col: 12, key: 'per.all' },
 ];
 
-function periodStats(sigs, days) {
-  const cutoff = days ? cutoffDk(days) : null;
-  let w = 0, l = 0;
-  for (const s of sigs) {
-    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
-    // Считаем только ETH и BTC - как все остальные таблицы приложения.
-    // Строки с пустым или посторонним тикером раздували "Всё время".
-    if (s.pair !== 'ETH' && s.pair !== 'BTC') continue;
-    if (cutoff && s.dk < cutoff) continue;
-    if (s.res === 'WIN') w++; else l++;
-  }
-  const tot = w + l;
-  return { tot, w, wr: tot ? (w / tot * 100) : null };
+function periodStatsFromAnal(totalRow, col) {
+  const num = v => {
+    const n = parseFloat(String(v == null ? '' : v).replace('%', '').replace(/\s/g, ''));
+    return isNaN(n) ? null : n;
+  };
+  const upW = num(totalRow[col + 1]), dnW = num(totalRow[col + 4]), tot = num(totalRow[col + 6]);
+  if (upW == null || dnW == null || tot == null || !tot) return null;
+  const w = upW + dnW;
+  return { tot, w, wr: w / tot * 100 };
 }
 
-function buildPeriodComparison(sigs) {
-  const rows = PERIOD_ROWS.map(p => ({ ...p, ...periodStats(sigs, p.days) }));
-  const base = rows[rows.length - 1].wr;         // всё время - точка отсчёта
-  if (!rows.some(r => r.tot > 0)) return '';
+function buildPeriodComparison(analRows) {
+  const totalRow = analRows && analRows[18];
+  if (!totalRow) return '';
+
+  const rows = [];
+  for (const p of PERIOD_ROWS) {
+    const st = periodStatsFromAnal(totalRow, p.col);
+    if (st) rows.push({ ...p, ...st });
+  }
+  if (!rows.length) return '';
+
+  const allRow = rows.find(r => r.key === 'per.all');
+  const base = allRow ? allRow.wr : null;
 
   let html = `<table class="anal-table"><thead><tr>
     <th>${t('per.col.period')}</th><th>${t('per.col.signals')}</th><th>WR%</th><th>${t('per.col.delta')}</th>
   </tr></thead><tbody>`;
   for (const r of rows) {
-    const isAll = r.days == null;
-    if (!r.tot) continue;
+    const isAll = r.key === 'per.all';
     // Дельта считается к общему WR: он и есть «норма» этой системы.
     // У самой строки «всё время» дельты нет - сравнивать не с чем.
     let delta = '—';
-    if (!isAll && base != null && r.wr != null) {
+    if (!isAll && base != null) {
       const d = r.wr - base;
       const cls = d >= 0 ? 'wr-green' : 'wr-red';
       delta = `<span class="${cls}">${d >= 0 ? '+' : ''}${d.toFixed(1)}</span>`;
@@ -2529,10 +2542,9 @@ let periodCmpRendered = false;
 async function renderPeriodComparison() {
   if (periodCmpRendered) return;
   try {
-    const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) return;
-    const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
-    const html = buildPeriodComparison(sigs);
+    const rows = await fetchAnalL7d();
+    if (!rows || !rows.length) return;
+    const html = buildPeriodComparison(rows);
     if (!html) return;
     periodCmpRendered = true;
     document.getElementById('periodCmpTable').innerHTML = html;

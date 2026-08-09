@@ -1191,9 +1191,7 @@ function devNormalizeBlockedRow(r) {
 // Сигналы за 30 дней из обоих листов + объединённые сырые строки (для DOW и Indicator)
 async function devFetchSignals30d() {
   const [allRows, blockedRows] = await Promise.all([fetchAllSignals(), fetchBlockedSignals()]);
-  const n = new Date();
-  const c = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 30);
-  const cutoff = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, '0')}-${String(c.getDate()).padStart(2, '0')}`;
+  const cutoff = cutoffDk(30);
 
   const blockedNorm = (blockedRows && blockedRows.length > 1)
     ? blockedRows.slice(1).map(devNormalizeBlockedRow)
@@ -1655,12 +1653,24 @@ function devRenderPnlChart(sigs) {
 // ===== DEV: PNL vs Цена (ETH / BTC), Last 30 Days =====
 // Полный календарный ряд дат (кумулятивный PNL переносится на дни без сигналов),
 // чтобы ось X точно совпадала с рядом дневных цен закрытия.
+// Окно "последние N дней" = N календарных дней ВКЛЮЧАЯ сегодня.
+// Раньше цикл шёл от days до 0 включительно и давал days+1 ключей: подпись
+// говорила "30 дней", а данные покрывали 31. Из-за этого график и таблица
+// сравнения периодов на одной странице считали разные объёмы.
+function dkOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function cutoffDk(days) {
+  const n = new Date();
+  return dkOf(new Date(n.getFullYear(), n.getMonth(), n.getDate() - (days - 1)));
+}
+
 function devDailyDateRange(days) {
   const out = [];
   const now = new Date();
-  for (let i = days; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  for (let i = days - 1; i >= 0; i--) {
+    out.push(dkOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)));
   }
   return out;
 }
@@ -2470,16 +2480,13 @@ const PERIOD_ROWS = [
 ];
 
 function periodStats(sigs, days) {
-  let cutoff = null;
-  if (days) {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - (days - 1));
-    cutoff = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }
+  const cutoff = days ? cutoffDk(days) : null;
   let w = 0, l = 0;
   for (const s of sigs) {
     if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    // Считаем только ETH и BTC - как все остальные таблицы приложения.
+    // Строки с пустым или посторонним тикером раздували "Всё время".
+    if (s.pair !== 'ETH' && s.pair !== 'BTC') continue;
     if (cutoff && s.dk < cutoff) continue;
     if (s.res === 'WIN') w++; else l++;
   }

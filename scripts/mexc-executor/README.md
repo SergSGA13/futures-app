@@ -19,6 +19,14 @@
    npx playwright install chromium
    copy config.example.json config.json     (Windows; на mac/linux: cp)
    ```
+   Правь config.json любым редактором - BOM в начале файла исполнитель
+   переживёт. А вот через PowerShell 5.1 писать его лучше так, иначе
+   `Set-Content -Encoding UTF8` добавит BOM, и файл станет невалидным
+   JSON для других инструментов:
+   ```powershell
+   [System.IO.File]::WriteAllText("$PWD\config.json", $json,
+     (New-Object System.Text.UTF8Encoding $false))
+   ```
 3. Открой `config.json`:
    - `secret` - придумай длинную случайную строку;
    - `stakes` - ставка по активу. По умолчанию ETH 150 / BTC 250, как в

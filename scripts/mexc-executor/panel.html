@@ -76,6 +76,15 @@
     </div>
 
     <div class="card">
+      <h2>Поведение</h2>
+      <div class="row"><span>Окно активности</span><b id="win">—</b></div>
+      <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
+      <div class="row"><span>Клик с разбросом</span><b id="human">—</b></div>
+      <div class="row"><span>Холостые действия</span><b id="idle">—</b></div>
+      <div class="note" id="lastIdle"></div>
+    </div>
+
+    <div class="card">
       <h2>Ручная ставка</h2>
       <div class="btns" style="margin-bottom:8px">
         <select id="mAsset"><option>ETH</option><option>BTC</option></select>
@@ -138,6 +147,16 @@ async function refresh() {
   document.getElementById('stBTC').textContent = st.stakes.BTC + ' USDT';
   document.getElementById('minPay').textContent = st.minPayout + '%';
   document.getElementById('tf').textContent = st.execTimings.map(x => x + 'м').join(', ');
+
+  document.getElementById('win').textContent = st.activeWindow || 'круглосуточно';
+  document.getElementById('activeNow').innerHTML = st.activeNow
+    ? '<span class="pill ok">активен</span>'
+    : '<span class="pill warn">тихие часы</span>';
+  document.getElementById('human').textContent = st.humanize ? 'вкл' : 'выкл';
+  document.getElementById('idle').textContent = st.idleRotation ? 'вкл' : 'выкл';
+  document.getElementById('lastIdle').textContent = st.lastIdle
+    ? `последнее: ${st.lastIdle.act} в ${fmtTime(st.lastIdle.at)}`
+    : 'холостых действий ещё не было';
   document.getElementById('sub').textContent =
     `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено ${new Date().toLocaleTimeString('ru-RU')}`;
 

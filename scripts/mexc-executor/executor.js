@@ -184,6 +184,31 @@ async function waitForPanel() {
   return null;
 }
 
+// Счётчик открытых позиций из вкладки "Open Positions (N)".
+// Это единственный доступный признак того, что ставка ДЕЙСТВИТЕЛЬНО
+// открылась: клик по кнопке сам по себе ничего не доказывает.
+async function openPositionsCount() {
+  try {
+    const body = await page.evaluate(() => document.body.innerText);
+    // Метку экранируем: в интерфейсе она может содержать скобки и точки.
+    const label = (CFG.openPositionsLabel || 'Open Positions').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = body.match(new RegExp(label + '\\s*\\((\\d+)\\)', 'i'));
+    return m ? parseInt(m[1], 10) : null;
+  } catch (e) { return null; }
+}
+
+// Ждём, пока счётчик вырастет. Возвращает новое значение или null.
+async function waitPositionsGrow(before, timeoutMs) {
+  if (before == null) return null;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const now = await openPositionsCount();
+    if (now != null && now > before) return now;
+    await page.waitForTimeout(400);
+  }
+  return null;
+}
+
 // Достаём payout со страницы: "Up Payout 80%" / "Down Payout 80%"
 async function pagePayout(direction) {
   try {
@@ -267,6 +292,7 @@ async function placeBet(sig) {
     return { status: 'dry-run', payoutPage: pv };
   }
 
+  const posBefore = await openPositionsCount();
   await btn.click({ timeout: 5000 });
   await page.waitForTimeout(600);
   // возможное окно подтверждения
@@ -274,9 +300,24 @@ async function placeBet(sig) {
     const c = page.locator(CFG.selectors.confirm).first();
     if (await c.count() > 0 && await c.isVisible().catch(() => false)) await c.click({ timeout: 5000 });
   }
-  await page.waitForTimeout(800);
+
+  // Клик сам по себе не доказывает, что ставка открылась: он мог не
+  // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
+  // ставку размещённой только когда выросло число открытых позиций.
+  const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
   await shot(`bet-${sig.asset}-${sig.direction}`);
-  log(`ставка исполнена за ${Date.now() - t0}мс`);
+
+  if (posBefore == null) {
+    log(`ставка отправлена за ${Date.now() - t0}мс, счётчик позиций прочитать не удалось`);
+    return { status: 'placed-unverified', payoutPage: pv };
+  }
+  if (posAfter == null) {
+    log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
+    await dumpPage('not-confirmed');
+    await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
+    return { status: 'placed-unconfirmed', payoutPage: pv };
+  }
+  log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
   return { status: 'placed', payoutPage: pv };
 }
 
@@ -300,8 +341,12 @@ async function pump() {
       logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: r.status, payoutPage: r.payoutPage });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько
       // сигналов реально упрётся в биржевой лимит.
-      if (r.status === 'placed' || r.status === 'dry-run') state.placed.push(Date.now());
-      if (r.status === 'placed') state.betsToday++;
+      // 'placed-unconfirmed' и '-unverified' тоже занимают слот и лимит:
+      // позиция могла открыться, и считать иначе значило бы рисковать
+      // превышением биржевого лимита.
+      const counts = ['placed', 'placed-unconfirmed', 'placed-unverified'];
+      if (counts.includes(r.status) || r.status === 'dry-run') state.placed.push(Date.now());
+      if (counts.includes(r.status)) state.betsToday++;
       state.consecutiveErrors = 0;
     }
   } catch (e) {

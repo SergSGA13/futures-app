@@ -29,7 +29,10 @@ if (!fs.existsSync(CFG_PATH)) {
   console.error('Нет config.json - скопируй config.example.json в config.json и заполни.');
   process.exit(1);
 }
-const CFG = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8'));
+// .replace() снимает BOM: блокнот и PowerShell (Set-Content -Encoding UTF8
+// в версии 5.1) пишут UTF-8 с меткой в начале файла, а JSON.parse на ней
+// падает с "Unexpected token" - причём в сообщении метка невидима.
+const CFG = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
 const PROFILE = path.join(ROOT, 'profile');           // куки/логин живут тут
 const LOGS = path.join(ROOT, 'logs');
 const SHOTS = path.join(LOGS, 'shots');

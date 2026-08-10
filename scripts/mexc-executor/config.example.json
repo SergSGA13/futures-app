@@ -17,6 +17,8 @@
   "headless": false,
   "pageSettleMs": 2500,
   "panelTimeoutMs": 25000,
+  "confirmTimeoutMs": 9000,
+  "openPositionsLabel": "Open Positions",
 
   "urls": {
     "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",

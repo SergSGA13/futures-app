@@ -102,6 +102,7 @@ const api = (a, opt) => fetch(`/api/${SECRET}/${a}`, opt).then(r => r.json());
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
+  (s === 'placed-unconfirmed' || s === 'placed-unverified') ? 's-error' :
   s === 'dry-run' ? 's-dry' :
   s === 'error' ? 's-error' : 's-skip';
 

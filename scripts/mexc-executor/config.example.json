@@ -1,15 +1,20 @@
 {
   "port": 8787,
-  "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-CONFIG.MEXC.EXECUTOR.SECRET",
+  "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
 
   "dryRun": true,
-  "stakeUSDT": 5,
+
+  "stakes": { "ETH": 150, "BTC": 250 },
+
   "minPayout": 80,
+  "maxOpenBets": 5,
+  "slotWindowMin": 11,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
   "maxConsecutiveErrors": 3,
   "execTimings": [10],
-  "headless": true,
+
+  "headless": false,
   "pageSettleMs": 2500,
 
   "urls": {
@@ -22,7 +27,7 @@
   "selectors": {
     "loginMarker": "button:has-text(\"Log In\")",
     "timeUnit": "button, div[role=button], span",
-    "amount": "input[placeholder*=\"USDT\"], input[placeholder*=\"250\"]",
+    "amount": "input[placeholder*=\"USDT\"], input[placeholder*=\"~\"], input[inputmode=\"decimal\"]",
     "up": "button:has-text(\"Up\")",
     "down": "button:has-text(\"Down\")",
     "confirm": "button:has-text(\"Confirm\")"

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MEXC Executor</title>
+<style>
+  :root {
+    --bg:#0A0B14; --card:#141930; --line:rgba(102,163,255,.14);
+    --text:#E8EAFF; --muted:#7B84B0;
+    --green:#4EFFA0; --red:#FF5272; --yellow:#FFD166; --blue:#66A3FF;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:20px; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  h1 { font-size:18px; margin-bottom:2px; }
+  .sub { color:var(--muted); font-size:12px; margin-bottom:18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin-bottom:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .card h2 { font-size:12px; color:var(--muted); font-weight:600; margin-bottom:10px; text-transform:uppercase; letter-spacing:.4px; }
+  .big { font-size:24px; font-weight:800; }
+  .row { display:flex; justify-content:space-between; padding:4px 0; font-size:13px; }
+  .row span:first-child { color:var(--muted); }
+  .pill { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+  .ok { background:rgba(78,255,160,.15); color:var(--green); }
+  .warn { background:rgba(255,209,102,.15); color:var(--yellow); }
+  .bad { background:rgba(255,82,114,.15); color:var(--red); }
+  button { background:rgba(102,163,255,.12); color:var(--text); border:1px solid var(--line);
+           border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+  button:hover { background:rgba(102,163,255,.22); }
+  button.danger { background:rgba(255,82,114,.12); color:var(--red); border-color:rgba(255,82,114,.3); }
+  button.go { background:rgba(78,255,160,.12); color:var(--green); border-color:rgba(78,255,160,.3); }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th { text-align:left; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); font-size:11px; }
+  td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.04); }
+  .s-placed { color:var(--green); font-weight:700; }
+  .s-dry { color:var(--blue); }
+  .s-error { color:var(--red); font-weight:700; }
+  .s-skip { color:var(--muted); }
+  select { background:var(--card); color:var(--text); border:1px solid var(--line);
+           border-radius:8px; padding:8px; font-size:13px; }
+  .note { color:var(--muted); font-size:11.5px; margin-top:8px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MEXC Executor</h1>
+  <div class="sub" id="sub">загрузка…</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Режим</h2>
+      <div class="big" id="mode">—</div>
+      <div class="note" id="modeNote"></div>
+      <div class="btns" style="margin-top:10px">
+        <button id="btnPause">Пауза</button>
+        <button id="btnDry">В dry-run</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Слоты и лимиты</h2>
+      <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
+      <div class="row"><span>В очереди</span><b id="queue">—</b></div>
+      <div class="row"><span>За сегодня</span><b id="today">—</b></div>
+      <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
+    </div>
+
+    <div class="card">
+      <h2>Настройки</h2>
+      <div class="row"><span>Ставка ETH</span><b id="stETH">—</b></div>
+      <div class="row"><span>Ставка BTC</span><b id="stBTC">—</b></div>
+      <div class="row"><span>Мин. payout</span><b id="minPay">—</b></div>
+      <div class="row"><span>Таймфреймы</span><b id="tf">—</b></div>
+    </div>
+
+    <div class="card">
+      <h2>Ручная ставка</h2>
+      <div class="btns" style="margin-bottom:8px">
+        <select id="mAsset"><option>ETH</option><option>BTC</option></select>
+        <select id="mDir"><option>UP</option><option>DOWN</option></select>
+      </div>
+      <button class="go" id="btnManual">Поставить</button>
+      <div class="note">Проходит те же проверки, что сигнал из вебхука: payout, слоты, режим.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Последние ставки</h2>
+    <table>
+      <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Ставка</th><th>Payout</th><th>Режим</th><th>Статус</th><th>Заметка</th></tr></thead>
+      <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// Секрет берём из адреса панели: /panel/<secret>
+const SECRET = location.pathname.split('/')[2];
+const api = (a, opt) => fetch(`/api/${SECRET}/${a}`, opt).then(r => r.json());
+
+const statusClass = (s) =>
+  s === 'placed' ? 's-placed' :
+  s === 'dry-run' ? 's-dry' :
+  s === 'error' ? 's-error' : 's-skip';
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleTimeString('ru-RU');
+}
+
+async function refresh() {
+  let st;
+  try { st = await api('state'); }
+  catch (e) { document.getElementById('sub').textContent = 'нет связи с исполнителем'; return; }
+
+  const live = !st.dryRun && !st.paused;
+  document.getElementById('mode').innerHTML = st.paused
+    ? '<span class="pill warn">ПАУЗА</span>'
+    : (st.dryRun ? '<span class="pill warn">DRY-RUN</span>' : '<span class="pill ok">БОЕВОЙ</span>');
+  document.getElementById('modeNote').textContent = st.dryRun
+    ? 'Проходит весь путь до кнопки, но не нажимает её.'
+    : (st.paused ? 'Сигналы принимаются, но не исполняются.' : 'Ставки идут на реальные деньги.');
+
+  document.getElementById('btnPause').textContent = st.paused ? 'Снять с паузы' : 'Пауза';
+  document.getElementById('btnPause').className = st.paused ? 'go' : '';
+  document.getElementById('btnDry').textContent = st.dryRun ? 'В боевой режим' : 'В dry-run';
+  document.getElementById('btnDry').className = st.dryRun ? 'danger' : '';
+
+  document.getElementById('slots').textContent = `${st.slots} / ${st.maxOpenBets}`;
+  document.getElementById('queue').textContent = st.queue;
+  document.getElementById('today').textContent = `${st.betsToday} / ${st.maxBetsPerDay}`;
+  document.getElementById('errs').textContent = st.consecutiveErrors;
+  document.getElementById('stETH').textContent = st.stakes.ETH + ' USDT';
+  document.getElementById('stBTC').textContent = st.stakes.BTC + ' USDT';
+  document.getElementById('minPay').textContent = st.minPayout + '%';
+  document.getElementById('tf').textContent = st.execTimings.map(x => x + 'м').join(', ');
+  document.getElementById('sub').textContent =
+    `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено ${new Date().toLocaleTimeString('ru-RU')}`;
+
+  const tb = document.getElementById('bets');
+  if (!st.bets || !st.bets.length) {
+    tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">пока ставок не было</td></tr>';
+  } else {
+    tb.innerHTML = st.bets.map(b => `<tr>
+      <td>${fmtTime(b.time)}</td><td>${b.asset || ''}</td><td>${b.direction || ''}</td>
+      <td>${b.stake || ''}</td><td>${b.payout_page || '—'}</td><td>${b.mode || ''}</td>
+      <td class="${statusClass(b.status)}">${b.status || ''}</td>
+      <td style="color:var(--muted)">${(b.note || '').replace(/^"|"$/g, '').slice(0, 60)}</td>
+    </tr>`).join('');
+  }
+}
+
+document.getElementById('btnPause').onclick = async () => {
+  const st = await api('state');
+  await api(st.paused ? 'resume' : 'pause', { method: 'POST' });
+  refresh();
+};
+document.getElementById('btnDry').onclick = async () => {
+  const st = await api('state');
+  if (st.dryRun && !confirm('Включить БОЕВОЙ режим? Ставки пойдут на реальные деньги.')) return;
+  await api(st.dryRun ? 'dry-off' : 'dry-on', { method: 'POST' });
+  refresh();
+};
+document.getElementById('btnManual').onclick = async () => {
+  const asset = document.getElementById('mAsset').value;
+  const direction = document.getElementById('mDir').value;
+  if (!confirm(`Поставить ${asset} ${direction}?`)) return;
+  await api('manual', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset, direction }),
+  });
+  setTimeout(refresh, 800);
+};
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

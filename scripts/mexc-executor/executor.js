@@ -51,8 +51,26 @@ const state = {
   queue: [],
   busy: false,
   recent: [],                          // дедуп повторных доставок
+  placed: [],                          // времена размещённых ставок (кап слотов)
+  paused: false,
   startedAt: Date.now(),
 };
+
+// Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
+// Старый плоский stakeUSDT продолжает работать как запасной вариант.
+function stakeFor(asset) {
+  const t = CFG.stakes || {};
+  return t[asset] != null ? t[asset] : (CFG.stakeUSDT ?? 5);
+}
+
+// Биржа держит не больше 5 ставок одновременно. Окно берём ДЛИННЕЕ
+// экспирации (10 мин), иначе слот освободится в учёте раньше, чем на бирже.
+function openSlots() {
+  const winMs = (CFG.slotWindowMin ?? 11) * 60000;
+  const now = Date.now();
+  state.placed = state.placed.filter(t => now - t < winMs);
+  return state.placed.length;
+}
 
 function log(line) {
   const msg = `[${new Date().toISOString()}] ${line}`;
@@ -138,7 +156,7 @@ async function placeBet(sig) {
   // сумма ставки
   const amount = page.locator(CFG.selectors.amount).first();
   await amount.click({ timeout: 5000 });
-  await amount.fill(String(CFG.stakeUSDT), { timeout: 5000 });
+  await amount.fill(String(stakeFor(sig.asset)), { timeout: 5000 });
   await page.waitForTimeout(300);
 
   // кнопка Up / Down
@@ -176,19 +194,22 @@ async function pump() {
     const age = (Date.now() - sig.receivedAt) / 1000;
     if (age > (CFG.maxSignalAgeSec ?? 90)) {
       log(`пропуск: сигнал устарел (${age.toFixed(0)}с) ${sig.asset} ${sig.direction}`);
-      logBet({ ...sig, stake: CFG.stakeUSDT, mode, status: 'skip-stale' });
+      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'skip-stale' });
     } else if (process.env.TEST_MODE === '1') {
-      logBet({ ...sig, stake: CFG.stakeUSDT, mode, status: 'test-mode' });
+      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'test-mode' });
     } else {
       const r = await placeBet(sig);
-      logBet({ ...sig, stake: CFG.stakeUSDT, mode, status: r.status, payoutPage: r.payoutPage });
+      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: r.status, payoutPage: r.payoutPage });
+      // Слот занимаем и в dry-run: иначе прогон не покажет, сколько
+      // сигналов реально упрётся в биржевой лимит.
+      if (r.status === 'placed' || r.status === 'dry-run') state.placed.push(Date.now());
       if (r.status === 'placed') state.betsToday++;
       state.consecutiveErrors = 0;
     }
   } catch (e) {
     state.consecutiveErrors++;
     log(`ОШИБКА ставки ${sig.asset} ${sig.direction}: ${e.message}`);
-    logBet({ ...sig, stake: CFG.stakeUSDT, mode, status: 'error', note: e.message });
+    logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'error', note: e.message });
     await tgAlert(`ошибка ставки ${sig.asset} ${sig.direction}: ${e.message}`);
     if (state.consecutiveErrors >= (CFG.maxConsecutiveErrors ?? 3) && !state.dryRun) {
       state.dryRun = true;
@@ -202,7 +223,88 @@ async function pump() {
 }
 
 // ── HTTP ──
+// Последние строки CSV со ставками - для панели
+function recentBets(n) {
+  const f = path.join(LOGS, 'bets.csv');
+  if (!fs.existsSync(f)) return [];
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  const head = (lines.shift() || '').split(',');
+  return lines.slice(-n).reverse().map(l => {
+    const cells = l.split(',');
+    const o = {};
+    head.forEach((h, i) => { o[h] = cells[i]; });
+    return o;
+  });
+}
+
+function snapshot() {
+  return {
+    dryRun: state.dryRun,
+    paused: state.paused,
+    betsToday: state.betsToday,
+    maxBetsPerDay: CFG.maxBetsPerDay ?? 40,
+    slots: openSlots(),
+    maxOpenBets: CFG.maxOpenBets ?? 5,
+    queue: state.queue.length,
+    consecutiveErrors: state.consecutiveErrors,
+    stakes: { ETH: stakeFor('ETH'), BTC: stakeFor('BTC') },
+    minPayout: CFG.minPayout ?? 80,
+    execTimings: CFG.execTimings || [10],
+    uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
+  };
+}
+
 const server = http.createServer((req, res) => {
+  const sendJson = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(obj));
+  };
+
+  // браузер сам просит favicon - отвечаем пустым, чтобы не сорить 404
+  if (req.method === 'GET' && req.url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+
+  // ── Панель. Секрет обязателен: сервер смотрит наружу через туннель,
+  // и без него любой, кто знает адрес, управлял бы ставками. ──
+  const pm = req.url.match(/^\/panel\/([^/?]+)/);
+  if (req.method === 'GET' && pm) {
+    if (pm[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
+    const f = path.join(ROOT, 'panel.html');
+    if (!fs.existsSync(f)) { res.writeHead(404); res.end('panel.html не найден'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(fs.readFileSync(f));
+    return;
+  }
+
+  const am = req.url.match(/^\/api\/([^/?]+)\/([a-z-]+)/);
+  if (am) {
+    if (am[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
+    const action = am[2];
+    if (action === 'state') return sendJson(200, { ...snapshot(), bets: recentBets(40) });
+    if (req.method === 'POST' && action === 'pause')  { state.paused = true;  log('панель: пауза'); return sendJson(200, snapshot()); }
+    if (req.method === 'POST' && action === 'resume') { state.paused = false; log('панель: снято с паузы'); return sendJson(200, snapshot()); }
+    if (req.method === 'POST' && action === 'dry-on')  { state.dryRun = true;  log('панель: DRY-RUN включён'); return sendJson(200, snapshot()); }
+    if (req.method === 'POST' && action === 'dry-off') {
+      state.dryRun = false; state.consecutiveErrors = 0;
+      log('панель: БОЕВОЙ режим включён');
+      return sendJson(200, snapshot());
+    }
+    if (req.method === 'POST' && action === 'manual') {
+      let b = '';
+      req.on('data', d => { b += d; if (b.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let m; try { m = JSON.parse(b); } catch (e) { return sendJson(400, { error: 'bad json' }); }
+        const asset = m.asset === 'BTC' ? 'BTC' : 'ETH';
+        const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
+        state.queue.push({ asset, direction, timing: 10, receivedAt: Date.now(), label: 'manual' });
+        log(`панель: ручная ставка ${asset} ${direction}`);
+        setImmediate(pump);
+        sendJson(200, { ok: true });
+      });
+      return;
+    }
+    return sendJson(404, { error: 'unknown action' });
+  }
+
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -241,6 +343,24 @@ const server = http.createServer((req, res) => {
       log(`пропуск: тайминг ${sig.timing}м не в execTimings`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, skipped: 'timing' }));
+      return;
+    }
+
+    // пауза с панели
+    if (state.paused) {
+      log('пропуск: исполнитель на паузе');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'paused' }));
+      return;
+    }
+
+    // биржевой лимит одновременных ставок
+    const busySlots = openSlots() + state.queue.length;
+    if (busySlots >= (CFG.maxOpenBets ?? 5)) {
+      log(`пропуск: занято слотов ${busySlots}/${CFG.maxOpenBets ?? 5}`);
+      logBet({ ...sig, timing: sig.timing, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-slots' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'slots' }));
       return;
     }
 
@@ -294,7 +414,8 @@ if (process.argv[2] === 'login') {
   loginMode();
 } else {
   server.listen(CFG.port ?? 8787, () => {
-    log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставка: ${CFG.stakeUSDT} USDT`);
+    log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);
+    log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
     log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
   });
 }

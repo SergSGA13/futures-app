@@ -117,6 +117,35 @@ async function shot(tag) {
   } catch (e) { return null; }
 }
 
+// Снимок содержимого страницы: какие поля ввода и кнопки на ней есть.
+// Нужен, когда селектор не сработал: сообщение "Timeout 5000ms exceeded"
+// не говорит, чего именно не нашлось, а страницу глазами не увидеть.
+async function dumpPage(tag) {
+  try {
+    const info = await page.evaluate(() => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      return {
+        url: location.href,
+        inputs: [...document.querySelectorAll('input')].map(i => ({
+          ph: i.placeholder || '', type: i.type || '',
+          im: i.getAttribute('inputmode') || '', vis: vis(i),
+        })),
+        buttons: [...new Set([...document.querySelectorAll('button,[role=button]')]
+          .filter(vis).map(b => (b.innerText || '').trim()).filter(t => t && t.length < 40))],
+        payoutText: (document.body.innerText.match(/[^\n]*Payout[^\n]*/gi) || []).slice(0, 6),
+      };
+    });
+    log(`ДАМП [${tag}] url=${info.url}`);
+    log(`  поля ввода (${info.inputs.length}): ` + JSON.stringify(info.inputs.slice(0, 12)));
+    log(`  кнопки (${info.buttons.length}): ` + JSON.stringify(info.buttons.slice(0, 30)));
+    log(`  строки с Payout: ` + JSON.stringify(info.payoutText));
+    return info;
+  } catch (e) {
+    log(`ДАМП [${tag}] не удался: ${e.message}`);
+    return null;
+  }
+}
+
 // Достаём payout со страницы: "Up Payout 80%" / "Down Payout 80%"
 async function pagePayout(direction) {
   try {
@@ -146,7 +175,11 @@ async function placeBet(sig) {
   // таймфрейм (10m / 30m)
   const tfText = CFG.timeUnitText[String(sig.timing)] || '10m';
   const tf = page.locator(`${CFG.selectors.timeUnit}:has-text("${tfText}")`).first();
-  if (await tf.count() > 0) await tf.click({ timeout: 5000 });
+  // именно visible: селектор широкий и легко цепляет скрытый элемент,
+  // клик по которому висел бы до таймаута
+  if (await tf.isVisible().catch(() => false)) {
+    await tf.click({ timeout: 5000 }).catch(e => log('чип таймфрейма не кликнулся: ' + e.message));
+  }
   await page.waitForTimeout(500);
 
   // страховка: payout на странице (вебхук уже проверял, но payout плавает)
@@ -156,16 +189,42 @@ async function placeBet(sig) {
     return { status: 'skip-payout', payoutPage: pv };
   }
 
-  // сумма ставки
-  const amount = page.locator(CFG.selectors.amount).first();
-  await amount.click({ timeout: 5000 });
+  // Сумма ставки. Перебираем кандидатов, а не один селектор: вёрстка
+  // вкладок Simple и Pro различается, плейсхолдер зависит от локали и
+  // лимитов аккаунта.
+  const amountCandidates = [
+    CFG.selectors.amount,
+    'input[placeholder*="USDT"]',
+    'input[placeholder*="~"]',
+    'input[inputmode="decimal"]',
+    'input[type="number"]',
+  ].filter(Boolean);
+  let amount = null;
+  for (const sel of amountCandidates) {
+    const loc = page.locator(sel).first();
+    try {
+      await loc.waitFor({ state: 'visible', timeout: 2500 });
+      amount = loc;
+      log('поле суммы найдено: ' + sel);
+      break;
+    } catch (e) { /* пробуем следующий */ }
+  }
+  if (!amount) {
+    await shot('no-amount');
+    await dumpPage('no-amount');
+    throw new Error('не найдено поле суммы - смотри ДАМП выше и поправь selectors.amount');
+  }
   await amount.fill(String(stakeFor(sig.asset)), { timeout: 5000 });
   await page.waitForTimeout(300);
 
   // кнопка Up / Down
   const btnSel = sig.direction === 'UP' ? CFG.selectors.up : CFG.selectors.down;
   const btn = page.locator(btnSel).first();
-  if (await btn.count() === 0) { await shot('no-button'); throw new Error('кнопка не найдена: ' + btnSel); }
+  if (await btn.count() === 0) {
+    await shot('no-button');
+    await dumpPage('no-button');
+    throw new Error('кнопка не найдена: ' + btnSel + ' - смотри ДАМП выше');
+  }
 
   if (state.dryRun) {
     await shot(`dryrun-${sig.asset}-${sig.direction}`);
@@ -413,8 +472,33 @@ async function loginMode() {
   console.log('Профиль сохранён. Теперь запускай: node executor.js');
 }
 
+// ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──
+async function diagMode() {
+  const asset = (process.argv[3] || 'ETH').toUpperCase() === 'BTC' ? 'BTC' : 'ETH';
+  console.log(`Открываю ${asset} и смотрю, что на странице. Ставка НЕ делается.`);
+  await browser();
+  await page.goto(CFG.urls[asset], { waitUntil: 'domcontentloaded', timeout: 25000 });
+  await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+
+  const loginBtn = page.locator(CFG.selectors.loginMarker).first();
+  const notLogged = await loginBtn.isVisible().catch(() => false);
+  log(notLogged ? 'ВНИМАНИЕ: похоже, НЕ залогинен (видна кнопка Log In)' : 'логин на месте');
+
+  await dumpPage('diag-' + asset);
+  for (const dir of ['UP', 'DOWN']) {
+    log(`payout ${dir} по текущему селектору: ${await pagePayout(dir)}`);
+  }
+  const f = await shot('diag-' + asset);
+  log('скриншот: ' + f);
+  console.log('\nГотово. Пришли последние строки logs/executor.log и этот скриншот.');
+  await ctx.close();
+  process.exit(0);
+}
+
 if (process.argv[2] === 'login') {
   loginMode();
+} else if (process.argv[2] === 'diag') {
+  diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
 } else {
   server.listen(CFG.port ?? 8787, () => {
     log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);

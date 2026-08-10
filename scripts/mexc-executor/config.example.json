@@ -16,6 +16,7 @@
 
   "headless": false,
   "pageSettleMs": 2500,
+  "panelTimeoutMs": 25000,
 
   "urls": {
     "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",

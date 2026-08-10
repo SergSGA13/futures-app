@@ -135,7 +135,7 @@ async function dumpPage(tag) {
         payoutText: (document.body.innerText.match(/[^\n]*Payout[^\n]*/gi) || []).slice(0, 6),
       };
     });
-    log(`ДАМП [${tag}] url=${info.url}`);
+    log(`ДАМП [${tag}] url=${info.url} | фреймов на странице: ${page.frames().length}`);
     log(`  поля ввода (${info.inputs.length}): ` + JSON.stringify(info.inputs.slice(0, 12)));
     log(`  кнопки (${info.buttons.length}): ` + JSON.stringify(info.buttons.slice(0, 30)));
     log(`  строки с Payout: ` + JSON.stringify(info.payoutText));
@@ -144,6 +144,44 @@ async function dumpPage(tag) {
     log(`ДАМП [${tag}] не удался: ${e.message}`);
     return null;
   }
+}
+
+// Кандидаты на поле суммы: вёрстка вкладок Simple и Pro различается,
+// плейсхолдер зависит от локали и лимитов аккаунта.
+function amountSelectors() {
+  return [
+    CFG.selectors.amount,
+    'input[placeholder*="USDT"]',
+    'input[placeholder*="~"]',
+    'input[inputmode="decimal"]',
+    'input[type="number"]',
+  ].filter(Boolean);
+}
+
+async function findAmount(perTryMs) {
+  for (const sel of amountSelectors()) {
+    const loc = page.locator(sel).first();
+    try {
+      await loc.waitFor({ state: 'visible', timeout: perTryMs });
+      return { loc, sel };
+    } catch (e) { /* следующий */ }
+  }
+  return null;
+}
+
+// Ждём, пока торговая панель реально отрисуется. Фиксированной паузы
+// мало: MEXC - SPA, и через 2.5 секунды после domcontentloaded на
+// странице может не быть ещё ни одной кнопки (видно в ДАМПе: 0 полей,
+// 0 кнопок, payout "--"). Признак готовности - появившееся поле суммы.
+async function waitForPanel() {
+  const deadline = Date.now() + (CFG.panelTimeoutMs ?? 25000);
+  let found = null;
+  while (Date.now() < deadline) {
+    found = await findAmount(1200);
+    if (found) return found;
+    await page.waitForTimeout(400);
+  }
+  return null;
 }
 
 // Достаём payout со страницы: "Up Payout 80%" / "Down Payout 80%"
@@ -164,6 +202,13 @@ async function placeBet(sig) {
   await browser();
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
   await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+  const ready = await waitForPanel();
+  if (!ready) {
+    await shot('panel-not-ready');
+    await dumpPage('panel-not-ready');
+    throw new Error('торговая панель не отрисовалась за ' + (CFG.panelTimeoutMs ?? 25000) + 'мс - смотри ДАМП выше');
+  }
+  log('панель готова, поле суммы: ' + ready.sel);
 
   // залогинены ли мы: на странице не должно быть кнопки Log In
   const loginBtn = page.locator(CFG.selectors.loginMarker).first();
@@ -174,7 +219,14 @@ async function placeBet(sig) {
 
   // таймфрейм (10m / 30m)
   const tfText = CFG.timeUnitText[String(sig.timing)] || '10m';
-  const tf = page.locator(`${CFG.selectors.timeUnit}:has-text("${tfText}")`).first();
+  // ВАЖНО: раньше строка склеивалась в
+  //   'button, div[role=button], span:has-text("10m")'
+  // а CSS читает это как СПИСОК через запятую - :has-text() относился
+  // только к span. Локатор совпадал с ЛЮБОЙ кнопкой страницы, и .first()
+  // хватал то скрытый ant-tabs-nav-more, то кнопку Deposit в шапке.
+  // filter() применяет условие ко всему набору, как и задумано.
+  const tf = page.locator(CFG.selectors.timeUnit)
+    .filter({ hasText: new RegExp('^\\s*' + tfText + '\\s*$') }).first();
   // именно visible: селектор широкий и легко цепляет скрытый элемент,
   // клик по которому висел бы до таймаута
   if (await tf.isVisible().catch(() => false)) {
@@ -189,31 +241,8 @@ async function placeBet(sig) {
     return { status: 'skip-payout', payoutPage: pv };
   }
 
-  // Сумма ставки. Перебираем кандидатов, а не один селектор: вёрстка
-  // вкладок Simple и Pro различается, плейсхолдер зависит от локали и
-  // лимитов аккаунта.
-  const amountCandidates = [
-    CFG.selectors.amount,
-    'input[placeholder*="USDT"]',
-    'input[placeholder*="~"]',
-    'input[inputmode="decimal"]',
-    'input[type="number"]',
-  ].filter(Boolean);
-  let amount = null;
-  for (const sel of amountCandidates) {
-    const loc = page.locator(sel).first();
-    try {
-      await loc.waitFor({ state: 'visible', timeout: 2500 });
-      amount = loc;
-      log('поле суммы найдено: ' + sel);
-      break;
-    } catch (e) { /* пробуем следующий */ }
-  }
-  if (!amount) {
-    await shot('no-amount');
-    await dumpPage('no-amount');
-    throw new Error('не найдено поле суммы - смотри ДАМП выше и поправь selectors.amount');
-  }
+  // Поле суммы уже найдено при ожидании панели
+  const amount = ready.loc;
   await amount.fill(String(stakeFor(sig.asset)), { timeout: 5000 });
   await page.waitForTimeout(300);
 
@@ -484,7 +513,18 @@ async function diagMode() {
   const notLogged = await loginBtn.isVisible().catch(() => false);
   log(notLogged ? 'ВНИМАНИЕ: похоже, НЕ залогинен (видна кнопка Log In)' : 'логин на месте');
 
+  // Ждём отрисовку, иначе дамп опишет пустую страницу и введёт в заблуждение
+  const ready = await waitForPanel();
+  log(ready ? ('панель готова, поле суммы: ' + ready.sel)
+            : 'панель НЕ отрисовалась за отведённое время');
   await dumpPage('diag-' + asset);
+
+  // Проверяем чип таймфрейма тем же способом, что и боевой код
+  for (const tfText of Object.values(CFG.timeUnitText || { 10: '10m' })) {
+    const n = await page.locator(CFG.selectors.timeUnit)
+      .filter({ hasText: new RegExp('^\\s*' + tfText + '\\s*$') }).count().catch(() => -1);
+    log(`чип "${tfText}": найдено элементов ${n}`);
+  }
   for (const dir of ['UP', 'DOWN']) {
     log(`payout ${dir} по текущему селектору: ${await pagePayout(dir)}`);
   }

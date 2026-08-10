@@ -248,7 +248,14 @@ async function placeBet(sig) {
 
   // кнопка Up / Down
   const btnSel = sig.direction === 'UP' ? CFG.selectors.up : CFG.selectors.down;
-  const btn = page.locator(btnSel).first();
+  const dirWord = sig.direction === 'UP' ? 'Up' : 'Down';
+  // Сначала ТОЧНОЕ совпадение по тексту. По диагностике на странице
+  // ровно одна кнопка "Up" и одна "Down", а :has-text() ищет подстроку
+  // и поймал бы, например, "Upgrade", появись такая кнопка позже.
+  // Если точного нет - откатываемся на селектор из конфига.
+  let btn = page.locator('button')
+    .filter({ hasText: new RegExp('^\\s*' + dirWord + '\\s*$') }).first();
+  if (await btn.count() === 0) btn = page.locator(btnSel).first();
   if (await btn.count() === 0) {
     await shot('no-button');
     await dumpPage('no-button');

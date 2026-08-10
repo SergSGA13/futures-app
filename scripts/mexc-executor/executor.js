@@ -57,7 +57,13 @@ const state = {
   placed: [],                          // времена размещённых ставок (кап слотов)
   paused: false,
   startedAt: Date.now(),
+  lastIdle: null,                      // последнее холостое действие
 };
+
+// ── мелочи для «человечности» ──
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
 // Старый плоский stakeUSDT продолжает работать как запасной вариант.
@@ -73,6 +79,48 @@ function openSlots() {
   const now = Date.now();
   state.placed = state.placed.filter(t => now - t < winMs);
   return state.placed.length;
+}
+
+// ── окно активности ──
+// Круглосуточная торговля без единого перерыва - самый заметный признак
+// машины. activeHours задаёт часы, когда аккаунт «бодрствует»; вне их
+// сигналы отклоняются со статусом skip-quiet.
+function hhmmToMin(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ''));
+  return m ? (+m[1]) * 60 + (+m[2]) : null;
+}
+function fmtMin(m) {
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+// Сдвиг границы окна на день. Считается ОТ ДАТЫ, а не случайно при каждом
+// вызове: иначе сигнал, пришедший ровно на границе, то проходил бы, то нет.
+// Ровные 08:00-23:30 изо дня в день - такой же машинный след, как и 24/7.
+function dayJitter(tag, spanMin) {
+  if (!spanMin) return 0;
+  const s = new Date().toDateString() + tag;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return (h % (2 * spanMin + 1)) - spanMin;
+}
+function activeWindow() {
+  const A = CFG.activeHours || {};
+  if (!A.enabled) return null;
+  const from = hhmmToMin(A.from), to = hhmmToMin(A.to);
+  if (from == null || to == null) return null;
+  const j = A.jitterMin ?? 0;
+  return {
+    from: ((from + dayJitter('from', j)) % 1440 + 1440) % 1440,
+    to:   ((to   + dayJitter('to',   j)) % 1440 + 1440) % 1440,
+  };
+}
+function inActiveHours() {
+  const w = activeWindow();
+  if (!w) return true;                       // окно не задано - работаем всегда
+  const n = new Date();
+  const cur = n.getHours() * 60 + n.getMinutes();
+  // окно может пересекать полночь (например 09:00-01:30)
+  return w.from <= w.to ? (cur >= w.from && cur < w.to)
+                        : (cur >= w.from || cur < w.to);
 }
 
 function log(line) {
@@ -98,15 +146,73 @@ async function tgAlert(text) {
 }
 
 // ── браузер ──
+// browserPath - запасной путь к chrome.exe на случай, когда Playwright не
+// находит свой браузер сам (ставился под другого пользователя, лежит в
+// нестандартном месте). Пусто = пусть ищет как обычно.
+function launchOpts(headless) {
+  const o = {
+    headless,
+    viewport: { width: 1280, height: 860 },
+    args: ['--disable-blink-features=AutomationControlled'],
+  };
+  if (CFG.browserPath) o.executablePath = CFG.browserPath;
+  return o;
+}
+
 let ctx = null, page = null;
 async function browser() {
   if (ctx) return;
-  ctx = await playwright.chromium.launchPersistentContext(PROFILE, {
-    headless: CFG.headless !== false,
-    viewport: { width: 1280, height: 860 },
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
+  ctx = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(CFG.headless !== false));
   page = ctx.pages()[0] || await ctx.newPage();
+}
+
+// ── клик «как человек» ──
+// Playwright по умолчанию бьёт точно в геометрический центр элемента и
+// без задержки между нажатием и отпусканием. Сотня ставок подряд с
+// пиксель-в-пиксель одинаковыми координатами - готовая сигнатура.
+// Целимся в случайную точку центральных 60% кнопки: по самому краю
+// попадать нельзя, там элемент бывает перекрыт тенью или соседом.
+// position/delay задаются самому locator.click, поэтому все проверки
+// (виден, включён, не перекрыт, доскроллить) остаются на месте -
+// в отличие от ручного page.mouse.click по координатам.
+async function humanClick(loc, timeout = 5000) {
+  if (CFG.humanize === false) return loc.click({ timeout });
+  await sleep(randInt(120, 480));
+  // Размеры берём именно padding-box (clientWidth/Height): position в
+  // Playwright отсчитывается от его левого верхнего угла, а
+  // boundingBox() отдаёт border-box - он больше на толщину рамки, и
+  // доли от него смещали точку наружу от задуманной области.
+  // clientWidth=0 у инлайновых элементов - тогда откатываемся на bbox.
+  const box = await loc.evaluate(el => ({ w: el.clientWidth, h: el.clientHeight }))
+    .catch(() => null)
+    .then(async b => (b && b.w && b.h) ? b
+      : await loc.boundingBox().catch(() => null).then(bb => bb ? { w: bb.width, h: bb.height } : null));
+  if (!box || box.w < 8 || box.h < 8) return loc.click({ timeout });
+  const position = {
+    x: box.w * (0.2 + Math.random() * 0.6),
+    y: box.h * (0.2 + Math.random() * 0.6),
+  };
+  await loc.hover({ position, timeout }).catch(() => {});
+  await sleep(randInt(40, 160));
+  return loc.click({ position, delay: randInt(45, 130), timeout });
+}
+
+// Ввод суммы посимвольно. Мгновенная подстановка всего значения - тоже
+// машинный след. Если поле повело себя неожиданно (маска, автоформат),
+// откатываемся на обычный fill и проверяем результат.
+async function humanFill(loc, value, timeout = 5000) {
+  const v = String(value);
+  if (CFG.humanize === false) return loc.fill(v, { timeout });
+  try {
+    await humanClick(loc, timeout);
+    await loc.fill('', { timeout });
+    await loc.pressSequentially(v, { delay: randInt(55, 145), timeout });
+    if ((await loc.inputValue().catch(() => null)) === v) return;
+    log('посимвольный ввод дал не то значение - подставляю целиком');
+  } catch (e) {
+    log('посимвольный ввод не удался (' + e.message + ') - подставляю целиком');
+  }
+  await loc.fill(v, { timeout });
 }
 
 async function shot(tag) {
@@ -255,9 +361,9 @@ async function placeBet(sig) {
   // именно visible: селектор широкий и легко цепляет скрытый элемент,
   // клик по которому висел бы до таймаута
   if (await tf.isVisible().catch(() => false)) {
-    await tf.click({ timeout: 5000 }).catch(e => log('чип таймфрейма не кликнулся: ' + e.message));
+    await humanClick(tf).catch(e => log('чип таймфрейма не кликнулся: ' + e.message));
   }
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(randInt(400, 900));
 
   // страховка: payout на странице (вебхук уже проверял, но payout плавает)
   const pv = await pagePayout(sig.direction);
@@ -268,8 +374,8 @@ async function placeBet(sig) {
 
   // Поле суммы уже найдено при ожидании панели
   const amount = ready.loc;
-  await amount.fill(String(stakeFor(sig.asset)), { timeout: 5000 });
-  await page.waitForTimeout(300);
+  await humanFill(amount, stakeFor(sig.asset));
+  await page.waitForTimeout(randInt(250, 700));
 
   // кнопка Up / Down
   const btnSel = sig.direction === 'UP' ? CFG.selectors.up : CFG.selectors.down;
@@ -293,12 +399,12 @@ async function placeBet(sig) {
   }
 
   const posBefore = await openPositionsCount();
-  await btn.click({ timeout: 5000 });
-  await page.waitForTimeout(600);
+  await humanClick(btn);
+  await page.waitForTimeout(randInt(500, 900));
   // возможное окно подтверждения
   if (CFG.selectors.confirm) {
     const c = page.locator(CFG.selectors.confirm).first();
-    if (await c.count() > 0 && await c.isVisible().catch(() => false)) await c.click({ timeout: 5000 });
+    if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
   }
 
   // Клик сам по себе не доказывает, что ставка открылась: он мог не
@@ -365,6 +471,91 @@ async function pump() {
   }
 }
 
+// ── холостая активность ──
+// Аккаунт, который заходит на страницу ровно за секунду до ставки и тут
+// же уходит, выглядит роботом. Между ставками делаем то, что делает
+// живой человек: смотрит другой актив, открывает историю, листает,
+// щёлкает таймфреймы. Ставок это не касается - только «шум» вокруг них.
+// Холостое действие держит ту же блокировку, что и ставка, - иначе они
+// дрались бы за страницу. Значит, любая его пауза откладывает пришедший
+// сигнал. Поэтому ждём не сплошняком, а поглядывая на очередь: как
+// только там что-то появилось, сворачиваемся и отдаём страницу ставке.
+async function idleWait(ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (state.queue.length) return false;
+    await sleep(Math.min(250, until - Date.now()));
+  }
+  return true;
+}
+
+async function idleAction() {
+  const I = CFG.idleRotation || {};
+  if (I.enabled === false) return;
+  // не лезем под руку: идёт ставка / что-то в очереди / пауза / ночь
+  if (state.busy || state.queue.length || state.paused) return;
+  if (!inActiveHours()) return;
+  if (process.env.TEST_MODE === '1') return;
+
+  state.busy = true;
+  const act = ['switch-asset', 'history', 'scroll', 'timeframe'][randInt(0, 3)];
+  try {
+    await browser();
+    if (!/mexc\.com/.test(page.url())) {
+      await page.goto(CFG.urls.ETH, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await idleWait(randInt(1500, 3000));
+    }
+
+    if (act === 'switch-asset') {
+      const other = /BTC/.test(page.url()) ? 'ETH' : 'BTC';
+      await page.goto(CFG.urls[other], { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await idleWait(randInt(2000, 6000));
+
+    } else if (act === 'history') {
+      const tab = page.locator(CFG.selectors.timeUnit)
+        .filter({ hasText: /^\s*(Position History|Order History|History|Positions)\s*$/i }).first();
+      if (await tab.isVisible().catch(() => false)) {
+        await humanClick(tab);
+        await idleWait(randInt(2000, 7000));
+      }
+
+    } else if (act === 'scroll') {
+      await page.mouse.move(randInt(300, 1000), randInt(200, 700), { steps: randInt(5, 15) });
+      await page.mouse.wheel(0, randInt(150, 700));
+      await idleWait(randInt(800, 3000));
+      await page.mouse.wheel(0, -randInt(150, 700));
+
+    } else if (act === 'timeframe') {
+      // 30m и обратно на 10m. Безопасно: боевой код всё равно сам
+      // выставляет нужный чип перед каждой ставкой.
+      for (const t of ['30m', '10m']) {
+        const chip = page.locator(CFG.selectors.timeUnit)
+          .filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
+        if (await chip.isVisible().catch(() => false)) await humanClick(chip);
+        if (!await idleWait(randInt(1200, 4000))) break;
+      }
+    }
+    state.lastIdle = { act, at: Date.now() };
+    log(`холостое действие: ${act}`);
+  } catch (e) {
+    // Намеренно не трогаем consecutiveErrors: это шум, а не ставка,
+    // и его сбои не должны загонять исполнитель в dry-run.
+    log(`холостое действие "${act}" не удалось: ${e.message}`);
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+  }
+}
+
+function scheduleIdle() {
+  const I = CFG.idleRotation || {};
+  if (I.enabled === false) return;
+  const lo = (I.everyMinFrom ?? 7) * 60000;
+  const hi = (I.everyMinTo ?? 26) * 60000;
+  const t = setTimeout(() => { idleAction().finally(scheduleIdle); }, randInt(lo, Math.max(lo, hi)));
+  if (t.unref) t.unref();
+}
+
 // ── HTTP ──
 // Последние строки CSV со ставками - для панели
 function recentBets(n) {
@@ -394,6 +585,11 @@ function snapshot() {
     minPayout: CFG.minPayout ?? 80,
     execTimings: CFG.execTimings || [10],
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
+    humanize: CFG.humanize !== false,
+    idleRotation: (CFG.idleRotation || {}).enabled !== false,
+    lastIdle: state.lastIdle,
+    activeNow: inActiveHours(),
+    activeWindow: (() => { const w = activeWindow(); return w ? `${fmtMin(w.from)}-${fmtMin(w.to)}` : null; })(),
   };
 }
 
@@ -489,6 +685,16 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    // тихие часы: аккаунт не торгует круглосуточно
+    if (!inActiveHours()) {
+      const w = activeWindow();
+      log(`пропуск: тихие часы (окно сегодня ${fmtMin(w.from)}-${fmtMin(w.to)})`);
+      logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-quiet' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'quiet-hours' }));
+      return;
+    }
+
     // пауза с панели
     if (state.paused) {
       log('пропуск: исполнитель на паузе');
@@ -543,10 +749,7 @@ const server = http.createServer((req, res) => {
 async function loginMode() {
   console.log('Открываю окно браузера. Войди в аккаунт MEXC, реши капчу,');
   console.log('убедись что видишь страницу Event Futures, затем закрой окно.');
-  const c = await playwright.chromium.launchPersistentContext(PROFILE, {
-    headless: false, viewport: { width: 1280, height: 860 },
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
+  const c = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(false));
   const p = c.pages()[0] || await c.newPage();
   await p.goto(CFG.urls.BTC, { waitUntil: 'domcontentloaded' });
   await new Promise(resolve => c.on('close', resolve));
@@ -596,5 +799,10 @@ if (process.argv[2] === 'login') {
     log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
     log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
+    const w = activeWindow();
+    log(`окно активности: ${w ? fmtMin(w.from) + '-' + fmtMin(w.to) + ' (местное время)' : 'круглосуточно'}`
+      + ` | человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
+      + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`);
+    scheduleIdle();
   });
 }

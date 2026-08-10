@@ -14,7 +14,12 @@
   "maxConsecutiveErrors": 3,
   "execTimings": [10],
 
+  "humanize": true,
+  "activeHours": { "enabled": false, "from": "08:00", "to": "23:30", "jitterMin": 20 },
+  "idleRotation": { "enabled": true, "everyMinFrom": 7, "everyMinTo": 26 },
+
   "headless": false,
+  "browserPath": "",
   "pageSettleMs": 2500,
   "panelTimeoutMs": 25000,
   "confirmTimeoutMs": 9000,

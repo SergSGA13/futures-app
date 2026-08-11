@@ -326,6 +326,17 @@
     </div>
 
     <div class="card">
+      <h2>Пачки сигналов <span class="saved" id="savedBurst">сохранено</span></h2>
+      <label class="chk"><input type="checkbox" id="burstOn"> Складывать в одну ставку</label>
+      <div class="row"><span>Окно сбора, сек</span>
+        <input type="number" id="burstWin" min="0" max="60" step="1"></div>
+      <div class="row"><span>Множитель не больше</span>
+        <input type="number" id="burstMax" min="1" max="10" step="1"></div>
+      <button style="margin-top:8px" id="btnSaveBurst">Сохранить</button>
+      <div class="note" id="burstHint"></div>
+    </div>
+
+    <div class="card">
       <h2>Холостые действия <span class="saved" id="savedIdle">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="idleOn"> Включены</label>
       <div id="idleActs" style="margin:6px 0 4px"></div>
@@ -385,6 +396,7 @@ const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
   (s === 'placed-unconfirmed' || s === 'placed-unverified') ? 's-error' :
   s === 'dry-run' ? 's-dry' :
+  s === 'merged' ? 's-dry' :
   s === 'error' ? 's-error' : 's-skip';
 
 function fmtTime(v) {
@@ -493,6 +505,7 @@ const CARDS = {
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   sil:    ['brkSilence'],
+  burst:  ['burstOn', 'burstWin', 'burstMax'],
   sched:  ['schedOn', 'jitter'],
 };
 const dirty = new Set();
@@ -542,6 +555,15 @@ async function refresh() {
   $('lastSig').innerHTML = `<span class="pill ${sigCls}" title="${st.sinceStart
     ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${m} мин${st.sinceStart ? '*' : ''}</span>`;
   setVal('brkSilence', s.signalSilenceMin);
+  setChk('burstOn', s.burst.enabled);
+  setVal('burstWin', s.burst.windowSec);
+  setVal('burstMax', s.burst.maxMultiplier);
+  $('burstHint').textContent = s.burst.enabled
+    ? `Сигналы одного направления за ${s.burst.windowSec} с складываются в одну ставку `
+      + `до ${s.burst.maxMultiplier}x (максимум ${Math.min(s.stakes.ETH * s.burst.maxMultiplier, s.stakeLimits.ETH)} USDT по ETH). `
+      + 'Ценой этого вход задерживается на окно сбора: узнать, что сигналов три, можно только дав им прийти.'
+    : 'Каждый сигнал - своя ставка. Вход мгновенный, но три сигнала подряд '
+      + 'растянутся секунд на десять и займут три биржевых слота из пяти.';
 
   $('browserState').innerHTML = st.browserOpen
     ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
@@ -634,6 +656,14 @@ $('btnSaveIdle').onclick = async () => {
     },
   });
   flash('savedIdle'); afterSave('idle');
+};
+$('btnSaveBurst').onclick = async () => {
+  await post('settings', { burst: {
+    enabled: $('burstOn').checked,
+    windowSec: +$('burstWin').value,
+    maxMultiplier: +$('burstMax').value,
+  } });
+  flash('savedBurst'); afterSave('burst');
 };
 $('btnSaveSil').onclick = async () => {
   await post('settings', { signalSilenceMin: +$('brkSilence').value });

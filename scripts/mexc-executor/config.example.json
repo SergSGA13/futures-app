@@ -16,6 +16,7 @@
   "maxConsecutiveErrors": 3,
 
   "signalSilenceMin": 120,
+  "burst": { "enabled": true, "windowSec": 3, "maxMultiplier": 3 },
   "execTimings": [10],
 
   "humanize": true,

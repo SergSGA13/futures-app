@@ -506,7 +506,7 @@ async function placeBet(sig) {
 
   // Поле суммы уже найдено при ожидании панели
   const amount = ready.loc;
-  await humanFill(amount, stakeFor(sig.asset));
+  await humanFill(amount, betStake(sig));
   await page.waitForTimeout(randInt(250, 700));
 
   // кнопка Up / Down
@@ -559,6 +559,64 @@ async function placeBet(sig) {
   return { status: 'placed', payoutPage: pv };
 }
 
+// ── пачки сигналов ──
+// Несколько сигналов одного направления подряд - это один и тот же
+// заход. Три отдельные ставки по нему проигрывают одной тройной: вход
+// размазывается на десяток секунд (ставки идут строго по одной), а три
+// биржевых слота из пяти оказываются заняты на всю экспирацию. Поэтому
+// первые burst.windowSec секунд собираем пачку и ставим один раз суммой.
+//
+// Ждать приходится по необходимости: узнать, что сигналов три, можно
+// только дав им прийти. Ценой этого одиночный вход тоже задерживается
+// на окно сбора.
+const groups = new Map();
+function burstCfg() {
+  const b = CFG.burst || {};
+  return {
+    enabled: b.enabled !== false,
+    windowMs: Math.max(0, b.windowSec ?? 3) * 1000,
+    max: Math.max(1, Math.round(b.maxMultiplier ?? 3)),
+  };
+}
+// Ставка с учётом множителя, прижатая к потолку поля ввода на бирже.
+function betStake(sig) {
+  const base = stakeFor(sig.asset);
+  const m = Math.max(1, Math.min(sig.mult || 1, burstCfg().max));
+  return Math.min(Math.round(base * m), stakeMax(sig.asset));
+}
+function enqueueSignal(sig) {
+  const B = burstCfg();
+  if (!B.enabled || !B.windowMs) {
+    sig.mult = 1; sig.burstCount = 1;
+    state.queue.push(sig);
+    setImmediate(pump);
+    return 'queued';
+  }
+  const k = sig.asset + '|' + sig.direction;
+  const g = groups.get(k);
+  if (g) {
+    g.count++;
+    log(`пачка ${k}: сигнал ${g.count} присоединён к текущей`);
+    logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE',
+             status: 'merged', note: `в пачку с ${new Date(g.sig.receivedAt).toISOString().slice(11, 19)}` });
+    return 'merged';
+  }
+  const ng = { sig, count: 1 };
+  groups.set(k, ng);
+  const t = setTimeout(() => {
+    groups.delete(k);
+    ng.sig.burstCount = ng.count;
+    ng.sig.mult = Math.min(ng.count, B.max);
+    state.queue.push(ng.sig);
+    if (ng.count > 1) {
+      log(`пачка ${k}: сигналов ${ng.count}, ставка x${ng.sig.mult} = ${betStake(ng.sig)} USDT`);
+    }
+    setImmediate(pump);
+  }, B.windowMs);
+  if (t.unref) t.unref();
+  return 'queued';
+}
+
 // ── очередь (ставки строго по одной) ──
 async function pump() {
   if (state.busy) return;
@@ -571,12 +629,13 @@ async function pump() {
     const age = (Date.now() - sig.receivedAt) / 1000;
     if (age > (CFG.maxSignalAgeSec ?? 90)) {
       log(`пропуск: сигнал устарел (${age.toFixed(0)}с) ${sig.asset} ${sig.direction}`);
-      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'skip-stale' });
+      logBet({ ...sig, stake: betStake(sig), mode, status: 'skip-stale' });
     } else if (process.env.TEST_MODE === '1') {
       logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'test-mode' });
     } else {
       const r = await placeBet(sig);
-      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: r.status, payoutPage: r.payoutPage });
+      logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
+               note: sig.mult > 1 ? `x${sig.mult} из ${sig.burstCount} сигналов` : '' });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько
       // сигналов реально упрётся в биржевой лимит.
       // 'placed-unconfirmed' и '-unverified' тоже занимают слот и лимит:
@@ -593,7 +652,7 @@ async function pump() {
   } catch (e) {
     state.consecutiveErrors++;
     log(`ОШИБКА ставки ${sig.asset} ${sig.direction}: ${e.message}`);
-    logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'error', note: e.message });
+    logBet({ ...sig, stake: betStake(sig), mode, status: 'error', note: e.message });
     await tgAlert(`ошибка ставки ${sig.asset} ${sig.direction}: ${e.message}`);
     if (state.consecutiveErrors >= (CFG.maxConsecutiveErrors ?? 3) && !state.dryRun) {
       state.dryRun = true;
@@ -770,6 +829,11 @@ function snapshot() {
         jitterMin: (CFG.schedule || {}).jitterMin ?? 0,
       },
       signalSilenceMin: CFG.signalSilenceMin ?? 0,
+      burst: {
+        enabled: (CFG.burst || {}).enabled !== false,
+        windowSec: (CFG.burst || {}).windowSec ?? 3,
+        maxMultiplier: (CFG.burst || {}).maxMultiplier ?? 3,
+      },
       idleRotation: {
         enabled: (CFG.idleRotation || {}).enabled !== false,
         everyMinFrom: (CFG.idleRotation || {}).everyMinFrom ?? 7,
@@ -823,6 +887,23 @@ function applySettings(s) {
     const v = Math.round(clamp(s.maxBetsPerDay, 1, 500, CFG.maxBetsPerDay ?? 40));
     if (v !== (CFG.maxBetsPerDay ?? 40)) changed.push(`ставок в день ${CFG.maxBetsPerDay ?? 40}→${v}`);
     CFG.maxBetsPerDay = v;
+  }
+  if (s.burst) {
+    CFG.burst = CFG.burst || {};
+    if (s.burst.enabled != null) {
+      CFG.burst.enabled = !!s.burst.enabled;
+      changed.push('пачки ' + (CFG.burst.enabled ? 'вкл' : 'выкл'));
+    }
+    if (s.burst.windowSec != null) {
+      const v = clamp(s.burst.windowSec, 0, 60, 3);
+      if (v !== (CFG.burst.windowSec ?? 3)) changed.push(`окно пачки ${CFG.burst.windowSec ?? 3}→${v}с`);
+      CFG.burst.windowSec = v;
+    }
+    if (s.burst.maxMultiplier != null) {
+      const v = Math.round(clamp(s.burst.maxMultiplier, 1, 10, 3));
+      if (v !== (CFG.burst.maxMultiplier ?? 3)) changed.push(`множитель ${CFG.burst.maxMultiplier ?? 3}→${v}`);
+      CFG.burst.maxMultiplier = v;
+    }
   }
   if (s.signalSilenceMin != null) {
     const v = Math.round(clamp(s.signalSilenceMin, 0, 1440, CFG.signalSilenceMin ?? 0));
@@ -1039,8 +1120,12 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // дедуп повторных доставок (тот же сигнал в течение 2 минут)
-    const key = `${sig.asset}|${sig.direction}|${sig.bartime || sig.sentAt}`;
+    // Дедуп повторных доставок. Ключ - ВРЕМЯ ДОСТАВКИ, а не свеча:
+    // Apps Script умеет повторить отправку при таймауте, и тело у повтора
+    // побайтово то же, включая receivedAt. А два настоящих сигнала по
+    // одной свече приходят с разным receivedAt - раньше ключ по bartime
+    // считал их одним и молча выбрасывал второй и третий.
+    const key = `${sig.asset}|${sig.direction}|${sig.receivedAt || sig.bartime || sig.sentAt}`;
     const now = Date.now();
     state.recent = state.recent.filter(r => now - r.t < 120000);
     if (state.recent.some(r => r.key === key)) {
@@ -1051,14 +1136,13 @@ const server = http.createServer((req, res) => {
     state.recent.push({ key, t: now });
 
     sig.receivedAt = now;
-    state.queue.push(sig);
     state.lastSignalAt = now;
     state.silenceAlerted = false;
     saveState();
     log(`сигнал принят: ${sig.asset} ${sig.direction} ${sig.label || sig.timing} payout=${sig.payout}`);
+    const how = enqueueSignal(sig);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, queued: true, dryRun: state.dryRun }));
-    setImmediate(pump);
+    res.end(JSON.stringify({ ok: true, queued: how === 'queued', merged: how === 'merged', dryRun: state.dryRun }));
   });
 });
 

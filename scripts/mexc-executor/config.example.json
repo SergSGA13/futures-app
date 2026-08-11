@@ -15,11 +15,7 @@
   "maxSignalAgeSec": 90,
   "maxConsecutiveErrors": 3,
 
-  "maxConsecutiveLosses": 5,
-  "maxDailyLossUsdt": 0,
   "signalSilenceMin": 120,
-  "settleDelaySec": 45,
-  "balancePattern": "",
   "execTimings": [10],
 
   "humanize": true,

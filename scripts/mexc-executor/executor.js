@@ -408,9 +408,22 @@ async function placeBet(sig) {
   // На передний план - тот же разговор про фоновое окно: невидимой
   // вкладке браузер отдаёт кадры по остаточному принципу.
   await page.bringToFront().catch(() => {});
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-  await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-  let ready = await waitForPanel();
+
+  // Если нужная страница УЖЕ открыта и панель на ней жива - не трогаем
+  // её вовсе. Раньше каждая ставка начиналась с полной перезагрузки:
+  // лишние секунды на десятиминутной ставке, мигающее окно и повторная
+  // сборка SPA на ровном месте. Проверка стоит полторы секунды и в
+  // обычном случае экономит десять.
+  let ready = null;
+  if (page.url().startsWith(url)) {
+    ready = await findAmount(1500);
+    if (ready) log('страница уже открыта, перезагрузка не нужна');
+  }
+  if (!ready) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    ready = await waitForPanel();
+  }
   if (!ready) {
     // Не сдаёмся с первого раза: панель биржи иногда собирается дольше
     // отведённого, и по дампу видно, что поле на странице УЖЕ есть.

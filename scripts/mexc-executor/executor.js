@@ -58,7 +58,50 @@ const state = {
   paused: false,
   startedAt: Date.now(),
   lastIdle: null,                      // последнее холостое действие
+  lastSignalAt: null,                  // когда пришёл последний сигнал
+  silenceAlerted: false,               // алерт о тишине уже отправлен
+  pending: [],                         // ставки, ждущие расчёта
+  consecutiveLosses: 0,
+  dayStartBalance: null,               // баланс на первой ставке дня
+  balance: null,                       // последний прочитанный баланс
+  stoppedReason: null,                 // почему сработал предохранитель
 };
+
+// ── состояние на диске ──
+// Без него любой предохранитель - театр: перезапустил процесс, и он
+// забыл и дневной убыток, и серию поражений, и занятые на бирже слоты.
+// Слоты особенно важны: биржа держит максимум 5, а исполнитель после
+// перезапуска считал бы, что открыто ноль.
+const STATE_PATH = path.join(ROOT, 'state.json');
+const PERSIST = ['betsToday', 'day', 'placed', 'pending', 'consecutiveLosses',
+                 'dayStartBalance', 'lastSignalAt', 'stoppedReason'];
+function saveState() {
+  try {
+    const o = {};
+    for (const k of PERSIST) o[k] = state[k];
+    fs.writeFileSync(STATE_PATH + '.tmp', JSON.stringify(o));
+    fs.renameSync(STATE_PATH + '.tmp', STATE_PATH);
+  } catch (e) { log('состояние не сохранилось: ' + e.message); }
+}
+function loadState() {
+  if (!fs.existsSync(STATE_PATH)) return;
+  try {
+    const o = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
+    // Данные вчерашнего дня не тащим: счётчики дня начинаются заново.
+    const sameDay = o.day === new Date().toDateString();
+    for (const k of PERSIST) if (o[k] !== undefined) state[k] = o[k];
+    if (!sameDay) {
+      state.day = new Date().toDateString();
+      state.betsToday = 0;
+      state.dayStartBalance = null;
+      state.stoppedReason = null;
+    }
+    if (!Array.isArray(state.placed)) state.placed = [];
+    if (!Array.isArray(state.pending)) state.pending = [];
+    log(`состояние восстановлено: ставок сегодня ${state.betsToday}, слотов ${openSlots()}, поражений подряд ${state.consecutiveLosses}`
+      + (state.stoppedReason ? `, предохранитель: ${state.stoppedReason}` : ''));
+  } catch (e) { log('состояние не прочиталось: ' + e.message); }
+}
 
 // ── мелочи для «человечности» ──
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -399,6 +442,117 @@ async function pagePayout(direction) {
   } catch (e) { return null; }
 }
 
+// ── деньги ──
+// Баланс со страницы. Одно число, один шаблон - в отличие от разбора
+// таблицы истории, где колонки и подписи меняются от локали и вкладки.
+// Шаблон вынесен в конфиг: подписи у биржи разные ("Available", "Avbl"),
+// и подстроить их должно быть можно без правки кода.
+const BALANCE_PATTERN = '(?:Available|Avbl|Balance|Баланс)[^0-9-]{0,24}(-?[0-9][0-9 ,]*\\.?[0-9]*)';
+async function readBalance() {
+  try {
+    const body = await page.evaluate(() => document.body.innerText);
+    const m = body.match(new RegExp(CFG.balancePattern || BALANCE_PATTERN, 'i'));
+    if (!m) return null;
+    const v = parseFloat(m[1].replace(/[\s,]/g, ''));
+    return Number.isFinite(v) ? v : null;
+  } catch (e) { return null; }
+}
+
+// Результат ставки считаем по изменению баланса за её собственное окно.
+// ВАЖНОЕ ограничение: приписать движение баланса конкретной ставке можно
+// только когда она была единственной открытой. Если параллельно висела
+// другая, дельта общая на двоих, и результат честнее пометить unknown,
+// чем выдумать. Неизвестные результаты не идут в серию поражений.
+function pendingSolo(p) { return p.solo === true; }
+
+async function settleOne(p) {
+  // Берём ту же блокировку, что и ставка: расчёт лезет на страницу, и
+  // столкнуться с открытием позиции ему нельзя.
+  state.busy = true;
+  let balAfter = null;
+  try {
+    // Перед чтением обновляем страницу. Баланс на бирже живой, но
+    // страница у нас теперь висит открытой часами: подвисший сокет или
+    // усыплённая вкладка отдадут вчерашнее число, и результат ставки
+    // будет посчитан по нему.
+    // Сверяемся с адресами из конфига, а не с зашитым доменом: адрес
+    // биржи настраиваемый, и захардкоженный mexc.com молча отключил бы
+    // обновление у любого, кто его поменял.
+    const onTrading = page && Object.values(CFG.urls || {}).some(u => page.url().startsWith(u));
+    if (onTrading) {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    }
+    balAfter = await readBalance();
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+  }
+  if (balAfter != null) state.balance = balAfter;
+  let res = 'unknown', delta = null;
+  if (p.solo && p.balBefore != null && balAfter != null) {
+    delta = +(balAfter - p.balBefore).toFixed(4);
+    // Порог в четверть ставки отсекает мелкие движения баланса,
+    // не связанные с этой ставкой (комиссии, начисления).
+    if (Math.abs(delta) >= p.stake * 0.25) res = delta > 0 ? 'WIN' : 'LOSE';
+  }
+  if (res === 'LOSE') state.consecutiveLosses++;
+  if (res === 'WIN') state.consecutiveLosses = 0;
+  log(`расчёт ${p.asset} ${p.direction}: ${res}`
+    + (delta != null ? ` (${delta > 0 ? '+' : ''}${delta} USDT)` : ' - параллельные ставки, дельту не приписать')
+    + `, поражений подряд ${state.consecutiveLosses}`);
+  logBet({ asset: p.asset, direction: p.direction, timing: p.timing, stake: p.stake,
+           mode: 'RESULT', status: res, note: delta != null ? String(delta) : '' });
+  state.pending = state.pending.filter(x => x.id !== p.id);
+  saveState();
+  checkBreakers();
+}
+
+// Ставка живёт 10 минут; ждём ещё немного, чтобы биржа успела зачислить.
+// TEST_SETTLE_MS сжимает это ожидание для прогонов - ждать в тесте
+// реальные десять минут бессмысленно. В бою переменная не задана.
+function watchSettle(p) {
+  const wait = process.env.TEST_SETTLE_MS
+    ? Number(process.env.TEST_SETTLE_MS)
+    : (p.timing ?? 10) * 60000 + (CFG.settleDelaySec ?? 45) * 1000;
+  const due = p.at + wait;
+  const t = setTimeout(() => {
+    // Не лезем на страницу посреди ставки: расчёт подождёт своей очереди.
+    const tick = () => {
+      if (state.busy || state.queue.length) return setTimeout(tick, 3000);
+      settleOne(p).catch(e => log('расчёт не удался: ' + e.message));
+    };
+    tick();
+  }, Math.max(1000, due - Date.now()));
+  if (t.unref) t.unref();
+}
+
+// ── предохранители по деньгам ──
+function dailyPnl() {
+  if (state.dayStartBalance == null || state.balance == null) return null;
+  return +(state.balance - state.dayStartBalance).toFixed(2);
+}
+function tripBreaker(reason) {
+  if (state.stoppedReason) return;          // уже сработал
+  state.stoppedReason = reason;
+  state.dryRun = true;
+  log('!! ПРЕДОХРАНИТЕЛЬ: ' + reason + ' - перешёл в DRY-RUN');
+  tgAlert('предохранитель: ' + reason + '. Ставки остановлены, режим DRY-RUN.');
+  saveState();
+}
+function checkBreakers() {
+  const maxL = CFG.maxConsecutiveLosses ?? 0;
+  if (maxL > 0 && state.consecutiveLosses >= maxL) {
+    tripBreaker(`${state.consecutiveLosses} поражений подряд (порог ${maxL})`);
+    return;
+  }
+  const maxLoss = CFG.maxDailyLossUsdt ?? 0;
+  const pnl = dailyPnl();
+  if (maxLoss > 0 && pnl != null && pnl <= -maxLoss) {
+    tripBreaker(`дневной убыток ${pnl} USDT (порог -${maxLoss})`);
+  }
+}
+
 // ── ставка ──
 async function placeBet(sig) {
   const t0 = Date.now();
@@ -499,6 +653,12 @@ async function placeBet(sig) {
   }
 
   const posBefore = await openPositionsCount();
+  const balBefore = await readBalance();
+  if (balBefore != null) {
+    state.balance = balBefore;
+    // Точка отсчёта дневного PNL - баланс перед первой ставкой дня.
+    if (state.dayStartBalance == null) { state.dayStartBalance = balBefore; saveState(); }
+  }
   await humanClick(btn);
   await page.waitForTimeout(randInt(500, 900));
   // возможное окно подтверждения
@@ -524,6 +684,17 @@ async function placeBet(sig) {
     return { status: 'placed-unconfirmed', payoutPage: pv };
   }
   log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
+  // solo=true, если эта ставка на бирже единственная: только тогда
+  // изменение баланса можно приписать именно ей.
+  const p = {
+    id: `${Date.now()}-${sig.asset}-${sig.direction}`,
+    asset: sig.asset, direction: sig.direction, timing: sig.timing ?? 10,
+    stake: stakeFor(sig.asset), at: Date.now(), balBefore,
+    solo: posBefore === 0 && openSlots() === 0,
+  };
+  state.pending.push(p);
+  saveState();
+  watchSettle(p);
   return { status: 'placed', payoutPage: pv };
 }
 
@@ -555,6 +726,7 @@ async function pump() {
         state.placed.push({ t: Date.now(), dir: sig.direction });
       }
       if (counts.includes(r.status)) state.betsToday++;
+      saveState();
       state.consecutiveErrors = 0;
     }
   } catch (e) {
@@ -657,6 +829,25 @@ async function idleAction() {
   }
 }
 
+// ── сторож тишины ──
+// Упавший туннель, снятый деплой Apps Script, выключенный хук - всё это
+// выглядит одинаково: сигналы просто перестают приходить. Заметить
+// такое по журналу невозможно, там ничего не появляется. Поэтому
+// молчание в активные часы само по себе повод для алерта.
+function silenceMinutes() {
+  const since = state.lastSignalAt || state.startedAt;
+  return Math.floor((Date.now() - since) / 60000);
+}
+function checkSilence() {
+  const lim = CFG.signalSilenceMin ?? 0;
+  if (!lim || state.silenceAlerted || !inActiveHours()) return;
+  if (silenceMinutes() < lim) return;
+  state.silenceAlerted = true;
+  const what = state.lastSignalAt ? 'последний сигнал' : 'с запуска';
+  log(`!! тишина: сигналов нет ${silenceMinutes()} мин (${what})`);
+  tgAlert(`сигналов нет ${silenceMinutes()} мин в активные часы - проверь туннель и вебхук Apps Script`);
+}
+
 function scheduleIdle() {
   const I = CFG.idleRotation || {};
   if (I.enabled === false) return;
@@ -717,6 +908,11 @@ function snapshot() {
           ? CFG.schedule.hours : Array(7).fill('1'.repeat(24))),
         jitterMin: (CFG.schedule || {}).jitterMin ?? 0,
       },
+      breakers: {
+        maxConsecutiveLosses: CFG.maxConsecutiveLosses ?? 0,
+        maxDailyLossUsdt: CFG.maxDailyLossUsdt ?? 0,
+        signalSilenceMin: CFG.signalSilenceMin ?? 0,
+      },
       idleRotation: {
         enabled: (CFG.idleRotation || {}).enabled !== false,
         everyMinFrom: (CFG.idleRotation || {}).everyMinFrom ?? 7,
@@ -727,6 +923,14 @@ function snapshot() {
     },
     dirUsed: { UP: dirSlots('UP'), DOWN: dirSlots('DOWN') },
     dayNames: DAY_NAMES,
+    lastSignalAt: state.lastSignalAt,
+    silenceMin: silenceMinutes(),
+    sinceStart: !state.lastSignalAt,
+    balance: state.balance,
+    dailyPnl: dailyPnl(),
+    consecutiveLosses: state.consecutiveLosses,
+    pending: state.pending.length,
+    stoppedReason: state.stoppedReason,
   };
 }
 
@@ -767,6 +971,16 @@ function applySettings(s) {
     const v = Math.round(clamp(s.maxBetsPerDay, 1, 500, CFG.maxBetsPerDay ?? 40));
     if (v !== (CFG.maxBetsPerDay ?? 40)) changed.push(`ставок в день ${CFG.maxBetsPerDay ?? 40}→${v}`);
     CFG.maxBetsPerDay = v;
+  }
+  if (s.breakers) {
+    for (const [k, lo, hi] of [['maxConsecutiveLosses', 0, 50],
+                               ['maxDailyLossUsdt', 0, 100000],
+                               ['signalSilenceMin', 0, 1440]]) {
+      if (s.breakers[k] == null) continue;
+      const v = Math.round(clamp(s.breakers[k], lo, hi, CFG[k] ?? 0));
+      if (v !== (CFG[k] ?? 0)) changed.push(`${k} ${CFG[k] ?? 0}→${v}`);
+      CFG[k] = v;
+    }
   }
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;
@@ -857,6 +1071,14 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
+    // Снять предохранитель - осознанное действие: он сработал не просто так.
+    if (req.method === 'POST' && action === 'breaker-reset') {
+      log('панель: предохранитель снят вручную (был: ' + (state.stoppedReason || 'нет') + ')');
+      state.stoppedReason = null;
+      state.consecutiveLosses = 0;
+      saveState();
+      return sendJson(200, snapshot());
+    }
     if (req.method === 'POST' && action === 'settings') {
       let b = '';
       req.on('data', d => { b += d; if (b.length > 16384) req.destroy(); });
@@ -938,6 +1160,15 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    // сработавший предохранитель: сигналы не исполняем, пока не снимут
+    if (state.stoppedReason) {
+      log('пропуск: сработал предохранитель (' + state.stoppedReason + ')');
+      logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-breaker' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'breaker' }));
+      return;
+    }
+
     // пауза с панели
     if (state.paused) {
       log('пропуск: исполнитель на паузе');
@@ -991,6 +1222,9 @@ const server = http.createServer((req, res) => {
 
     sig.receivedAt = now;
     state.queue.push(sig);
+    state.lastSignalAt = now;
+    state.silenceAlerted = false;
+    saveState();
     log(`сигнал принят: ${sig.asset} ${sig.direction} ${sig.label || sig.timing} payout=${sig.payout}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, queued: true, dryRun: state.dryRun }));
@@ -1048,6 +1282,7 @@ if (process.argv[2] === 'login') {
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
 } else {
+  loadState();
   server.listen(CFG.port ?? 8787, () => {
     log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
@@ -1057,5 +1292,10 @@ if (process.argv[2] === 'login') {
       + ` | человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
       + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`);
     scheduleIdle();
+    // Сторож тишины: раз в минуту, дешевле некуда.
+    const sil = setInterval(checkSilence, 60000);
+    if (sil.unref) sil.unref();
+    // Ставки, пережившие перезапуск, тоже надо досчитать.
+    for (const p of state.pending) watchSettle(p);
   });
 }

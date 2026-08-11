@@ -20,7 +20,7 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   html { background:var(--bg); }
   body {
-    background:transparent; color:var(--text); padding:20px; min-height:100vh;
+    background:transparent; color:var(--text); padding:14px 16px; min-height:100vh;
     font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
   }
   /* Фон-сцена. Живёт на псевдоэлементах html, а не body: у body свой фон
@@ -51,14 +51,17 @@
     -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
     filter:drop-shadow(0 0 14px rgba(34,232,255,.35));
   }
-  .sub { color:var(--muted); font-size:11.5px; margin-bottom:18px; letter-spacing:.6px;
+  .sub { color:var(--muted); font-size:11px; margin-bottom:12px; letter-spacing:.6px;
          font-family:var(--mono); }
 
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; margin-bottom:14px; }
+    /* align-items:start - главное против пустот: иначе grid растягивает
+     все карточки строки по самой высокой, и под короткими зияет пустота. */
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(228px,1fr));
+          gap:10px; margin-bottom:10px; align-items:start; }
   .card {
     position:relative;
     background:linear-gradient(180deg, rgba(34,232,255,.05), transparent 42%), var(--card);
-    border:1px solid var(--line); border-radius:12px; padding:16px;
+    border:1px solid var(--line); border-radius:12px; padding:12px 13px;
     box-shadow:
       inset 0 1px 0 rgba(34,232,255,.10),
       inset -14px -14px 32px rgba(157,80,255,.055),
@@ -77,7 +80,7 @@
   }
   .card h2 {
     position:relative; padding-left:11px; font-size:11px; font-weight:800;
-    color:#CFF6FF; margin-bottom:11px; text-transform:uppercase; letter-spacing:1.2px;
+    color:#CFF6FF; margin-bottom:8px; text-transform:uppercase; letter-spacing:1.1px;
     text-shadow:0 0 12px rgba(34,232,255,.35);
   }
   .card h2::before {
@@ -86,7 +89,7 @@
     background:linear-gradient(180deg,var(--cyan),var(--violet));
   }
 
-  .big { font-size:22px; font-weight:800; }
+  .big { font-size:20px; font-weight:800; }
 
   /* ── Карточка режима ──
      Это единственный переключатель, который стоит денег, поэтому она
@@ -95,7 +98,7 @@
      текста мало, состояние должно читаться боковым зрением. */
   .mode-card { transition:box-shadow .3s, border-color .3s; }
   .mode-card .big { margin-bottom:4px; }
-  .mode-card .pill { font-size:13px; padding:7px 20px; letter-spacing:2px; }
+  .mode-card .pill { font-size:12.5px; padding:6px 16px; letter-spacing:2px; }
   .mode-card.live {
     border-color:rgba(78,255,160,.5);
     box-shadow:
@@ -128,7 +131,7 @@
     border-color:var(--yellow); filter:drop-shadow(0 0 6px rgba(255,209,102,.8));
   }
   @media (prefers-reduced-motion: reduce) { .mode-card.live { animation:none; } }
-  .row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; font-size:13px; gap:8px; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:2.5px 0; font-size:12.5px; gap:8px; }
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
      колонки не пляшут при обновлении раз в 5 секунд. */
@@ -147,7 +150,7 @@
   button {
     position:relative; background:rgba(34,232,255,.07); color:#DFF7FF;
     border:1px solid rgba(34,232,255,.32); border-radius:8px;
-    padding:9px 16px; font-size:12px; cursor:pointer; font-weight:700;
+    padding:7px 13px; font-size:11.5px; cursor:pointer; font-weight:700;
     text-transform:uppercase; letter-spacing:.9px;
     transition:box-shadow .18s, background .18s, color .18s;
   }
@@ -160,10 +163,10 @@
   .btns { display:flex; gap:8px; flex-wrap:wrap; }
 
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
-  th { text-align:left; color:rgba(34,232,255,.8); font-weight:700; padding:7px 8px;
+  th { text-align:left; color:rgba(34,232,255,.8); font-weight:700; padding:5px 7px;
        border-bottom:1px solid rgba(34,232,255,.25); font-size:10px;
        text-transform:uppercase; letter-spacing:.9px; }
-  td { padding:7px 8px; border-bottom:1px solid rgba(255,255,255,.04);
+  td { padding:4.5px 7px; border-bottom:1px solid rgba(255,255,255,.04);
        font-family:var(--mono); font-variant-numeric:tabular-nums; }
   tbody tr:hover td { background:rgba(34,232,255,.045); }
   .s-placed { color:var(--green); font-weight:700; text-shadow:0 0 9px rgba(78,255,160,.5); }
@@ -173,14 +176,14 @@
 
   select, input[type=number] {
     background:var(--card2); color:#DFF7FF; border:1px solid rgba(34,232,255,.28);
-    border-radius:8px; padding:7px 11px; font-size:13px;
+    border-radius:8px; padding:5px 9px; font-size:12.5px;
     font-family:var(--mono); font-variant-numeric:tabular-nums;
   }
   select:focus, input[type=number]:focus { outline:none; border-color:var(--cyan); box-shadow:var(--glow); }
-  input[type=number] { width:86px; text-align:right; }
-  label.chk { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:4px 0; cursor:pointer; }
+  input[type=number] { width:74px; text-align:right; }
+  label.chk { display:flex; align-items:center; gap:7px; font-size:12.5px; padding:2px 0; cursor:pointer; }
   input[type=checkbox] { accent-color:var(--cyan); width:15px; height:15px; cursor:pointer; }
-  .note { color:var(--muted); font-size:11px; margin-top:9px; line-height:1.55; }
+  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; }
   .hint { color:var(--muted); font-size:11px; }
 
   /* недельная сетка часов */
@@ -190,7 +193,7 @@
               color:var(--muted); font-family:var(--mono); letter-spacing:0; }
   .sched td { padding:0; border:none; }
   .cell {
-    width:22px; height:20px; border-radius:4px; cursor:pointer;
+    width:20px; height:18px; border-radius:4px; cursor:pointer;
     background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.05);
     transition:background .12s, box-shadow .12s;
   }
@@ -238,6 +241,16 @@
       <div class="row"><span>В очереди</span><b id="queue">—</b></div>
       <div class="row"><span>За сегодня</span><b id="today">—</b></div>
       <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
+    </div>
+
+    <div class="card" id="pulseCard">
+      <h2>Сигналы и деньги</h2>
+      <div class="row"><span>Последний сигнал</span><b id="lastSig">—</b></div>
+      <div class="row"><span>Баланс</span><b id="bal">—</b></div>
+      <div class="row"><span>PNL за сегодня</span><b id="pnl">—</b></div>
+      <div class="row"><span>Поражений подряд</span><b id="losses">—</b></div>
+      <div class="row"><span>Ждут расчёта</span><b id="pend">—</b></div>
+      <div id="breakerBox"></div>
     </div>
 
     <div class="card">
@@ -292,6 +305,21 @@
     </div>
 
     <div class="card">
+      <h2>Предохранители <span class="saved" id="savedBrk">сохранено</span></h2>
+      <div class="row"><span>Поражений подряд, стоп</span>
+        <input type="number" id="brkLosses" min="0" max="50" step="1"></div>
+      <div class="row"><span>Убыток за день, USDT</span>
+        <input type="number" id="brkLoss" min="0" max="100000" step="1"></div>
+      <div class="row"><span>Тишина сигналов, мин</span>
+        <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
+      <button style="margin-top:8px" id="btnSaveBrk">Сохранить</button>
+      <div class="note">0 - выключено. Сработавший предохранитель переводит
+        в dry-run и не пускает сигналы, пока не снимешь его вручную.
+        Результат ставки определяется по изменению баланса и известен
+        только когда ставка была на бирже единственной.</div>
+    </div>
+
+    <div class="card">
       <h2>Холостые действия <span class="saved" id="savedIdle">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="idleOn"> Включены</label>
       <div id="idleActs" style="margin:6px 0 4px"></div>
@@ -305,7 +333,7 @@
     </div>
   </div>
 
-  <div class="card" style="margin-bottom:14px">
+  <div class="card" style="margin-bottom:10px">
     <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
     <div class="row" style="margin-bottom:10px">
       <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
@@ -454,6 +482,7 @@ const CARDS = {
   stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
+  brk:    ['brkLosses', 'brkLoss', 'brkSilence'],
   sched:  ['schedOn', 'jitter'],
 };
 const dirty = new Set();
@@ -494,6 +523,31 @@ async function refresh() {
   $('queue').textContent = st.queue;
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
   $('errs').textContent = st.consecutiveErrors;
+
+  // Тишина сигналов: жёлтым с половины порога, красным за порогом -
+  // чтобы «что-то отвалилось» было видно до того, как станет поздно.
+  const lim = s.breakers.signalSilenceMin || 0;
+  const m = st.silenceMin;
+  const sigTxt = m + ' мин' + (st.sinceStart ? '*' : '');
+  const sigCls = (lim && m >= lim) ? 'bad' : (lim && m >= lim / 2) ? 'warn' : 'ok';
+  $('lastSig').innerHTML = `<span class="pill ${sigCls}" title="${st.sinceStart
+    ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${sigTxt}</span>`;
+  $('bal').textContent = st.balance == null ? '—' : st.balance + ' USDT';
+  const pnl = st.dailyPnl;
+  $('pnl').innerHTML = pnl == null ? '—'
+    : `<span style="color:${pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'inherit'}">${pnl > 0 ? '+' : ''}${pnl} USDT</span>`;
+  $('losses').textContent = st.consecutiveLosses
+    + (s.breakers.maxConsecutiveLosses ? ' / ' + s.breakers.maxConsecutiveLosses : '');
+  $('pend').textContent = st.pending;
+  $('breakerBox').innerHTML = st.stoppedReason
+    ? `<div class="note" style="color:var(--red)">Предохранитель: ${st.stoppedReason}</div>
+       <button class="danger" style="margin-top:7px" onclick="resetBreaker()">Снять предохранитель</button>`
+    : '';
+  $('pulseCard').style.borderColor = st.stoppedReason ? 'rgba(255,82,114,.55)' : '';
+
+  setVal('brkLosses', s.breakers.maxConsecutiveLosses);
+  setVal('brkLoss', s.breakers.maxDailyLossUsdt);
+  setVal('brkSilence', s.breakers.signalSilenceMin);
 
   $('browserState').innerHTML = st.browserOpen
     ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
@@ -588,6 +642,19 @@ $('btnSaveIdle').onclick = async () => {
     },
   });
   flash('savedIdle'); afterSave('idle');
+};
+$('btnSaveBrk').onclick = async () => {
+  await post('settings', { breakers: {
+    maxConsecutiveLosses: +$('brkLosses').value,
+    maxDailyLossUsdt: +$('brkLoss').value,
+    signalSilenceMin: +$('brkSilence').value,
+  } });
+  flash('savedBrk'); afterSave('brk');
+};
+window.resetBreaker = async () => {
+  if (!confirm('Снять предохранитель? Сигналы снова пойдут в исполнение.')) return;
+  await post('breaker-reset');
+  refresh();
 };
 $('btnSaveSched').onclick = async () => {
   await post('settings', {

@@ -268,13 +268,14 @@
     </div>
 
     <div class="card" id="pulseCard">
-      <h2>Сигналы и деньги</h2>
+      <h2>Связь <span class="saved" id="savedSil">сохранено</span></h2>
       <div class="row"><span>Последний сигнал</span><b id="lastSig">—</b></div>
-      <div class="row"><span>Баланс</span><b id="bal">—</b></div>
-      <div class="row"><span>PNL за сегодня</span><b id="pnl">—</b></div>
-      <div class="row"><span>Поражений подряд</span><b id="losses">—</b></div>
-      <div class="row"><span>Ждут расчёта</span><b id="pend">—</b></div>
-      <div id="breakerBox"></div>
+      <div class="row"><span>Порог тишины, мин</span>
+        <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
+      <button style="margin-top:8px" id="btnSaveSil">Сохранить</button>
+      <div class="note">Молчание в активные часы - единственный признак,
+        что упал туннель или слетел деплой Apps Script: в журнале ставок
+        при этом не появляется ничего. 0 - алерт выключен.</div>
     </div>
 
     <div class="card">
@@ -322,21 +323,6 @@
         <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
       <div class="note" id="dirHint"></div>
       <button style="margin-top:10px" id="btnSaveDir">Сохранить</button>
-    </div>
-
-    <div class="card">
-      <h2>Предохранители <span class="saved" id="savedBrk">сохранено</span></h2>
-      <div class="row"><span>Поражений подряд, стоп</span>
-        <input type="number" id="brkLosses" min="0" max="50" step="1"></div>
-      <div class="row"><span>Убыток за день, USDT</span>
-        <input type="number" id="brkLoss" min="0" max="100000" step="1"></div>
-      <div class="row"><span>Тишина сигналов, мин</span>
-        <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
-      <button style="margin-top:8px" id="btnSaveBrk">Сохранить</button>
-      <div class="note">0 - выключено. Сработавший переводит в dry-run и
-        не пускает сигналы, пока не снимешь вручную. Результат ставки
-        известен только когда она была на бирже единственной: иначе
-        движение баланса не приписать ей одной.</div>
     </div>
 
     <div class="card">
@@ -506,7 +492,7 @@ const CARDS = {
   stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
-  brk:    ['brkLosses', 'brkLoss', 'brkSilence'],
+  sil:    ['brkSilence'],
   sched:  ['schedOn', 'jitter'],
 };
 const dirty = new Set();
@@ -550,28 +536,12 @@ async function refresh() {
 
   // Тишина сигналов: жёлтым с половины порога, красным за порогом -
   // чтобы «что-то отвалилось» было видно до того, как станет поздно.
-  const lim = s.breakers.signalSilenceMin || 0;
+  const lim = s.signalSilenceMin || 0;
   const m = st.silenceMin;
-  const sigTxt = m + ' мин' + (st.sinceStart ? '*' : '');
   const sigCls = (lim && m >= lim) ? 'bad' : (lim && m >= lim / 2) ? 'warn' : 'ok';
   $('lastSig').innerHTML = `<span class="pill ${sigCls}" title="${st.sinceStart
-    ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${sigTxt}</span>`;
-  $('bal').textContent = st.balance == null ? '—' : st.balance + ' USDT';
-  const pnl = st.dailyPnl;
-  $('pnl').innerHTML = pnl == null ? '—'
-    : `<span style="color:${pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'inherit'}">${pnl > 0 ? '+' : ''}${pnl} USDT</span>`;
-  $('losses').textContent = st.consecutiveLosses
-    + (s.breakers.maxConsecutiveLosses ? ' / ' + s.breakers.maxConsecutiveLosses : '');
-  $('pend').textContent = st.pending;
-  $('breakerBox').innerHTML = st.stoppedReason
-    ? `<div class="note" style="color:var(--red)">Предохранитель: ${st.stoppedReason}</div>
-       <button class="danger" style="margin-top:7px" onclick="resetBreaker()">Снять предохранитель</button>`
-    : '';
-  $('pulseCard').style.borderColor = st.stoppedReason ? 'rgba(255,82,114,.55)' : '';
-
-  setVal('brkLosses', s.breakers.maxConsecutiveLosses);
-  setVal('brkLoss', s.breakers.maxDailyLossUsdt);
-  setVal('brkSilence', s.breakers.signalSilenceMin);
+    ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${m} мин${st.sinceStart ? '*' : ''}</span>`;
+  setVal('brkSilence', s.signalSilenceMin);
 
   $('browserState').innerHTML = st.browserOpen
     ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
@@ -665,18 +635,9 @@ $('btnSaveIdle').onclick = async () => {
   });
   flash('savedIdle'); afterSave('idle');
 };
-$('btnSaveBrk').onclick = async () => {
-  await post('settings', { breakers: {
-    maxConsecutiveLosses: +$('brkLosses').value,
-    maxDailyLossUsdt: +$('brkLoss').value,
-    signalSilenceMin: +$('brkSilence').value,
-  } });
-  flash('savedBrk'); afterSave('brk');
-};
-window.resetBreaker = async () => {
-  if (!confirm('Снять предохранитель? Сигналы снова пойдут в исполнение.')) return;
-  await post('breaker-reset');
-  refresh();
+$('btnSaveSil').onclick = async () => {
+  await post('settings', { signalSilenceMin: +$('brkSilence').value });
+  flash('savedSil'); afterSave('sil');
 };
 $('btnSaveSched').onclick = async () => {
   await post('settings', {

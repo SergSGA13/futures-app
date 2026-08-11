@@ -40,7 +40,7 @@
   "headless": false,
   "browserPath": "",
   "pageSettleMs": 2500,
-  "panelTimeoutMs": 25000,
+  "panelTimeoutMs": 40000,
   "confirmTimeoutMs": 9000,
   "openPositionsLabel": "Open Positions",
 

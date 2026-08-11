@@ -54,10 +54,34 @@
   .sub { color:var(--muted); font-size:11px; margin-bottom:12px; letter-spacing:.6px;
          font-family:var(--mono); }
 
-    /* align-items:start - главное против пустот: иначе grid растягивает
-     все карточки строки по самой высокой, и под короткими зияет пустота. */
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(228px,1fr));
-          gap:10px; margin-bottom:10px; align-items:start; }
+  /* Колоночная раскладка вместо сетки. У grid высота СТРОКИ равна самой
+     высокой карточке в ней, и под короткими зияла пустота до следующего
+     ряда - align-items:start убирал растягивание, но не дыру. В multicol
+     карточки текут сверху вниз и пакуются вплотную, а браузер сам
+     выравнивает высоту колонок. break-inside не даёт разорвать карточку
+     между колонками. */
+  .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
+  /* Сетка часов шире карточки, но уже страницы: 24 колонки занимают
+     ~620px, и справа оставалась пустая половина. Сажаем рядом журнал
+     ставок - он как раз узкий. На тесном экране колонка одна. */
+  .bottom { display:grid; grid-template-columns:minmax(0,640px) minmax(0,1fr);
+            gap:10px; align-items:start; }
+  @media (max-width: 1080px) { .bottom { grid-template-columns:1fr; } }
+  /* min-width:0 обязателен: у элемента grid минимальная ширина по
+     умолчанию равна ширине содержимого, и карточка с сеткой часов
+     (24 колонки, ~550px) отказывалась сжиматься - вместо прокрутки
+     внутри неё ехала вся страница. */
+  .bottom .card { margin:0; min-width:0; }
+  .sched, .tablewrap { min-width:0; }
+  /* Журнал из восьми колонок не влезает в узкий экран, а панель
+     открывают и с телефона через туннель. Прокрутка внутри таблицы -
+     чтобы ехала она, а не вся страница. */
+  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .tablewrap table { min-width:520px; }
+  .cards > .card {
+    break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
+    margin:0 0 10px; width:100%;
+  }
   .card {
     position:relative;
     background:linear-gradient(180deg, rgba(34,232,255,.05), transparent 42%), var(--card);
@@ -222,7 +246,7 @@
   <h1>MEXC Executor</h1>
   <div class="sub" id="sub">загрузка…</div>
 
-  <div class="grid">
+  <div class="cards">
     <div class="card mode-card" id="modeCard">
       <h2>Режим</h2>
       <div class="big" id="mode">—</div>
@@ -262,8 +286,8 @@
         <button id="btnOpen">Открыть окно</button>
         <button id="btnClose">Закрыть</button>
       </div>
-      <div class="note">Окно нужно только чтобы посмотреть глазами: перед
-        ставкой исполнитель открывает его сам.</div>
+      <div class="note">Только чтобы посмотреть глазами - перед ставкой
+        исполнитель откроет его сам.</div>
     </div>
 
     <div class="card">
@@ -273,13 +297,9 @@
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
       </div>
       <button class="go" id="btnManual">Поставить</button>
-      <div class="note">Payout со страницы и режим (dry-run) проверяются
-        как обычно, а лимиты слотов и направления ручная ставка обходит:
-        ты нажал сам, значит так и надо.</div>
+      <div class="note">Payout и режим проверяются, лимиты слотов и
+        направления - нет: ты нажал сам.</div>
     </div>
-  </div>
-
-  <div class="grid">
     <div class="card">
       <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
       <div class="row"><span>Ставка ETH, USDT</span>
@@ -313,10 +333,10 @@
       <div class="row"><span>Тишина сигналов, мин</span>
         <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
       <button style="margin-top:8px" id="btnSaveBrk">Сохранить</button>
-      <div class="note">0 - выключено. Сработавший предохранитель переводит
-        в dry-run и не пускает сигналы, пока не снимешь его вручную.
-        Результат ставки определяется по изменению баланса и известен
-        только когда ставка была на бирже единственной.</div>
+      <div class="note">0 - выключено. Сработавший переводит в dry-run и
+        не пускает сигналы, пока не снимешь вручную. Результат ставки
+        известен только когда она была на бирже единственной: иначе
+        движение баланса не приписать ей одной.</div>
     </div>
 
     <div class="card">
@@ -333,7 +353,8 @@
     </div>
   </div>
 
-  <div class="card" style="margin-bottom:10px">
+  <div class="bottom">
+  <div class="card">
     <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
     <div class="row" style="margin-bottom:10px">
       <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
@@ -355,10 +376,13 @@
 
   <div class="card">
     <h2>Последние ставки</h2>
+    <div class="tablewrap">
     <table>
       <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Ставка</th><th>Payout</th><th>Режим</th><th>Статус</th><th>Заметка</th></tr></thead>
       <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
     </table>
+    </div>
+  </div>
   </div>
 </div>
 
@@ -560,14 +584,12 @@ async function refresh() {
   setVal('stETH', s.stakes.ETH); setVal('stBTC', s.stakes.BTC);
   $('stETH').max = s.stakeLimits.ETH; $('stBTC').max = s.stakeLimits.BTC;
   $('stakeHint').textContent =
-    `Границы биржи: ETH 1–${s.stakeLimits.ETH}, BTC 1–${s.stakeLimits.BTC} USDT. `
-    + 'Значение вне границ будет прижато к ближайшей.';
+    `Границы биржи: ETH 1–${s.stakeLimits.ETH}, BTC 1–${s.stakeLimits.BTC} USDT.`;
   setVal('minPay', s.minPayout); setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
     `Сколько ставок одной стороны пускаем в окно ${s.slotWindowMin} мин. `
-    + 'Подряд идущие сигналы одного направления - обычно один и тот же заход, '
-    + 'и пять ставок на него просто впятеро увеличивают риск.';
+    + 'Подряд идущие сигналы одной стороны - обычно один заход.';
 
   setChk('idleOn', s.idleRotation.enabled);
   setChk('humanize', s.humanize);

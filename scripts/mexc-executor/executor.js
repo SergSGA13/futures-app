@@ -176,7 +176,11 @@ function saveConfig() {
 }
 
 function log(line) {
-  const msg = `[${new Date().toISOString()}] ${line}`;
+  // Два времени в строке: UTC для сопоставления с логом туннеля и
+  // местное - потому что расписание задаётся в местном, и разбирать
+  // «попал ли в окно» по одному UTC значит каждый раз считать в уме.
+  const n = new Date();
+  const msg = `[${n.toISOString()} | ${n.toLocaleTimeString('ru-RU')}] ${line}`;
   console.log(msg);
   fs.appendFileSync(path.join(LOGS, 'executor.log'), msg + '\n');
 }
@@ -205,7 +209,15 @@ function launchOpts(headless) {
   const o = {
     headless,
     viewport: { width: 1280, height: 860 },
-    args: ['--disable-blink-features=AutomationControlled'],
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      // Chrome тормозит таймеры и отрисовку в фоновом окне, а окно у нас
+      // фоновое почти всегда. Из-за этого SPA биржи может собираться
+      // десятками секунд вместо семи - и ставка не успевает в свои 10 мин.
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+    ],
   };
   if (CFG.browserPath) o.executablePath = CFG.browserPath;
   return o;
@@ -342,7 +354,7 @@ async function findAmount(perTryMs) {
 // странице может не быть ещё ни одной кнопки (видно в ДАМПе: 0 полей,
 // 0 кнопок, payout "--"). Признак готовности - появившееся поле суммы.
 async function waitForPanel() {
-  const deadline = Date.now() + (CFG.panelTimeoutMs ?? 25000);
+  const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
   let found = null;
   while (Date.now() < deadline) {
     found = await findAmount(1200);
@@ -393,13 +405,26 @@ async function placeBet(sig) {
   const url = CFG.urls[sig.asset];
   if (!url) throw new Error('нет URL для актива ' + sig.asset);
   await browser();
+  // На передний план - тот же разговор про фоновое окно: невидимой
+  // вкладке браузер отдаёт кадры по остаточному принципу.
+  await page.bringToFront().catch(() => {});
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
   await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-  const ready = await waitForPanel();
+  let ready = await waitForPanel();
+  if (!ready) {
+    // Не сдаёмся с первого раза: панель биржи иногда собирается дольше
+    // отведённого, и по дампу видно, что поле на странице УЖЕ есть.
+    // Перезагрузка дешевле проигранного сигнала.
+    log('панель не собралась за ' + (CFG.panelTimeoutMs ?? 40000) + 'мс - перезагружаю страницу и пробую ещё раз');
+    await shot('panel-not-ready-1');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    ready = await waitForPanel();
+  }
   if (!ready) {
     await shot('panel-not-ready');
     await dumpPage('panel-not-ready');
-    throw new Error('торговая панель не отрисовалась за ' + (CFG.panelTimeoutMs ?? 25000) + 'мс - смотри ДАМП выше');
+    throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
   }
   log('панель готова, поле суммы: ' + ready.sel);
 

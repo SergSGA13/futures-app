@@ -71,56 +71,108 @@ function stakeFor(asset) {
   const t = CFG.stakes || {};
   return t[asset] != null ? t[asset] : (CFG.stakeUSDT ?? 5);
 }
+// Потолок ставки по активу: у поля ввода на бирже свой лимит
+// (на ETH видно "1～150 USDT"), и панель не должна давать выйти за него.
+function stakeMax(asset) {
+  const l = CFG.stakeLimits || {};
+  return l[asset] != null ? l[asset] : 150;
+}
 
 // Биржа держит не больше 5 ставок одновременно. Окно берём ДЛИННЕЕ
 // экспирации (10 мин), иначе слот освободится в учёте раньше, чем на бирже.
-function openSlots() {
+// Храним не только время, но и направление: лимиты бывают отдельные
+// на UP и на DOWN.
+function prunePlaced() {
   const winMs = (CFG.slotWindowMin ?? 11) * 60000;
   const now = Date.now();
-  state.placed = state.placed.filter(t => now - t < winMs);
-  return state.placed.length;
+  state.placed = state.placed.filter(p => now - p.t < winMs);
+  return state.placed;
+}
+function openSlots() { return prunePlaced().length; }
+function dirSlots(dir) { return prunePlaced().filter(p => p.dir === dir).length; }
+// Сколько ставок одного направления пускаем в окно. Смысл в том, что
+// подряд идущие сигналы одной стороны - обычно один и тот же заход,
+// и ставить на него пять раз значит просто впятеро увеличить ставку.
+function dirLimit(dir) {
+  const d = CFG.dirLimits || {};
+  const v = d[dir];
+  return (typeof v === 'number' && v > 0) ? v : (CFG.maxOpenBets ?? 5);
 }
 
-// ── окно активности ──
+// ── расписание активности ──
 // Круглосуточная торговля без единого перерыва - самый заметный признак
-// машины. activeHours задаёт часы, когда аккаунт «бодрствует»; вне их
-// сигналы отклоняются со статусом skip-quiet.
-function hhmmToMin(s) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ''));
-  return m ? (+m[1]) * 60 + (+m[2]) : null;
+// машины. Расписание задаётся недельной сеткой 7x24: строка на день
+// недели, символ на час ('1' - работаем, '0' - спим). Вне активных
+// часов сигналы отклоняются со статусом skip-quiet.
+const DAY_NAMES = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+// Пустое/битое расписание = работаем всегда. Молча чинить длину строк
+// важнее, чем падать: конфиг правится руками.
+function scheduleGrid() {
+  const S = CFG.schedule || {};
+  if (!S.enabled) return null;
+  const rows = Array.isArray(S.hours) ? S.hours : [];
+  if (rows.length !== 7) return null;
+  return rows.map(r => String(r || '').padEnd(24, '0').slice(0, 24));
 }
-function fmtMin(m) {
-  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+function activeAt(grid, day, hour) {
+  return grid[((day % 7) + 7) % 7][((hour % 24) + 24) % 24] === '1';
 }
-// Сдвиг границы окна на день. Считается ОТ ДАТЫ, а не случайно при каждом
-// вызове: иначе сигнал, пришедший ровно на границе, то проходил бы, то нет.
-// Ровные 08:00-23:30 изо дня в день - такой же машинный след, как и 24/7.
-function dayJitter(tag, spanMin) {
+// Сдвиг края блока, детерминированный ОТ ДАТЫ И ЧАСА, а не случайный при
+// каждой проверке: иначе сигнал, пришедший ровно на границе, то проходил
+// бы, то нет. Ровное «каждый день с 08:00» - такой же машинный след,
+// как и работа 24/7, поэтому края блоков слегка гуляют.
+function edgeJitter(tag, spanMin) {
   if (!spanMin) return 0;
-  const s = new Date().toDateString() + tag;
+  const n = new Date();
+  const s = `${n.getFullYear()}-${n.getMonth()}-${n.getDate()}|${tag}`;
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return (h % (2 * spanMin + 1)) - spanMin;
+  return h % (Math.min(spanMin, 59) + 1);
 }
-function activeWindow() {
-  const A = CFG.activeHours || {};
-  if (!A.enabled) return null;
-  const from = hhmmToMin(A.from), to = hhmmToMin(A.to);
-  if (from == null || to == null) return null;
-  const j = A.jitterMin ?? 0;
-  return {
-    from: ((from + dayJitter('from', j)) % 1440 + 1440) % 1440,
-    to:   ((to   + dayJitter('to',   j)) % 1440 + 1440) % 1440,
-  };
+function inActiveHours(when) {
+  const grid = scheduleGrid();
+  if (!grid) return true;                    // расписание выключено
+  const n = when || new Date();
+  const day = n.getDay(), hour = n.getHours(), min = n.getMinutes();
+  if (!activeAt(grid, day, hour)) return false;
+
+  const jit = CFG.schedule.jitterMin ?? 0;
+  if (!jit) return true;
+  // Начало блока: просыпаемся не ровно в :00, а на несколько минут позже
+  const prevActive = hour === 0 ? activeAt(grid, day - 1, 23) : activeAt(grid, day, hour - 1);
+  if (!prevActive && min < edgeJitter(`s${day}-${hour}`, jit)) return false;
+  // Конец блока: заканчиваем чуть раньше :00
+  const nextActive = hour === 23 ? activeAt(grid, day + 1, 0) : activeAt(grid, day, hour + 1);
+  if (!nextActive && min >= 60 - edgeJitter(`e${day}-${hour}`, jit)) return false;
+  return true;
 }
-function inActiveHours() {
-  const w = activeWindow();
-  if (!w) return true;                       // окно не задано - работаем всегда
-  const n = new Date();
-  const cur = n.getHours() * 60 + n.getMinutes();
-  // окно может пересекать полночь (например 09:00-01:30)
-  return w.from <= w.to ? (cur >= w.from && cur < w.to)
-                        : (cur >= w.from || cur < w.to);
+// Человекочитаемое расписание на сегодня - для панели и лога.
+function todayWindows() {
+  const grid = scheduleGrid();
+  if (!grid) return null;
+  const day = new Date().getDay();
+  const out = [];
+  let start = null;
+  for (let h = 0; h <= 24; h++) {
+    const on = h < 24 && activeAt(grid, day, h);
+    if (on && start == null) start = h;
+    if (!on && start != null) {
+      out.push(`${String(start).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:00`);
+      start = null;
+    }
+  }
+  return out.length ? out.join(', ') : 'сегодня выходной';
+}
+
+// Настройки, изменённые с панели, переживают перезапуск: пишем их в тот
+// же config.json. Сначала во временный файл, потом переименование -
+// иначе прерванная запись оставила бы файл без настроек, и исполнитель
+// не поднялся бы. Без BOM: его переживает наш парсер, но не чужие.
+function saveConfig() {
+  const tmp = CFG_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(CFG, null, 2), { encoding: 'utf8' });
+  fs.renameSync(tmp, CFG_PATH);
 }
 
 function log(line) {
@@ -164,7 +216,17 @@ async function browser() {
   if (ctx) return;
   ctx = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(CFG.headless !== false));
   page = ctx.pages()[0] || await ctx.newPage();
+  // Окно могут закрыть крестиком - тогда ctx мёртв, и следующая ставка
+  // должна поднять новый, а не биться в закрытый контекст.
+  ctx.on('close', () => { ctx = null; page = null; });
 }
+async function closeBrowser() {
+  if (!ctx) return;
+  const c = ctx;
+  ctx = null; page = null;
+  await c.close().catch(() => {});
+}
+function browserOpen() { return !!ctx; }
 
 // ── клик «как человек» ──
 // Playwright по умолчанию бьёт точно в геометрический центр элемента и
@@ -451,7 +513,9 @@ async function pump() {
       // позиция могла открыться, и считать иначе значило бы рисковать
       // превышением биржевого лимита.
       const counts = ['placed', 'placed-unconfirmed', 'placed-unverified'];
-      if (counts.includes(r.status) || r.status === 'dry-run') state.placed.push(Date.now());
+      if (counts.includes(r.status) || r.status === 'dry-run') {
+        state.placed.push({ t: Date.now(), dir: sig.direction });
+      }
       if (counts.includes(r.status)) state.betsToday++;
       state.consecutiveErrors = 0;
     }
@@ -480,6 +544,8 @@ async function pump() {
 // дрались бы за страницу. Значит, любая его пауза откладывает пришедший
 // сигнал. Поэтому ждём не сплошняком, а поглядывая на очередь: как
 // только там что-то появилось, сворачиваемся и отдаём страницу ставке.
+const IDLE_ACTIONS = ['switch-asset', 'history', 'scroll', 'timeframe'];
+
 async function idleWait(ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -497,8 +563,14 @@ async function idleAction() {
   if (!inActiveHours()) return;
   if (process.env.TEST_MODE === '1') return;
 
+  // Набор действий выбирается в панели: не всякий вариант уместен
+  // (историю, например, можно смотреть и вручную).
+  const pool = (Array.isArray(I.actions) && I.actions.length ? I.actions : IDLE_ACTIONS)
+    .filter(a => IDLE_ACTIONS.includes(a));
+  if (!pool.length) return;
+
   state.busy = true;
-  const act = ['switch-asset', 'history', 'scroll', 'timeframe'][randInt(0, 3)];
+  const act = pool[randInt(0, pool.length - 1)];
   try {
     await browser();
     if (!/mexc\.com/.test(page.url())) {
@@ -586,11 +658,117 @@ function snapshot() {
     execTimings: CFG.execTimings || [10],
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
-    idleRotation: (CFG.idleRotation || {}).enabled !== false,
     lastIdle: state.lastIdle,
     activeNow: inActiveHours(),
-    activeWindow: (() => { const w = activeWindow(); return w ? `${fmtMin(w.from)}-${fmtMin(w.to)}` : null; })(),
+    todayWindows: todayWindows(),
+    browserOpen: browserOpen(),
+    busy: state.busy,
+    // всё, что редактируется в панели, отдаём одним куском
+    settings: {
+      stakes: { ETH: stakeFor('ETH'), BTC: stakeFor('BTC') },
+      stakeLimits: { ETH: stakeMax('ETH'), BTC: stakeMax('BTC') },
+      dirLimits: { UP: dirLimit('UP'), DOWN: dirLimit('DOWN') },
+      maxOpenBets: CFG.maxOpenBets ?? 5,
+      maxBetsPerDay: CFG.maxBetsPerDay ?? 40,
+      minPayout: CFG.minPayout ?? 80,
+      slotWindowMin: CFG.slotWindowMin ?? 11,
+      humanize: CFG.humanize !== false,
+      schedule: {
+        enabled: !!(CFG.schedule || {}).enabled,
+        hours: scheduleGrid() || (Array.isArray((CFG.schedule || {}).hours) && CFG.schedule.hours.length === 7
+          ? CFG.schedule.hours : Array(7).fill('1'.repeat(24))),
+        jitterMin: (CFG.schedule || {}).jitterMin ?? 0,
+      },
+      idleRotation: {
+        enabled: (CFG.idleRotation || {}).enabled !== false,
+        everyMinFrom: (CFG.idleRotation || {}).everyMinFrom ?? 7,
+        everyMinTo: (CFG.idleRotation || {}).everyMinTo ?? 26,
+        actions: (CFG.idleRotation || {}).actions || IDLE_ACTIONS,
+        allActions: IDLE_ACTIONS,
+      },
+    },
+    dirUsed: { UP: dirSlots('UP'), DOWN: dirSlots('DOWN') },
+    dayNames: DAY_NAMES,
   };
+}
+
+// Настройки из панели. Каждое поле проверяем и зажимаем в границы:
+// в панель ходят через туннель, да и промахнуться в поле легко, а
+// «ставка 100000» или «лимит -3» сломали бы исполнение молча.
+const clamp = (v, lo, hi, dflt) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+};
+
+function applySettings(s) {
+  const changed = [];
+  if (s.stakes) {
+    CFG.stakes = CFG.stakes || {};
+    for (const a of ['ETH', 'BTC']) {
+      if (s.stakes[a] == null) continue;
+      const v = Math.round(clamp(s.stakes[a], 1, stakeMax(a), stakeFor(a)));
+      if (v !== stakeFor(a)) changed.push(`ставка ${a} ${stakeFor(a)}→${v}`);
+      CFG.stakes[a] = v;
+    }
+  }
+  if (s.dirLimits) {
+    CFG.dirLimits = CFG.dirLimits || {};
+    for (const d of ['UP', 'DOWN']) {
+      if (s.dirLimits[d] == null) continue;
+      const v = Math.round(clamp(s.dirLimits[d], 1, 5, dirLimit(d)));
+      if (v !== dirLimit(d)) changed.push(`лимит ${d} ${dirLimit(d)}→${v}`);
+      CFG.dirLimits[d] = v;
+    }
+  }
+  if (s.minPayout != null) {
+    const v = clamp(s.minPayout, 50, 100, CFG.minPayout ?? 80);
+    if (v !== (CFG.minPayout ?? 80)) changed.push(`payout ${CFG.minPayout ?? 80}→${v}`);
+    CFG.minPayout = v;
+  }
+  if (s.maxBetsPerDay != null) {
+    const v = Math.round(clamp(s.maxBetsPerDay, 1, 500, CFG.maxBetsPerDay ?? 40));
+    if (v !== (CFG.maxBetsPerDay ?? 40)) changed.push(`ставок в день ${CFG.maxBetsPerDay ?? 40}→${v}`);
+    CFG.maxBetsPerDay = v;
+  }
+  if (s.humanize != null) {
+    CFG.humanize = !!s.humanize;
+    changed.push('человечный клик ' + (CFG.humanize ? 'вкл' : 'выкл'));
+  }
+  if (s.schedule) {
+    CFG.schedule = CFG.schedule || {};
+    if (s.schedule.enabled != null) {
+      CFG.schedule.enabled = !!s.schedule.enabled;
+      changed.push('расписание ' + (CFG.schedule.enabled ? 'вкл' : 'выкл'));
+    }
+    if (Array.isArray(s.schedule.hours) && s.schedule.hours.length === 7) {
+      // только '0'/'1', ровно 24 символа - иначе сетка молча съедет
+      CFG.schedule.hours = s.schedule.hours.map(r =>
+        String(r).replace(/[^01]/g, '0').padEnd(24, '0').slice(0, 24));
+      changed.push('сетка часов обновлена');
+    }
+    if (s.schedule.jitterMin != null) {
+      CFG.schedule.jitterMin = Math.round(clamp(s.schedule.jitterMin, 0, 59, 0));
+    }
+  }
+  if (s.idleRotation) {
+    CFG.idleRotation = CFG.idleRotation || {};
+    const I = CFG.idleRotation;
+    if (s.idleRotation.enabled != null) {
+      I.enabled = !!s.idleRotation.enabled;
+      changed.push('холостые действия ' + (I.enabled ? 'вкл' : 'выкл'));
+    }
+    if (s.idleRotation.everyMinFrom != null) I.everyMinFrom = clamp(s.idleRotation.everyMinFrom, 1, 240, 7);
+    if (s.idleRotation.everyMinTo != null) I.everyMinTo = clamp(s.idleRotation.everyMinTo, 1, 240, 26);
+    // «от» больше «до» - интервал был бы пустым, меняем местами
+    if (I.everyMinFrom > I.everyMinTo) { const t = I.everyMinFrom; I.everyMinFrom = I.everyMinTo; I.everyMinTo = t; }
+    if (Array.isArray(s.idleRotation.actions)) {
+      I.actions = s.idleRotation.actions.filter(a => IDLE_ACTIONS.includes(a));
+      changed.push('набор холостых действий: ' + (I.actions.join(', ') || 'пусто'));
+    }
+  }
+  saveConfig();
+  if (changed.length) log('панель: ' + changed.join('; '));
+  return changed;
 }
 
 const server = http.createServer((req, res) => {
@@ -641,6 +819,34 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
+    if (req.method === 'POST' && action === 'settings') {
+      let b = '';
+      req.on('data', d => { b += d; if (b.length > 16384) req.destroy(); });
+      req.on('end', () => {
+        let m; try { m = JSON.parse(b); } catch (e) { return sendJson(400, { error: 'bad json' }); }
+        try { sendJson(200, { ok: true, changed: applySettings(m), ...snapshot() }); }
+        catch (e) { log('не удалось сохранить настройки: ' + e.message); sendJson(500, { error: e.message }); }
+      });
+      return;
+    }
+    // Окно биржи открываем/закрываем руками: держать его сутками не
+    // обязательно, а посмотреть глазами иногда нужно.
+    if (req.method === 'POST' && action === 'browser-open') {
+      if (state.busy) return sendJson(409, { error: 'исполнитель занят' });
+      browser().then(async () => {
+        if (!/mexc\.com/.test(page.url())) {
+          await page.goto(CFG.urls.ETH, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+        }
+        log('панель: окно биржи открыто');
+        sendJson(200, { ok: true });
+      }).catch(e => { log('окно биржи не открылось: ' + e.message); sendJson(500, { error: e.message }); });
+      return;
+    }
+    if (req.method === 'POST' && action === 'browser-close') {
+      if (state.busy) return sendJson(409, { error: 'исполнитель занят' });
+      closeBrowser().then(() => { log('панель: окно биржи закрыто'); sendJson(200, { ok: true }); });
+      return;
+    }
     return sendJson(404, { error: 'unknown action' });
   }
 
@@ -687,8 +893,7 @@ const server = http.createServer((req, res) => {
 
     // тихие часы: аккаунт не торгует круглосуточно
     if (!inActiveHours()) {
-      const w = activeWindow();
-      log(`пропуск: тихие часы (окно сегодня ${fmtMin(w.from)}-${fmtMin(w.to)})`);
+      log(`пропуск: тихие часы (сегодня ${todayWindows()})`);
       logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-quiet' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, skipped: 'quiet-hours' }));
@@ -700,6 +905,16 @@ const server = http.createServer((req, res) => {
       log('пропуск: исполнитель на паузе');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, skipped: 'paused' }));
+      return;
+    }
+
+    // лимит ставок одного направления в окне
+    const dirBusy = dirSlots(sig.direction) + state.queue.filter(q => q.direction === sig.direction).length;
+    if (dirBusy >= dirLimit(sig.direction)) {
+      log(`пропуск: ${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне ${CFG.slotWindowMin ?? 11}мин`);
+      logBet({ ...sig, timing: sig.timing, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-dir-limit' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, skipped: 'dir-limit' }));
       return;
     }
 
@@ -799,8 +1014,8 @@ if (process.argv[2] === 'login') {
     log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
     log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
-    const w = activeWindow();
-    log(`окно активности: ${w ? fmtMin(w.from) + '-' + fmtMin(w.to) + ' (местное время)' : 'круглосуточно'}`
+    const tw = todayWindows();
+    log(`расписание сегодня: ${tw ? tw + ' (местное время)' : 'круглосуточно'}`
       + ` | человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
       + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`);
     scheduleIdle();

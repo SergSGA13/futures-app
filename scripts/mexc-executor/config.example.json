@@ -5,9 +5,11 @@
   "dryRun": true,
 
   "stakes": { "ETH": 150, "BTC": 250 },
+  "stakeLimits": { "ETH": 150, "BTC": 250 },
 
   "minPayout": 80,
   "maxOpenBets": 5,
+  "dirLimits": { "UP": 5, "DOWN": 5 },
   "slotWindowMin": 11,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
@@ -15,8 +17,25 @@
   "execTimings": [10],
 
   "humanize": true,
-  "activeHours": { "enabled": false, "from": "08:00", "to": "23:30", "jitterMin": 20 },
-  "idleRotation": { "enabled": true, "everyMinFrom": 7, "everyMinTo": 26 },
+  "schedule": {
+    "enabled": false,
+    "jitterMin": 20,
+    "hours": [
+      "000000001111111111111111",
+      "000000001111111111111111",
+      "000000001111111111111111",
+      "000000001111111111111111",
+      "000000001111111111111111",
+      "000000001111111111111111",
+      "000000001111111111111111"
+    ]
+  },
+  "idleRotation": {
+    "enabled": true,
+    "everyMinFrom": 7,
+    "everyMinTo": 26,
+    "actions": ["switch-asset", "history", "scroll", "timeframe"]
+  },
 
   "headless": false,
   "browserPath": "",

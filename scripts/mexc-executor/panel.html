@@ -12,15 +12,15 @@
   }
   * { box-sizing:border-box; margin:0; padding:0; }
   body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; padding:20px; }
-  .wrap { max-width:1100px; margin:0 auto; }
+  .wrap { max-width:1180px; margin:0 auto; }
   h1 { font-size:18px; margin-bottom:2px; }
   .sub { color:var(--muted); font-size:12px; margin-bottom:18px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin-bottom:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; margin-bottom:14px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
   .card h2 { font-size:12px; color:var(--muted); font-weight:600; margin-bottom:10px; text-transform:uppercase; letter-spacing:.4px; }
   .big { font-size:24px; font-weight:800; }
-  .row { display:flex; justify-content:space-between; padding:4px 0; font-size:13px; }
-  .row span:first-child { color:var(--muted); }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:13px; gap:8px; }
+  .row > span:first-child { color:var(--muted); }
   .pill { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
   .ok { background:rgba(78,255,160,.15); color:var(--green); }
   .warn { background:rgba(255,209,102,.15); color:var(--yellow); }
@@ -28,6 +28,7 @@
   button { background:rgba(102,163,255,.12); color:var(--text); border:1px solid var(--line);
            border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
   button:hover { background:rgba(102,163,255,.22); }
+  button:disabled { opacity:.45; cursor:default; }
   button.danger { background:rgba(255,82,114,.12); color:var(--red); border-color:rgba(255,82,114,.3); }
   button.go { background:rgba(78,255,160,.12); color:var(--green); border-color:rgba(78,255,160,.3); }
   .btns { display:flex; gap:8px; flex-wrap:wrap; }
@@ -38,9 +39,29 @@
   .s-dry { color:var(--blue); }
   .s-error { color:var(--red); font-weight:700; }
   .s-skip { color:var(--muted); }
-  select { background:var(--card); color:var(--text); border:1px solid var(--line);
-           border-radius:8px; padding:8px; font-size:13px; }
+  select, input[type=number] {
+    background:#0E1226; color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:7px 9px; font-size:13px; font-family:inherit;
+  }
+  input[type=number] { width:86px; text-align:right; }
+  input[type=range] { width:130px; accent-color:var(--blue); }
+  label.chk { display:flex; align-items:center; gap:7px; font-size:13px; padding:3px 0; cursor:pointer; }
+  input[type=checkbox] { accent-color:var(--blue); width:15px; height:15px; cursor:pointer; }
   .note { color:var(--muted); font-size:11.5px; margin-top:8px; line-height:1.5; }
+  .hint { color:var(--muted); font-size:11.5px; }
+
+  /* недельная сетка часов */
+  .sched { overflow-x:auto; padding-bottom:4px; }
+  .sched table { border-collapse:separate; border-spacing:2px; width:auto; }
+  .sched th { padding:0 3px; font-size:10px; text-align:center; border:none; color:var(--muted); }
+  .sched td { padding:0; border:none; }
+  .cell { width:22px; height:20px; border-radius:4px; background:rgba(255,255,255,.05);
+          cursor:pointer; border:1px solid transparent; }
+  .cell.on { background:rgba(78,255,160,.32); border-color:rgba(78,255,160,.45); }
+  .cell.now { outline:2px solid var(--yellow); outline-offset:-2px; }
+  .dayname { color:var(--muted); font-size:11px; padding-right:6px; text-align:right; white-space:nowrap; }
+  .saved { color:var(--green); font-size:11.5px; opacity:0; transition:opacity .25s; }
+  .saved.show { opacity:1; }
 </style>
 </head>
 <body>
@@ -62,26 +83,24 @@
     <div class="card">
       <h2>Слоты и лимиты</h2>
       <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
+      <div class="row"><span>UP в окне</span><b id="upUsed">—</b></div>
+      <div class="row"><span>DOWN в окне</span><b id="downUsed">—</b></div>
       <div class="row"><span>В очереди</span><b id="queue">—</b></div>
       <div class="row"><span>За сегодня</span><b id="today">—</b></div>
       <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
     </div>
 
     <div class="card">
-      <h2>Настройки</h2>
-      <div class="row"><span>Ставка ETH</span><b id="stETH">—</b></div>
-      <div class="row"><span>Ставка BTC</span><b id="stBTC">—</b></div>
-      <div class="row"><span>Мин. payout</span><b id="minPay">—</b></div>
-      <div class="row"><span>Таймфреймы</span><b id="tf">—</b></div>
-    </div>
-
-    <div class="card">
-      <h2>Поведение</h2>
-      <div class="row"><span>Окно активности</span><b id="win">—</b></div>
+      <h2>Окно биржи</h2>
+      <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
+      <div class="row"><span>Расписание сегодня</span><b id="win" style="font-size:12px">—</b></div>
       <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
-      <div class="row"><span>Клик с разбросом</span><b id="human">—</b></div>
-      <div class="row"><span>Холостые действия</span><b id="idle">—</b></div>
-      <div class="note" id="lastIdle"></div>
+      <div class="btns" style="margin-top:10px">
+        <button id="btnOpen">Открыть окно</button>
+        <button id="btnClose">Закрыть</button>
+      </div>
+      <div class="note">Окно нужно только чтобы посмотреть глазами: перед
+        ставкой исполнитель открывает его сам.</div>
     </div>
 
     <div class="card">
@@ -91,7 +110,68 @@
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
       </div>
       <button class="go" id="btnManual">Поставить</button>
-      <div class="note">Проходит те же проверки, что сигнал из вебхука: payout, слоты, режим.</div>
+      <div class="note">Payout со страницы и режим (dry-run) проверяются
+        как обычно, а лимиты слотов и направления ручная ставка обходит:
+        ты нажал сам, значит так и надо.</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
+      <div class="row"><span>Ставка ETH, USDT</span>
+        <input type="number" id="stETH" min="1" step="1"></div>
+      <div class="row"><span>Ставка BTC, USDT</span>
+        <input type="number" id="stBTC" min="1" step="1"></div>
+      <div class="row"><span>Мин. payout, %</span>
+        <input type="number" id="minPay" min="50" max="100" step="1"></div>
+      <div class="row"><span>Ставок в день</span>
+        <input type="number" id="perDay" min="1" max="500" step="1"></div>
+      <div class="note" id="stakeHint"></div>
+      <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
+    </div>
+
+    <div class="card">
+      <h2>Приоритет направлений <span class="saved" id="savedDir">сохранено</span></h2>
+      <div class="row"><span>UP в окне, не больше</span>
+        <select id="limUp"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <div class="row"><span>DOWN в окне, не больше</span>
+        <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <div class="note" id="dirHint"></div>
+      <button style="margin-top:10px" id="btnSaveDir">Сохранить</button>
+    </div>
+
+    <div class="card">
+      <h2>Холостые действия <span class="saved" id="savedIdle">сохранено</span></h2>
+      <label class="chk"><input type="checkbox" id="idleOn"> Включены</label>
+      <div id="idleActs" style="margin:6px 0 4px"></div>
+      <div class="row"><span>Раз в, минут</span>
+        <span><input type="number" id="idleFrom" min="1" max="240" step="1" style="width:62px">
+        –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
+      <div class="row"><span>Клик с разбросом</span>
+        <input type="checkbox" id="humanize"></div>
+      <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
+      <div class="note" id="lastIdle"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
+    <div class="row" style="margin-bottom:10px">
+      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+      <span><span class="hint">разброс краёв, мин</span>
+        <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+    </div>
+    <div class="sched"><table id="schedGrid"></table></div>
+    <div class="note">Клик по клетке переключает час, протяжка мышью красит
+      несколько. Клик по названию дня - весь день. Жёлтая рамка - текущий
+      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
+    <div class="btns" style="margin-top:10px">
+      <button id="btnSaveSched">Сохранить</button>
+      <button id="btnAll">Все часы</button>
+      <button id="btnWorkday">08:00–23:00</button>
+      <button id="btnNone">Снять всё</button>
     </div>
   </div>
 
@@ -108,6 +188,10 @@
 // Секрет берём из адреса панели: /panel/<secret>
 const SECRET = location.pathname.split('/')[2];
 const api = (a, opt) => fetch(`/api/${SECRET}/${a}`, opt).then(r => r.json());
+const post = (a, body) => api(a, body === undefined
+  ? { method: 'POST' }
+  : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const $ = id => document.getElementById(id);
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
@@ -115,52 +199,187 @@ const statusClass = (s) =>
   s === 'dry-run' ? 's-dry' :
   s === 'error' ? 's-error' : 's-skip';
 
-function fmtTime(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return isNaN(d) ? iso : d.toLocaleTimeString('ru-RU');
+function fmtTime(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d) ? v : d.toLocaleTimeString('ru-RU');
 }
+function flash(id) {
+  const el = $(id);
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1400);
+}
+
+// ── недельная сетка ──
+// Держим её в своей переменной: обновление состояния каждые 5 секунд не должно
+// затирать клетки, которые пользователь красит прямо сейчас.
+let sched = Array(7).fill('0'.repeat(24));
+let schedDirty = false;          // есть несохранённые правки
+let painting = null;             // '1'/'0' - что красим протяжкой
+const DAYS = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+const ORDER = [1,2,3,4,5,6,0];   // показываем с понедельника
+
+function setCell(day, hour, val) {
+  const r = sched[day].split('');
+  r[hour] = val;
+  sched[day] = r.join('');
+  schedDirty = true;
+}
+
+function buildGrid() {
+  const t = $('schedGrid');
+  const now = new Date();
+  let html = '<tr><th></th>';
+  for (let h = 0; h < 24; h++) html += `<th>${h}</th>`;
+  html += '</tr>';
+  for (const d of ORDER) {
+    html += `<tr><td class="dayname" data-day="${d}" style="cursor:pointer">${DAYS[d]}</td>`;
+    for (let h = 0; h < 24; h++) {
+      const on = sched[d][h] === '1' ? ' on' : '';
+      const cur = (d === now.getDay() && h === now.getHours()) ? ' now' : '';
+      html += `<td><div class="cell${on}${cur}" data-day="${d}" data-hour="${h}"></div></td>`;
+    }
+    html += '</tr>';
+  }
+  t.innerHTML = html;
+}
+
+$('schedGrid').addEventListener('mousedown', e => {
+  const day = e.target.dataset.day;
+  if (day == null) return;
+  if (e.target.classList.contains('dayname')) {       // клик по дню - весь день
+    const d = +day;
+    const allOn = sched[d] === '1'.repeat(24);
+    sched[d] = (allOn ? '0' : '1').repeat(24);
+    schedDirty = true;
+    buildGrid();
+    return;
+  }
+  if (!e.target.classList.contains('cell')) return;
+  e.preventDefault();
+  const h = +e.target.dataset.hour;
+  painting = sched[+day][h] === '1' ? '0' : '1';
+  setCell(+day, h, painting);
+  buildGrid();
+});
+$('schedGrid').addEventListener('mouseover', e => {
+  if (painting == null || !e.target.classList.contains('cell')) return;
+  setCell(+e.target.dataset.day, +e.target.dataset.hour, painting);
+  e.target.classList.toggle('on', painting === '1');
+});
+document.addEventListener('mouseup', () => { painting = null; });
+
+function fillGrid(pattern) {
+  sched = Array(7).fill(pattern);
+  schedDirty = true;
+  buildGrid();
+}
+$('btnAll').onclick = () => fillGrid('1'.repeat(24));
+$('btnNone').onclick = () => fillGrid('0'.repeat(24));
+$('btnWorkday').onclick = () => fillGrid('0'.repeat(8) + '1'.repeat(15) + '0');
+
+// ── холостые действия ──
+const ACT_NAMES = {
+  'switch-asset': 'Сменить актив (ETH ↔ BTC)',
+  'timeframe':    'Переключить таймфрейм',
+  'history':      'Открыть историю сделок',
+  'scroll':       'Полистать страницу',
+};
+let idleBuilt = false;
+function buildIdleActions(all, chosen) {
+  if (idleBuilt) return;
+  idleBuilt = true;
+  $('idleActs').innerHTML = all.map(a =>
+    `<label class="chk"><input type="checkbox" class="idleAct" value="${a}"
+      ${chosen.includes(a) ? 'checked' : ''}> ${ACT_NAMES[a] || a}</label>`).join('');
+}
+
+// Правки, ещё не сохранённые, не должны затираться автообновлением раз
+// в 5 секунд. Ловим их по событиям input/change, а НЕ по фокусу: фокус
+// не покрывает выпадающие списки и галочки (галочку можно поставить и
+// не трогая клавиатуру, а select в некоторых сценариях меняется без
+// фокуса вовсе) - и значение возвращалось бы к серверному прямо
+// из-под пальцев.
+const CARDS = {
+  stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
+  dir:    ['limUp', 'limDown'],
+  idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
+  sched:  ['schedOn', 'jitter'],
+};
+const dirty = new Set();
+Object.values(CARDS).flat().forEach(id => {
+  const el = $(id);
+  ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add(id)));
+});
+function setVal(id, v) { if (!dirty.has(id)) $(id).value = v; }
+function setChk(id, v) { if (!dirty.has(id)) $(id).checked = v; }
+// Снимаем пометку только с полей сохранённой карточки: у соседней могут
+// быть свои несохранённые правки. Отложенный refresh нужен, чтобы
+// показать значение, прижатое сервером к границе.
+function clearCard(card) { CARDS[card].forEach(id => dirty.delete(id)); }
+function afterSave(card) { clearCard(card); refresh(); setTimeout(refresh, 700); }
 
 async function refresh() {
   let st;
   try { st = await api('state'); }
-  catch (e) { document.getElementById('sub').textContent = 'нет связи с исполнителем'; return; }
+  catch (e) { $('sub').textContent = 'нет связи с исполнителем'; return; }
+  const s = st.settings;
 
-  const live = !st.dryRun && !st.paused;
-  document.getElementById('mode').innerHTML = st.paused
+  $('mode').innerHTML = st.paused
     ? '<span class="pill warn">ПАУЗА</span>'
     : (st.dryRun ? '<span class="pill warn">DRY-RUN</span>' : '<span class="pill ok">БОЕВОЙ</span>');
-  document.getElementById('modeNote').textContent = st.dryRun
+  $('modeNote').textContent = st.dryRun
     ? 'Проходит весь путь до кнопки, но не нажимает её.'
     : (st.paused ? 'Сигналы принимаются, но не исполняются.' : 'Ставки идут на реальные деньги.');
+  $('btnPause').textContent = st.paused ? 'Снять с паузы' : 'Пауза';
+  $('btnPause').className = st.paused ? 'go' : '';
+  $('btnDry').textContent = st.dryRun ? 'В боевой режим' : 'В dry-run';
+  $('btnDry').className = st.dryRun ? 'danger' : '';
 
-  document.getElementById('btnPause').textContent = st.paused ? 'Снять с паузы' : 'Пауза';
-  document.getElementById('btnPause').className = st.paused ? 'go' : '';
-  document.getElementById('btnDry').textContent = st.dryRun ? 'В боевой режим' : 'В dry-run';
-  document.getElementById('btnDry').className = st.dryRun ? 'danger' : '';
+  $('slots').textContent = `${st.slots} / ${s.maxOpenBets}`;
+  $('upUsed').textContent = `${st.dirUsed.UP} / ${s.dirLimits.UP}`;
+  $('downUsed').textContent = `${st.dirUsed.DOWN} / ${s.dirLimits.DOWN}`;
+  $('queue').textContent = st.queue;
+  $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
+  $('errs').textContent = st.consecutiveErrors;
 
-  document.getElementById('slots').textContent = `${st.slots} / ${st.maxOpenBets}`;
-  document.getElementById('queue').textContent = st.queue;
-  document.getElementById('today').textContent = `${st.betsToday} / ${st.maxBetsPerDay}`;
-  document.getElementById('errs').textContent = st.consecutiveErrors;
-  document.getElementById('stETH').textContent = st.stakes.ETH + ' USDT';
-  document.getElementById('stBTC').textContent = st.stakes.BTC + ' USDT';
-  document.getElementById('minPay').textContent = st.minPayout + '%';
-  document.getElementById('tf').textContent = st.execTimings.map(x => x + 'м').join(', ');
+  $('browserState').innerHTML = st.browserOpen
+    ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
+  $('btnOpen').disabled = st.browserOpen || st.busy;
+  $('btnClose').disabled = !st.browserOpen || st.busy;
+  $('win').textContent = st.todayWindows || 'круглосуточно';
+  $('activeNow').innerHTML = st.activeNow
+    ? '<span class="pill ok">активен</span>' : '<span class="pill warn">тихие часы</span>';
 
-  document.getElementById('win').textContent = st.activeWindow || 'круглосуточно';
-  document.getElementById('activeNow').innerHTML = st.activeNow
-    ? '<span class="pill ok">активен</span>'
-    : '<span class="pill warn">тихие часы</span>';
-  document.getElementById('human').textContent = st.humanize ? 'вкл' : 'выкл';
-  document.getElementById('idle').textContent = st.idleRotation ? 'вкл' : 'выкл';
-  document.getElementById('lastIdle').textContent = st.lastIdle
-    ? `последнее: ${st.lastIdle.act} в ${fmtTime(st.lastIdle.at)}`
+  setVal('stETH', s.stakes.ETH); setVal('stBTC', s.stakes.BTC);
+  $('stETH').max = s.stakeLimits.ETH; $('stBTC').max = s.stakeLimits.BTC;
+  $('stakeHint').textContent =
+    `Границы биржи: ETH 1–${s.stakeLimits.ETH}, BTC 1–${s.stakeLimits.BTC} USDT. `
+    + 'Значение вне границ будет прижато к ближайшей.';
+  setVal('minPay', s.minPayout); setVal('perDay', s.maxBetsPerDay);
+  setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
+  $('dirHint').textContent =
+    `Сколько ставок одной стороны пускаем в окно ${s.slotWindowMin} мин. `
+    + 'Подряд идущие сигналы одного направления - обычно один и тот же заход, '
+    + 'и пять ставок на него просто впятеро увеличивают риск.';
+
+  setChk('idleOn', s.idleRotation.enabled);
+  setChk('humanize', s.humanize);
+  setVal('idleFrom', s.idleRotation.everyMinFrom);
+  setVal('idleTo', s.idleRotation.everyMinTo);
+  buildIdleActions(s.idleRotation.allActions, s.idleRotation.actions);
+  $('lastIdle').textContent = st.lastIdle
+    ? `последнее: ${ACT_NAMES[st.lastIdle.act] || st.lastIdle.act} в ${fmtTime(st.lastIdle.at)}`
     : 'холостых действий ещё не было';
-  document.getElementById('sub').textContent =
-    `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено ${new Date().toLocaleTimeString('ru-RU')}`;
 
-  const tb = document.getElementById('bets');
+  setChk('schedOn', s.schedule.enabled);
+  setVal('jitter', s.schedule.jitterMin);
+  if (!schedDirty) { sched = s.schedule.hours.slice(); buildGrid(); }
+
+  $('sub').textContent = `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено `
+    + new Date().toLocaleTimeString('ru-RU') + (schedDirty ? ' · есть несохранённые правки расписания' : '');
+
+  const tb = $('bets');
   if (!st.bets || !st.bets.length) {
     tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">пока ставок не было</td></tr>';
   } else {
@@ -173,29 +392,59 @@ async function refresh() {
   }
 }
 
-document.getElementById('btnPause').onclick = async () => {
+// ── действия ──
+$('btnPause').onclick = async () => {
   const st = await api('state');
-  await api(st.paused ? 'resume' : 'pause', { method: 'POST' });
+  await post(st.paused ? 'resume' : 'pause');
   refresh();
 };
-document.getElementById('btnDry').onclick = async () => {
+$('btnDry').onclick = async () => {
   const st = await api('state');
   if (st.dryRun && !confirm('Включить БОЕВОЙ режим? Ставки пойдут на реальные деньги.')) return;
-  await api(st.dryRun ? 'dry-off' : 'dry-on', { method: 'POST' });
+  await post(st.dryRun ? 'dry-off' : 'dry-on');
   refresh();
 };
-document.getElementById('btnManual').onclick = async () => {
-  const asset = document.getElementById('mAsset').value;
-  const direction = document.getElementById('mDir').value;
+$('btnManual').onclick = async () => {
+  const asset = $('mAsset').value, direction = $('mDir').value;
   if (!confirm(`Поставить ${asset} ${direction}?`)) return;
-  await api('manual', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset, direction }),
-  });
+  await post('manual', { asset, direction });
   setTimeout(refresh, 800);
 };
+$('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('browser-open'); refresh(); };
+$('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };
 
+$('btnSaveStakes').onclick = async () => {
+  await post('settings', {
+    stakes: { ETH: +$('stETH').value, BTC: +$('stBTC').value },
+    minPayout: +$('minPay').value,
+    maxBetsPerDay: +$('perDay').value,
+  });
+  flash('savedStakes'); afterSave('stakes');
+};
+$('btnSaveDir').onclick = async () => {
+  await post('settings', { dirLimits: { UP: +$('limUp').value, DOWN: +$('limDown').value } });
+  flash('savedDir'); afterSave('dir');
+};
+$('btnSaveIdle').onclick = async () => {
+  await post('settings', {
+    humanize: $('humanize').checked,
+    idleRotation: {
+      enabled: $('idleOn').checked,
+      everyMinFrom: +$('idleFrom').value,
+      everyMinTo: +$('idleTo').value,
+      actions: [...document.querySelectorAll('.idleAct:checked')].map(c => c.value),
+    },
+  });
+  flash('savedIdle'); afterSave('idle');
+};
+$('btnSaveSched').onclick = async () => {
+  await post('settings', {
+    schedule: { enabled: $('schedOn').checked, hours: sched, jitterMin: +$('jitter').value },
+  });
+  schedDirty = false; flash('savedSched'); afterSave('sched');
+};
+
+buildGrid();
 refresh();
 setInterval(refresh, 5000);
 </script>

@@ -3,8 +3,24 @@ const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
   tg.expand();
-  tg.setHeaderColor('#0A0B14');
-  tg.setBackgroundColor('#0A0B14');
+  tg.setHeaderColor('#05060E');
+  tg.setBackgroundColor('#05060E');
+}
+
+// ===== НЕОНОВАЯ КРИВАЯ PNL =====
+// Циан слева → маджента справа, поперёк области графика.
+// Отдаём ФУНКЦИЮ, а не готовый градиент: на момент создания графика
+// холст ещё нулевой ширины, и createLinearGradient(0,0,W,0) при W=0 дал
+// бы вырожденный градиент - линия оказалась бы одного цвета.
+// Chart.js вызывает такие функции заново на каждой перерисовке.
+function cyberLine(c) {
+  const area = c.chart.chartArea;
+  if (!area) return '#22E8FF';
+  const g = c.chart.ctx.createLinearGradient(area.left, 0, area.right, 0);
+  g.addColorStop(0, '#22E8FF');
+  g.addColorStop(0.55, '#66A3FF');
+  g.addColorStop(1, '#FF2E97');
+  return g;
 }
 
 // ===== LANGUAGE =====
@@ -322,12 +338,13 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
-    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+    gradient.addColorStop(0, 'rgba(34, 232, 255, 0.30)');
+    gradient.addColorStop(0.55, 'rgba(102, 163, 255, 0.16)');
+    gradient.addColorStop(1, 'rgba(255, 46, 151, 0.0)');
 
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      data: { labels, datasets: [{ data: pctData, borderColor: cyberLine, backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
@@ -387,12 +404,13 @@ async function loadPnlL30dFromSignals(canvasId, key) {
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
-    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+    gradient.addColorStop(0, 'rgba(34, 232, 255, 0.30)');
+    gradient.addColorStop(0.55, 'rgba(102, 163, 255, 0.16)');
+    gradient.addColorStop(1, 'rgba(255, 46, 151, 0.0)');
 
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      data: { labels, datasets: [{ data: pctData, borderColor: cyberLine, backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
@@ -447,8 +465,9 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
     const gradient = ctx.createLinearGradient(0, 0, 0, mini ? 90 : 200);
-    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
-    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+    gradient.addColorStop(0, 'rgba(34, 232, 255, 0.30)');
+    gradient.addColorStop(0.55, 'rgba(102, 163, 255, 0.16)');
+    gradient.addColorStop(1, 'rgba(255, 46, 151, 0.0)');
 
     if (mini) {
       const lastEl = document.getElementById(canvasId + 'Value');
@@ -499,7 +518,7 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
 
     pnlChartInstances[key] = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: mini ? 1.6 : 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+      data: { labels, datasets: [{ data: pctData, borderColor: cyberLine, backgroundColor: gradient, borderWidth: mini ? 1.6 : 2, pointRadius: 0, fill: true, tension: 0.35 }] },
       plugins: mini ? [refLinesHundreds] : [],
       options: {
         responsive: true, maintainAspectRatio: false,
@@ -1633,12 +1652,13 @@ function devRenderPnlChart(sigs) {
   const ctx = document.getElementById('pnlChartL30dDev')?.getContext('2d');
   if (!ctx) return;
   const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-  gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
-  gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
+  gradient.addColorStop(0, 'rgba(34, 232, 255, 0.30)');
+  gradient.addColorStop(0.55, 'rgba(102, 163, 255, 0.16)');
+  gradient.addColorStop(1, 'rgba(255, 46, 151, 0.0)');
 
   pnlChartInstances['l30dDev'] = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+    data: { labels, datasets: [{ data: pctData, borderColor: cyberLine, backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },

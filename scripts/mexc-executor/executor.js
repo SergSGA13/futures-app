@@ -500,6 +500,9 @@ async function placeBet(sig) {
   // страховка: payout на странице (вебхук уже проверял, но payout плавает)
   const pv = await pagePayout(sig.direction);
   if (pv != null && pv < (CFG.minPayout ?? 80)) {
+    // Раньше этот исход писался только в bets.csv, и в логе ставка
+    // просто обрывалась после «панель готова» - выглядело как зависание.
+    log(`пропуск ${sig.asset} ${sig.direction}: payout на странице ${pv}% < ${CFG.minPayout ?? 80}%`);
     await shot('payout-low');
     return { status: 'skip-payout', payoutPage: pv };
   }
@@ -527,6 +530,7 @@ async function placeBet(sig) {
 
   if (state.dryRun) {
     await shot(`dryrun-${sig.asset}-${sig.direction}`);
+    log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
     return { status: 'dry-run', payoutPage: pv };
   }
 

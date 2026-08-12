@@ -160,6 +160,16 @@
             <div class="signals-timer" id="signalTimer">-</div>
           </div>
 
+          <!-- Branch (PRO/MEXC/ALT10m) + date selector -->
+          <div class="sig-filters">
+            <div class="fs-seg compact sig-branch-seg" id="sigBranchSeg">
+              <button class="active" data-branch="PRO">PRO</button>
+              <button data-branch="MEXC">MEXC</button>
+              <button data-branch="ALT10m">ALT10</button>
+            </div>
+            <input type="date" id="sigDateInput" class="sig-date-input" />
+          </div>
+
           <!-- BTC / ETH selector + chart -->
           <div class="sig-chart-top">
             <div class="fs-seg compact sig-asset-seg" id="sigAssetSeg">

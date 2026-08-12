@@ -3237,50 +3237,87 @@ function formatTimerAgo(timeStr) {
   return `${secs}${t('sig.ago.s')} ${t('sig.ago.word')}`;
 }
 
-async function loadTodaySignals() {
+// Сырые строки нужной ветки -> унифицированный сигнал {dk, time, pair, dir, price, res}.
+// dk - дата в формате YYYY-MM-DD (как devDateKey/<input type=date>), чтобы
+// список и график сигналов могли фильтроваться по одному и тому же ключу
+// независимо от того, из какого листа (ALLsignal/MEXCsignal/BLOCKEDsignal)
+// пришла строка.
+async function fetchBranchSignals_(branch) {
+  if (branch === 'MEXC') {
+    const rows = await fetchMexcSignals();
+    if (!rows || rows.length < 2) return [];
+    return rows.slice(1).map(r => {
+      let resIdx = -1;
+      for (let i = 9; i < r.length; i++) {
+        const v = String(r[i] || '').trim();
+        if (v === 'WIN' || v === 'LOSE') { resIdx = i; break; }
+      }
+      if (resIdx < 0) return null;
+      const [datePart, timePart] = String(r[0] || '').trim().split(' ');
+      const dk = devDateKey(datePart);
+      if (!dk) return null;
+      const dir = String(r[2] || '').trim().toUpperCase();
+      return { dk, time: timePart || '', pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: r[resIdx] };
+    }).filter(Boolean);
+  }
+
+  let rows;
+  if (branch === 'ALT10m') {
+    const raw = await fetchBlockedSignals();
+    const marked = (raw && raw.length > 1) ? raw.slice(1).filter(r => r.some(c => String(c).trim() === 'ALT10m')) : [];
+    rows = marked.map(devNormalizeBlockedRow);
+  } else {
+    const raw = await fetchAllSignals();
+    rows = (raw && raw.length > 1) ? raw.slice(1) : [];
+  }
+  return rows.map(r => {
+    const res = String(r[COL_RESULT] || '').trim();
+    if (!DEV_RESOLVED.has(res)) return null;
+    const dk = devDateKey(r[COL_DATE]);
+    if (!dk) return null;
+    const dir = String(r[2] || '').trim().toUpperCase();
+    return { dk, time: String(r[COL_TIME] || '').trim(), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res };
+  }).filter(Boolean);
+}
+
+async function loadSignalsList() {
   try {
-    const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ALLsignal`;
-    const res = await fetch(url);
-    const text = await res.text();
-    const rows = parseCSV(text);
-    const today = todayStr(); // DD.MM.YYYY
-
-    const todayRows = rows.filter((r, i) => i > 0 && r[COL_DATE] === today);
-
-    // Показываем сигнал только после появления результата в таблице.
-    // Живые (ещё не закрытые) сигналы в приложении не отображаются — они идут в приватную группу PRO.
-    const RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
-    const resolvedRows = todayRows.filter(r => RESOLVED.has((r[COL_RESULT] || '').trim()));
+    const branch = SIG_CHART.branch;
+    const dateKey = SIG_CHART.date;
+    const sigs = await fetchBranchSignals_(branch);
+    const dayRows = sigs.filter(s => s.dk === dateKey).sort((a, b) => a.time.localeCompare(b.time));
 
     const list = document.getElementById('signalsList');
 
-    if (resolvedRows.length === 0) {
+    if (dayRows.length === 0) {
       list.innerHTML = `<div class="signals-empty">${t('sig.empty')}</div>`;
       document.getElementById('signalTimer').textContent = '-';
       return;
     }
 
-    // По последнему ЗАКРЫТОМУ сигналу
-    const lastRow = resolvedRows[resolvedRows.length - 1];
-    const lastTime = lastRow[COL_TIME];
-
-    // Start live timer
+    // По последнему ЗАКРЫТОМУ сигналу — живой таймер только для сегодняшней даты,
+    // для остальных дат показываем саму дату вместо "N минут назад".
+    const lastTime = dayRows[dayRows.length - 1].time;
     if (signalTimerInterval) clearInterval(signalTimerInterval);
-    const updateTimer = () => {
-      document.getElementById('signalTimer').textContent = formatTimerAgo(lastTime);
-    };
-    updateTimer();
-    signalTimerInterval = setInterval(updateTimer, 1000);
+    if (dateKey === devDateKey(todayStr())) {
+      const updateTimer = () => {
+        document.getElementById('signalTimer').textContent = formatTimerAgo(lastTime);
+      };
+      updateTimer();
+      signalTimerInterval = setInterval(updateTimer, 1000);
+    } else {
+      const [y, m, d] = dateKey.split('-');
+      document.getElementById('signalTimer').textContent = `${d}.${m}.${y}`;
+    }
 
     // Render list (newest first) — только закрытые сигналы
-    const reversed = [...resolvedRows].reverse();
-    list.innerHTML = reversed.map(r => {
-      const pair   = r[1]  || '-';
-      const dir    = r[2]  || '-';
-      const price  = r[3]  || '';
-      const result = r[COL_RESULT]  || '';
-      const time   = (r[COL_TIME] || '').substring(0, 8) || '-'; // HH:MM:SS
+    const reversed = [...dayRows].reverse();
+    list.innerHTML = reversed.map(s => {
+      const pair   = s.pair || '-';
+      const dir    = s.dir  || '-';
+      const price  = s.price || '';
+      const result = s.res  || '';
+      const time   = s.time.substring(0, 8) || '-'; // HH:MM:SS
 
       const isUp    = dir === 'UP';
       const isWin   = result === 'WIN';
@@ -3289,7 +3326,7 @@ async function loadTodaySignals() {
       const dirClass  = isUp ? 'sig-up' : 'sig-down';
       const resClass  = isWin ? 'sig-win' : isLose ? 'sig-lose' : 'sig-pending';
       const dirLabel  = isUp ? '↑ UP' : '↓ DOWN';
-      const pairShort = pair.replace('USDT.P', '');
+      const pairShort = pair;
 
       const WIN_ICON  = `<svg width="22" height="20" viewBox="0 0 22 20" fill="none" style="vertical-align:-4px">
         <path d="M2 10.5L8 16.5L20 3.5" stroke="#4EFFA0" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.15"/>
@@ -3317,13 +3354,13 @@ async function loadTodaySignals() {
       </div>`;
     }).join('');
 
-    // Summary line (WIN & LOSE excluded from WR calculation) — по закрытым сигналам
-    const wins   = resolvedRows.filter(r => r[COL_RESULT] === 'WIN').length;
-    const losses = resolvedRows.filter(r => r[COL_RESULT] === 'LOSE').length;
+    // Summary line (WIN & LOSE excluded from WR calculation)
+    const wins   = dayRows.filter(s => s.res === 'WIN').length;
+    const losses = dayRows.filter(s => s.res === 'LOSE').length;
     const wr     = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : 0;
     const summary = document.createElement('div');
     summary.className = 'signals-summary';
-    summary.innerHTML = `${t('sig.sum.total')}: <b>${resolvedRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
+    summary.innerHTML = `${t('sig.sum.total')}: <b>${dayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
     list.prepend(summary);
 
   } catch(e) {
@@ -3335,8 +3372,10 @@ async function loadTodaySignals() {
 // ===== ГРАФИК «СИГНАЛЫ СЕГОДНЯ» (BTC / ETH) =====
 // Свечи 15m + маркеры по результату: WIN UP зелёный / WIN DOWN красный / LOSE серый / 50-50 жёлтый.
 // Маркеры строятся ТОЛЬКО по закрытым сигналам — живые (без результата) на график не попадают.
-const SIG_CHART = { coin: 'ETH', rendered: false };
-const SIG_CANDLE_CACHE = {};        // { BTC: candles[], ETH: candles[] }
+const SIG_CHART = { coin: 'ETH', branch: 'PRO', date: devDateKey(todayStr()), rendered: false };
+// Сколько дней реально может отдать fetchSigCandles5m (5 чанков по 1500 свечей × 5м).
+const SIG_MAX_CANDLE_DAYS = 25;
+const SIG_CANDLE_CACHE = {};        // { "ETH_2026-07-31": candles[] }
 const SIG_MARK_COLOR = { winUp: '#4EFFA0', winDown: '#FF5272', lose: '#7B84B0', half: '#FFD166' };
 // Сдвиг времени таблицы относительно UTC, в минутах (прибавляется к времени из таблицы).
 //   null  = авто-подбор по цене входа (по умолчанию, обычно угадывает сам)
@@ -3353,27 +3392,21 @@ function sigPrecisionFor(price) {
   return { precision: 6, minMove: 0.000001 };
 }
 
-// Маркеры за сегодня по монете. Таймзону таблицы не угадываем —
+// Маркеры за выбранный день по монете. Таймзону таблицы не угадываем —
 // подбираем сдвиг времени так, чтобы цена входа попадала в диапазон свечи (авто-калибровка).
 // tfSec — длительность свечи в секундах (5m = 300), нужна для привязки к нужной свече.
-function buildSignalMarkers(rows, coin, candles, tfSec) {
+// sigs — унифицированные сигналы нужной ветки (см. fetchBranchSignals_), dateKey — YYYY-MM-DD.
+function buildSignalMarkers(allSigs, coin, dateKey, candles, tfSec) {
   tfSec = tfSec || 300;
-  const today = todayStr();
-  const RESOLVED = new Set(['WIN', 'LOSE', 'WIN & LOSE']);
-  const [dd, mo, yy] = today.split('.').map(Number);
+  const [yy, mo, dd] = dateKey.split('-').map(Number);
   const sigs = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r || r[COL_DATE] !== today) continue;
-    if (sigPairBase(r[1]) !== coin) continue;
-    const res = (r[COL_RESULT] || '').trim();
-    if (!RESOLVED.has(res)) continue;
-    const dir = (r[2] || '').trim().toUpperCase();
-    const price = parseFloat(String(r[3]).replace(',', '.')) || 0;
-    const tp = (r[COL_TIME] || '0:0:0').split(':');
+  for (const s of allSigs) {
+    if (s.dk !== dateKey || s.pair !== coin) continue;
+    const price = parseFloat(String(s.price).replace(',', '.')) || 0;
+    const tp = (s.time || '0:0:0').split(':');
     const hh = parseInt(tp[0]) || 0, mm = parseInt(tp[1]) || 0, ss = parseInt(tp[2]) || 0;
     const baseUnix = Math.floor(Date.UTC(yy, mo - 1, dd, hh, mm, ss) / 1000);
-    sigs.push({ baseUnix, dir, res, price });
+    sigs.push({ baseUnix, dir: s.dir, res: s.res, price });
   }
   if (!sigs.length || !candles.length) return [];
 
@@ -3449,12 +3482,11 @@ async function fetchSigCandles5m(sym, days) {
 }
 
 // мини-статистика по выбранной монете за сегодня
-function sigCoinStat(rows, coin) {
-  const today = todayStr();
-  const day = rows.filter((r, i) => i > 0 && r && r[COL_DATE] === today && sigPairBase(r[1]) === coin);
-  const wins = day.filter(r => (r[COL_RESULT] || '').trim() === 'WIN').length;
-  const losses = day.filter(r => (r[COL_RESULT] || '').trim() === 'LOSE').length;
-  const resolved = day.filter(r => ['WIN', 'LOSE', 'WIN & LOSE'].includes((r[COL_RESULT] || '').trim())).length;
+function sigCoinStat(sigs, coin, dateKey) {
+  const day = sigs.filter(s => s.dk === dateKey && s.pair === coin);
+  const wins = day.filter(s => s.res === 'WIN').length;
+  const losses = day.filter(s => s.res === 'LOSE').length;
+  const resolved = day.length;
   const wr = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : null;
   return { resolved, wins, losses, wr };
 }
@@ -3463,6 +3495,7 @@ async function renderSignalChart(force) {
   const el = document.getElementById('sigChart');
   if (!el) return;
   const coin = SIG_CHART.coin;
+  const dateKey = SIG_CHART.date || (SIG_CHART.date = devDateKey(todayStr()));
   const statEl = document.getElementById('sigChartStat');
 
   if (!window.LiveChart || !window.LightweightCharts) {
@@ -3472,30 +3505,47 @@ async function renderSignalChart(force) {
   el.innerHTML = '<div class="sig-chart-msg">Загрузка графика...</div>';
 
   try {
-    let candles = SIG_CANDLE_CACHE[coin];
-    if (!candles || force) {
-      candles = await fetchSigCandles5m(coin + 'USDT', 2);
-      SIG_CANDLE_CACHE[coin] = candles;
+    const todayKey = devDateKey(todayStr());
+    const daysBack = Math.max(0, Math.round((new Date(todayKey) - new Date(dateKey)) / 86400000));
+
+    const sigs = await fetchBranchSignals_(SIG_CHART.branch);
+
+    if (daysBack > SIG_MAX_CANDLE_DAYS) {
+      el.innerHTML = `<div class="sig-chart-msg">Свечи доступны только за последние ~${SIG_MAX_CANDLE_DAYS} дней - список сигналов ниже за выбранную дату есть</div>`;
+    } else {
+      const cacheKey = coin + '_' + dateKey;
+      let candles = SIG_CANDLE_CACHE[cacheKey];
+      if (!candles || force) {
+        candles = await fetchSigCandles5m(coin + 'USDT', daysBack + 3);
+        SIG_CANDLE_CACHE[cacheKey] = candles;
+      }
+      if (!candles || !candles.length) {
+        el.innerHTML = '<div class="sig-chart-msg">Нет данных по свечам</div>';
+      } else {
+        // шаг свечи в секундах (5m = 300) — берём из реального интервала данных
+        let tfSec = 300;
+        for (let i = 1; i < candles.length; i++) { const d = candles[i].time - candles[i - 1].time; if (d > 0) { tfSec = d; break; } }
+
+        const markers = buildSignalMarkers(sigs, coin, dateKey, candles, tfSec);
+        const prec = sigPrecisionFor(candles[candles.length - 1].close);
+
+        // Фокусируем видимую область на выбранном дне (с запасом в час с каждой стороны)
+        const [yy, mo, dd] = dateKey.split('-').map(Number);
+        const dayStart = Math.floor(Date.UTC(yy, mo - 1, dd, 0, 0, 0) / 1000);
+        const dayEnd = dayStart + 86400;
+        const visibleRange = dateKey === todayKey ? undefined : { from: dayStart - 3600, to: dayEnd + 3600 };
+
+        el.innerHTML = '';
+        requestAnimationFrame(() => {
+          window.LiveChart.renderInto(el, { candles, markers, precision: prec, viewBars: 150, visibleRange });
+        });
+      }
     }
-    if (!candles || !candles.length) { el.innerHTML = '<div class="sig-chart-msg">Нет данных по свечам</div>'; return; }
-
-    // шаг свечи в секундах (5m = 300) — берём из реального интервала данных
-    let tfSec = 300;
-    for (let i = 1; i < candles.length; i++) { const d = candles[i].time - candles[i - 1].time; if (d > 0) { tfSec = d; break; } }
-
-    const rows = await fetchAllSignals();
-    const markers = buildSignalMarkers(rows, coin, candles, tfSec);
-    const prec = sigPrecisionFor(candles[candles.length - 1].close);
-
-    el.innerHTML = '';
-    requestAnimationFrame(() => {
-      window.LiveChart.renderInto(el, { candles, markers, precision: prec, viewBars: 150 });
-    });
 
     if (statEl) {
-      const s = sigCoinStat(rows, coin);
+      const s = sigCoinStat(sigs, coin, dateKey);
       const wrTxt = s.wr == null ? '-' : s.wr + '%';
-      statEl.innerHTML = `${coin} сегодня: <b>${s.resolved}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${s.wins}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${s.losses}</b> &nbsp;·&nbsp; WR <b>${wrTxt}</b>`;
+      statEl.innerHTML = `${coin}: <b>${s.resolved}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${s.wins}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${s.losses}</b> &nbsp;·&nbsp; WR <b>${wrTxt}</b>`;
     }
     SIG_CHART.rendered = true;
   } catch (e) {
@@ -3510,17 +3560,46 @@ function ensureSignalChart() {
 
 function initSignalChartUI() {
   const seg = document.getElementById('sigAssetSeg');
-  if (!seg) return;
-  seg.querySelectorAll('button[data-coin]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const coin = btn.getAttribute('data-coin');
-      if (coin === SIG_CHART.coin) return;
-      SIG_CHART.coin = coin;
-      seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-      if (tg) tg.HapticFeedback?.selectionChanged?.();
-      renderSignalChart(false);
+  if (seg) {
+    seg.querySelectorAll('button[data-coin]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const coin = btn.getAttribute('data-coin');
+        if (coin === SIG_CHART.coin) return;
+        SIG_CHART.coin = coin;
+        seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+        if (tg) tg.HapticFeedback?.selectionChanged?.();
+        renderSignalChart(false);
+      });
     });
-  });
+  }
+
+  const branchSeg = document.getElementById('sigBranchSeg');
+  if (branchSeg) {
+    branchSeg.querySelectorAll('button[data-branch]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const branch = btn.getAttribute('data-branch');
+        if (branch === SIG_CHART.branch) return;
+        SIG_CHART.branch = branch;
+        branchSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+        if (tg) tg.HapticFeedback?.selectionChanged?.();
+        loadSignalsList();
+        renderSignalChart(true);
+      });
+    });
+  }
+
+  const dateInput = document.getElementById('sigDateInput');
+  if (dateInput) {
+    const todayKey = devDateKey(todayStr());
+    dateInput.value = SIG_CHART.date;
+    dateInput.max = todayKey;
+    dateInput.addEventListener('change', () => {
+      if (!dateInput.value) return;
+      SIG_CHART.date = dateInput.value;
+      loadSignalsList();
+      renderSignalChart(true);
+    });
+  }
 }
 
 // ===== REFRESH HOME =====
@@ -3546,7 +3625,7 @@ function refreshHome() {
   hourWrChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
-  Promise.all([loadStatsPreview(), loadTodaySignals(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {
+  Promise.all([loadStatsPreview(), loadSignalsList(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {
     btn.classList.remove('spinning');
     if (currentPage === 'futures-prediction') renderSignalChart(true);
   });
@@ -3983,7 +4062,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   loadStatsPreview();
   loadPnlAllFromSignals('pnlChartHome', 'home', true);
-  loadTodaySignals();
+  loadSignalsList();
   initSignalChartUI();
   initCalculator();
 });

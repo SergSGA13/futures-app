@@ -847,7 +847,7 @@ html, body {
 }
 .signal-row {
   display: grid;
-  grid-template-columns: 68px 36px 60px 1fr 58px;
+  grid-template-columns: 82px 36px 60px 1fr 58px;
   align-items: center;
   gap: 8px;
   padding: 8px 0;
@@ -855,7 +855,7 @@ html, body {
   font-size: 13px;
 }
 .signal-row:last-child { border-bottom: none; }
-.sig-time { color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sig-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sig-pair { font-weight: 700; color: var(--text); }
 .sig-dir { font-weight: 700; font-size: 12px; }
 .sig-up   { color: #66A3FF; }
@@ -892,6 +892,8 @@ html, body {
   gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
 }
 .sig-branch-seg button { min-width: 44px; }
+.sig-period-seg { flex: 0 0 auto; }
+.sig-period-seg button { min-width: 32px; }
 .sig-date-input {
   flex: 0 0 auto;
   background: var(--bg3);
@@ -904,12 +906,14 @@ html, body {
   color-scheme: dark;
 }
 
-/* --- График «Сигналы сегодня»: BTC/ETH селектор, свечи, легенда --- */
+/* --- График «Сигналы сегодня»: BTC/ETH + таймфрейм селектор, свечи, легенда --- */
 .sig-chart-top {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
 }
 .sig-asset-seg { flex: 0 0 auto; }
+.sig-tf-seg { flex: 0 0 auto; }
+.sig-tf-seg button { min-width: 36px; }
 .sig-asset-seg button { min-width: 52px; }
 .sig-chart-stat {
   font-size: 12px; color: var(--text-muted);

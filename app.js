@@ -3595,12 +3595,32 @@ async function fetchBranchSignals_(branch) {
   }).filter(Boolean);
 }
 
+// Диапазон дат периода: endKey - выбранная дата, periodDays - сколько дней
+// назад включительно (1 = только endKey, 7 = endKey и 6 дней до него).
+function sigPeriodRange_(endKey, periodDays) {
+  const [y, m, d] = endKey.split('-').map(Number);
+  const end = new Date(y, m - 1, d);
+  const start = new Date(end.getTime() - (periodDays - 1) * 86400000);
+  const fmt = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  return { startKey: fmt(start), endKey };
+}
+function sigFmtDk_(dk) {
+  const [y, m, d] = dk.split('-');
+  return `${d}.${m}.${y}`;
+}
+function sigFmtDkShort_(dk) {
+  const [, m, d] = dk.split('-');
+  return `${d}.${m}`;
+}
+
 async function loadSignalsList() {
   try {
     const branch = SIG_CHART.branch;
-    const dateKey = SIG_CHART.date;
+    const { startKey, endKey } = sigPeriodRange_(SIG_CHART.date, SIG_CHART.periodDays);
+    const multiDay = SIG_CHART.periodDays > 1;
     const sigs = await fetchBranchSignals_(branch);
-    const dayRows = sigs.filter(s => s.dk === dateKey).sort((a, b) => a.time.localeCompare(b.time));
+    const dayRows = sigs.filter(s => s.dk >= startKey && s.dk <= endKey)
+      .sort((a, b) => a.dk === b.dk ? a.time.localeCompare(b.time) : a.dk.localeCompare(b.dk));
 
     const list = document.getElementById('signalsList');
 
@@ -3610,19 +3630,20 @@ async function loadSignalsList() {
       return;
     }
 
-    // По последнему ЗАКРЫТОМУ сигналу — живой таймер только для сегодняшней даты,
-    // для остальных дат показываем саму дату вместо "N минут назад".
-    const lastTime = dayRows[dayRows.length - 1].time;
+    // По последнему ЗАКРЫТОМУ сигналу — живой таймер только для одного дня
+    // и сегодняшней даты, иначе показываем сам период вместо "N минут назад".
+    const lastRow = dayRows[dayRows.length - 1];
     if (signalTimerInterval) clearInterval(signalTimerInterval);
-    if (dateKey === devDateKey(todayStr())) {
+    if (!multiDay && endKey === devDateKey(todayStr())) {
       const updateTimer = () => {
-        document.getElementById('signalTimer').textContent = formatTimerAgo(lastTime);
+        document.getElementById('signalTimer').textContent = formatTimerAgo(lastRow.time);
       };
       updateTimer();
       signalTimerInterval = setInterval(updateTimer, 1000);
     } else {
-      const [y, m, d] = dateKey.split('-');
-      document.getElementById('signalTimer').textContent = `${d}.${m}.${y}`;
+      document.getElementById('signalTimer').textContent = multiDay
+        ? `${sigFmtDk_(startKey)} - ${sigFmtDk_(endKey)}`
+        : sigFmtDk_(endKey);
     }
 
     // Render list (newest first) — только закрытые сигналы
@@ -3632,7 +3653,9 @@ async function loadSignalsList() {
       const dir    = s.dir  || '-';
       const price  = s.price || '';
       const result = s.res  || '';
-      const time   = s.time.substring(0, 8) || '-'; // HH:MM:SS
+      const time   = multiDay
+        ? `${sigFmtDkShort_(s.dk)} ${s.time.substring(0, 5) || '-'}`   // DD.MM HH:MM
+        : (s.time.substring(0, 8) || '-');                             // HH:MM:SS
 
       const isUp    = dir === 'UP';
       const isWin   = result === 'WIN';
@@ -3687,8 +3710,9 @@ async function loadSignalsList() {
 // ===== ГРАФИК «СИГНАЛЫ СЕГОДНЯ» (BTC / ETH) =====
 // Свечи 15m + маркеры по результату: WIN UP зелёный / WIN DOWN красный / LOSE серый / 50-50 жёлтый.
 // Маркеры строятся ТОЛЬКО по закрытым сигналам — живые (без результата) на график не попадают.
-const SIG_CHART = { coin: 'ETH', branch: 'PRO', date: devDateKey(todayStr()), rendered: false };
-// Сколько дней реально может отдать fetchSigCandles5m (5 чанков по 1500 свечей × 5м).
+const SIG_CHART = { coin: 'ETH', branch: 'PRO', date: devDateKey(todayStr()), periodDays: 1, tf: '5m', rendered: false };
+// Сколько дней реально может отдать fetchSigCandles на 5m (5 чанков по 1500 свечей × 5м;
+// консервативный лимит держим одинаковым и для 15m, с запасом).
 const SIG_MAX_CANDLE_DAYS = 25;
 const SIG_CANDLE_CACHE = {};        // { "ETH_2026-07-31": candles[] }
 const SIG_MARK_COLOR = { winUp: '#4EFFA0', winDown: '#FF5272', lose: '#7B84B0', half: '#FFD166' };
@@ -3707,16 +3731,17 @@ function sigPrecisionFor(price) {
   return { precision: 6, minMove: 0.000001 };
 }
 
-// Маркеры за выбранный день по монете. Таймзону таблицы не угадываем —
-// подбираем сдвиг времени так, чтобы цена входа попадала в диапазон свечи (авто-калибровка).
-// tfSec — длительность свечи в секундах (5m = 300), нужна для привязки к нужной свече.
-// sigs — унифицированные сигналы нужной ветки (см. fetchBranchSignals_), dateKey — YYYY-MM-DD.
-function buildSignalMarkers(allSigs, coin, dateKey, candles, tfSec) {
+// Маркеры за выбранный период (startKey..endKey включительно) по монете.
+// Таймзону таблицы не угадываем — подбираем сдвиг времени так, чтобы цена
+// входа попадала в диапазон свечи (авто-калибровка).
+// tfSec — длительность свечи в секундах (5m = 300, 15m = 900).
+// sigs — унифицированные сигналы нужной ветки (см. fetchBranchSignals_).
+function buildSignalMarkers(allSigs, coin, startKey, endKey, candles, tfSec) {
   tfSec = tfSec || 300;
-  const [yy, mo, dd] = dateKey.split('-').map(Number);
   const sigs = [];
   for (const s of allSigs) {
-    if (s.dk !== dateKey || s.pair !== coin) continue;
+    if (s.dk < startKey || s.dk > endKey || s.pair !== coin) continue;
+    const [yy, mo, dd] = s.dk.split('-').map(Number);
     const price = parseFloat(String(s.price).replace(',', '.')) || 0;
     const tp = (s.time || '0:0:0').split(':');
     const hh = parseInt(tp[0]) || 0, mm = parseInt(tp[1]) || 0, ss = parseInt(tp[2]) || 0;
@@ -3764,19 +3789,23 @@ function buildSignalMarkers(allSigs, coin, dateKey, candles, tfSec) {
   }).sort((a, b) => a.time - b.time);
 }
 
-// Свечи 5m для графика «Сигналы сегодня» (Binance fapi -> Bybit). Отдельно от 15m-движка Лаборатории.
+// Свечи 5m/15m для графика «Сигналы сегодня» (Binance fapi -> Bybit). Отдельно от 15m-движка Лаборатории.
 async function sigFetch(u, ms) {
   const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const t = ac ? setTimeout(() => ac.abort(), ms) : null;
   try { return await fetch(u, ac ? { signal: ac.signal } : {}); }
   finally { if (t) clearTimeout(t); }
 }
-async function fetchSigCandles5m(sym, days) {
-  // Binance USDT-M futures, 5m
+// tf: '5m' | '15m' — оба значения валидны как есть для Binance interval,
+// для Bybit interval передаётся числом минут ('5'/'15').
+async function fetchSigCandles(sym, days, tf) {
+  tf = tf || '5m';
+  const bybitInterval = tf === '15m' ? '15' : '5';
+  // Binance USDT-M futures
   try {
     const end = Date.now(); let start = end - days * 864e5; const out = [];
     for (let it = 0; it < 5 && start < end; it++) {
-      const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=5m&limit=1500&startTime=${start}`;
+      const u = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=${tf}&limit=1500&startTime=${start}`;
       const r = await sigFetch(u, 9000); if (!r.ok) throw new Error('fapi ' + r.status);
       const chunk = await r.json(); if (!chunk.length) break;
       out.push(...chunk); start = chunk[chunk.length - 1][0] + 1;
@@ -3784,21 +3813,21 @@ async function fetchSigCandles5m(sym, days) {
     }
     if (out.length) return out.map(k => ({ time: Math.floor(k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
   } catch (e) { /* фолбэк ниже */ }
-  // Bybit linear, 5m (последние ~1000 свечей)
+  // Bybit linear (последние ~1000 свечей)
   try {
-    const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=5&limit=1000`;
+    const u = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=${bybitInterval}&limit=1000`;
     const r = await sigFetch(u, 9000);
     if (r.ok) {
       const j = await r.json(); const list = (j.result && j.result.list) || [];
       if (list.length) return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
     }
   } catch (e) {}
-  throw new Error('no 5m klines');
+  throw new Error('no klines');
 }
 
 // мини-статистика по выбранной монете за сегодня
-function sigCoinStat(sigs, coin, dateKey) {
-  const day = sigs.filter(s => s.dk === dateKey && s.pair === coin);
+function sigCoinStat(sigs, coin, startKey, endKey) {
+  const day = sigs.filter(s => s.dk >= startKey && s.dk <= endKey && s.pair === coin);
   const wins = day.filter(s => s.res === 'WIN').length;
   const losses = day.filter(s => s.res === 'LOSE').length;
   const resolved = day.length;
@@ -3810,7 +3839,9 @@ async function renderSignalChart(force) {
   const el = document.getElementById('sigChart');
   if (!el) return;
   const coin = SIG_CHART.coin;
-  const dateKey = SIG_CHART.date || (SIG_CHART.date = devDateKey(todayStr()));
+  const tf = SIG_CHART.tf || '5m';
+  if (!SIG_CHART.date) SIG_CHART.date = devDateKey(todayStr());
+  const { startKey, endKey } = sigPeriodRange_(SIG_CHART.date, SIG_CHART.periodDays);
   const statEl = document.getElementById('sigChartStat');
 
   if (!window.LiveChart || !window.LightweightCharts) {
@@ -3821,34 +3852,37 @@ async function renderSignalChart(force) {
 
   try {
     const todayKey = devDateKey(todayStr());
-    const daysBack = Math.max(0, Math.round((new Date(todayKey) - new Date(dateKey)) / 86400000));
+    const daysBack = Math.max(0, Math.round((new Date(todayKey) - new Date(startKey)) / 86400000));
 
     const sigs = await fetchBranchSignals_(SIG_CHART.branch);
 
     if (daysBack > SIG_MAX_CANDLE_DAYS) {
-      el.innerHTML = `<div class="sig-chart-msg">Свечи доступны только за последние ~${SIG_MAX_CANDLE_DAYS} дней - список сигналов ниже за выбранную дату есть</div>`;
+      el.innerHTML = `<div class="sig-chart-msg">Свечи доступны только за последние ~${SIG_MAX_CANDLE_DAYS} дней - список сигналов ниже за выбранный период есть</div>`;
     } else {
-      const cacheKey = coin + '_' + dateKey;
+      const cacheKey = [coin, tf, startKey, endKey].join('_');
       let candles = SIG_CANDLE_CACHE[cacheKey];
       if (!candles || force) {
-        candles = await fetchSigCandles5m(coin + 'USDT', daysBack + 3);
+        candles = await fetchSigCandles(coin + 'USDT', daysBack + 3, tf);
         SIG_CANDLE_CACHE[cacheKey] = candles;
       }
       if (!candles || !candles.length) {
         el.innerHTML = '<div class="sig-chart-msg">Нет данных по свечам</div>';
       } else {
-        // шаг свечи в секундах (5m = 300) — берём из реального интервала данных
-        let tfSec = 300;
+        // шаг свечи в секундах (5m = 300, 15m = 900) — берём из реального интервала данных
+        let tfSec = tf === '15m' ? 900 : 300;
         for (let i = 1; i < candles.length; i++) { const d = candles[i].time - candles[i - 1].time; if (d > 0) { tfSec = d; break; } }
 
-        const markers = buildSignalMarkers(sigs, coin, dateKey, candles, tfSec);
+        const markers = buildSignalMarkers(sigs, coin, startKey, endKey, candles, tfSec);
         const prec = sigPrecisionFor(candles[candles.length - 1].close);
 
-        // Фокусируем видимую область на выбранном дне (с запасом в час с каждой стороны)
-        const [yy, mo, dd] = dateKey.split('-').map(Number);
-        const dayStart = Math.floor(Date.UTC(yy, mo - 1, dd, 0, 0, 0) / 1000);
-        const dayEnd = dayStart + 86400;
-        const visibleRange = dateKey === todayKey ? undefined : { from: dayStart - 3600, to: dayEnd + 3600 };
+        // Фокусируем видимую область на выбранном периоде (с запасом в час с каждой стороны).
+        // Для "сегодня, 1 день" оставляем автоскролл к последним барам как раньше.
+        const [sy, sm, sd] = startKey.split('-').map(Number);
+        const [ey, em, ed] = endKey.split('-').map(Number);
+        const rangeStart = Math.floor(Date.UTC(sy, sm - 1, sd, 0, 0, 0) / 1000);
+        const rangeEnd = Math.floor(Date.UTC(ey, em - 1, ed, 0, 0, 0) / 1000) + 86400;
+        const visibleRange = (endKey === todayKey && SIG_CHART.periodDays === 1)
+          ? undefined : { from: rangeStart - 3600, to: rangeEnd + 3600 };
 
         el.innerHTML = '';
         requestAnimationFrame(() => {
@@ -3858,7 +3892,7 @@ async function renderSignalChart(force) {
     }
 
     if (statEl) {
-      const s = sigCoinStat(sigs, coin, dateKey);
+      const s = sigCoinStat(sigs, coin, startKey, endKey);
       const wrTxt = s.wr == null ? '-' : s.wr + '%';
       statEl.innerHTML = `${coin}: <b>${s.resolved}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${s.wins}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${s.losses}</b> &nbsp;·&nbsp; WR <b>${wrTxt}</b>`;
     }
@@ -3913,6 +3947,35 @@ function initSignalChartUI() {
       SIG_CHART.date = dateInput.value;
       loadSignalsList();
       renderSignalChart(true);
+    });
+  }
+
+  const periodSeg = document.getElementById('sigPeriodSeg');
+  if (periodSeg) {
+    periodSeg.querySelectorAll('button[data-days]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const days = parseInt(btn.getAttribute('data-days'), 10);
+        if (days === SIG_CHART.periodDays) return;
+        SIG_CHART.periodDays = days;
+        periodSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+        if (tg) tg.HapticFeedback?.selectionChanged?.();
+        loadSignalsList();
+        renderSignalChart(true);
+      });
+    });
+  }
+
+  const tfSeg = document.getElementById('sigTfSeg');
+  if (tfSeg) {
+    tfSeg.querySelectorAll('button[data-tf]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tf = btn.getAttribute('data-tf');
+        if (tf === SIG_CHART.tf) return;
+        SIG_CHART.tf = tf;
+        tfSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+        if (tg) tg.HapticFeedback?.selectionChanged?.();
+        renderSignalChart(true);
+      });
     });
   }
 }

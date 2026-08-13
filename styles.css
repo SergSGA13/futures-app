@@ -820,11 +820,16 @@ html, body {
   padding: 12px 0;
 }
 .signals-summary {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-muted);
-  padding: 8px 0 10px;
-  border-bottom: 1px solid var(--card-border);
-  margin-bottom: 8px;
+  padding: 7px 10px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(102,163,255,.20);
+  border-radius: 10px;
+  background: rgba(102,163,255,.05);
+  box-shadow: 0 0 10px rgba(102,163,255,.05);
+  transition: border-color .2s, box-shadow .2s, background .2s;
+  text-align: center;
 }
 .signal-row {
   display: grid;
@@ -870,19 +875,19 @@ html, body {
 /* --- Неоновая шапка «Сигналы сегодня»: заголовок, ветка, дата/период, монета/таймфрейм --- */
 .sig-headwrap {
   position: relative;
-  background: linear-gradient(180deg, #171d37, #11152a); background-color: #12172c;
-  border: 1px solid rgba(102,163,255,.28); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
-  box-shadow: 0 0 0 1px rgba(157,80,255,.05), 0 10px 30px rgba(102,163,255,.07), inset 0 1px 0 rgba(255,255,255,.04);
+  background: linear-gradient(180deg, #181e3c, #11152a); background-color: #12172c;
+  border: 1px solid rgba(102,163,255,.34); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
+  box-shadow: 0 0 0 1px rgba(157,80,255,.08), 0 12px 34px rgba(102,163,255,.10), inset 0 1px 0 rgba(255,255,255,.05);
 }
 .sig-head {
   position: relative; display: flex; align-items: center; gap: 7px;
 }
 .sig-head2 {
   display: flex; align-items: center; gap: 7px; margin-top: 8px; flex-wrap: wrap;
-  border: 1px solid rgba(102,163,255,.20); border-radius: 11px;
-  background: rgba(102,163,255,.045);
+  border: 1px solid rgba(102,163,255,.24); border-radius: 11px;
+  background: rgba(102,163,255,.05);
   padding: 5px 6px;
-  box-shadow: 0 0 12px rgba(102,163,255,.06), inset 0 1px 0 rgba(255,255,255,.03);
+  box-shadow: 0 0 14px rgba(102,163,255,.08), inset 0 1px 0 rgba(255,255,255,.03);
 }
 .sig-spacer { margin-left: auto; }
 .sig-title-pill {
@@ -920,13 +925,39 @@ html, body {
 .sig-tf-seg { flex: 0 0 auto; }
 .sig-tf-seg button { min-width: 36px; }
 .sig-asset-seg button { min-width: 52px; }
+
+/* Разные цвета веток/монет в активном состоянии - для наглядности и "живости" панели */
+#sigBranchSeg button.active[data-branch="MEXC"] {
+  background: linear-gradient(135deg, #FFB84D, #FF7A45); color: #1a1204;
+  box-shadow: 0 0 12px rgba(255,153,64,.40);
+}
+#sigBranchSeg button.active[data-branch="ALT10m"] {
+  background: linear-gradient(135deg, #4EFFA0, #22C3A6); color: #04231a;
+  box-shadow: 0 0 12px rgba(78,255,160,.35);
+}
+#sigAssetSeg button.active[data-coin="BTC"] {
+  background: linear-gradient(135deg, #F7931A, #E8720C); color: #241100;
+  box-shadow: 0 0 12px rgba(247,147,26,.40);
+}
+#sigTfSeg button.active[data-tf="15m"] {
+  background: linear-gradient(135deg, #9D50FF, #FF5272);
+  box-shadow: 0 0 12px rgba(255,82,114,.30);
+}
+
 .sig-chart-stat {
   margin-top: 8px; font-size: 12px; color: var(--text-muted);
   font-variant-numeric: tabular-nums; text-align: center;
   padding: 6px 9px; border: 1px solid rgba(102,163,255,.22); border-radius: 10px; background: rgba(102,163,255,.06);
   box-shadow: 0 0 12px rgba(102,163,255,.06);
+  transition: border-color .2s, box-shadow .2s, background .2s;
 }
 .sig-chart-stat:empty { display: none; }
+.sig-chart-stat.sig-wr-good, .signals-summary.sig-wr-good {
+  border-color: rgba(78,255,160,.32); background: rgba(78,255,160,.06); box-shadow: 0 0 14px rgba(78,255,160,.12);
+}
+.sig-chart-stat.sig-wr-bad, .signals-summary.sig-wr-bad {
+  border-color: rgba(255,82,114,.32); background: rgba(255,82,114,.06); box-shadow: 0 0 14px rgba(255,82,114,.12);
+}
 .sig-chartwrap {
   position: relative; border-radius: var(--radius-sm); overflow: hidden;
   border: 1px solid rgba(102,163,255,0.10); background: rgba(10,13,24,0.35);

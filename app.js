@@ -3707,7 +3707,7 @@ async function loadSignalsList() {
     const losses = dayRows.filter(s => s.res === 'LOSE').length;
     const wr     = (wins + losses) > 0 ? Math.round(wins / (wins + losses) * 100) : 0;
     const summary = document.createElement('div');
-    summary.className = 'signals-summary';
+    summary.className = 'signals-summary' + ((wins + losses) > 0 ? (wr >= 60 ? ' sig-wr-good' : wr < 45 ? ' sig-wr-bad' : '') : '');
     summary.innerHTML = `${t('sig.sum.total')}: <b>${dayRows.length}</b> &nbsp;·&nbsp; WIN: <b class="wr-green">${wins}</b> &nbsp;·&nbsp; LOSE: <b class="wr-red">${losses}</b> &nbsp;·&nbsp; WR: <b>${wr}%</b>`;
     list.prepend(summary);
 
@@ -3904,6 +3904,7 @@ async function renderSignalChart(force) {
     if (statEl) {
       const s = sigCoinStat(sigs, coin, startKey, endKey);
       const wrTxt = s.wr == null ? '-' : s.wr + '%';
+      statEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= 60 ? ' sig-wr-good' : s.wr < 45 ? ' sig-wr-bad' : '');
       statEl.innerHTML = `${coin}: <b>${s.resolved}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${s.wins}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${s.losses}</b> &nbsp;·&nbsp; WR <b>${wrTxt}</b>`;
     }
     SIG_CHART.rendered = true;

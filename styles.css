@@ -813,25 +813,6 @@ html, body {
   padding: 14px 16px;
   margin-bottom: 12px;
 }
-.signals-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.signals-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.signals-timer {
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--bg3);
-  border-radius: 20px;
-  padding: 3px 10px;
-  font-variant-numeric: tabular-nums;
-}
 .signals-loading, .signals-empty {
   text-align: center;
   color: var(--text-muted);
@@ -886,39 +867,56 @@ html, body {
   border-color: rgba(102,163,255,0.5);
 }
 
-/* --- Ветка (PRO/MEXC/ALT10m) + дата --- */
-.sig-filters {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+/* --- Неоновая шапка «Сигналы сегодня»: заголовок, ветка, дата/период, монета/таймфрейм --- */
+.sig-headwrap {
+  position: relative;
+  background: linear-gradient(180deg, #171d37, #11152a); background-color: #12172c;
+  border: 1px solid rgba(102,163,255,.28); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
+  box-shadow: 0 0 0 1px rgba(157,80,255,.05), 0 10px 30px rgba(102,163,255,.07), inset 0 1px 0 rgba(255,255,255,.04);
 }
+.sig-head {
+  position: relative; display: flex; align-items: center; gap: 7px;
+}
+.sig-head2 {
+  display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap;
+}
+.sig-spacer { margin-left: auto; }
+.sig-title-pill {
+  flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+  background: rgba(102,163,255,.08); border: 1px solid rgba(102,163,255,.30); border-radius: 9px;
+  padding: 6px 10px; color: var(--text); font-size: 13px; font-weight: 800;
+}
+.sig-timer-badge {
+  flex-shrink: 0; padding: 5px 9px; border-radius: 8px; font-size: 11px; font-weight: 800; color: var(--blue);
+  background: rgba(102,163,255,.10); border: 1px solid rgba(102,163,255,.38); box-shadow: 0 0 12px rgba(102,163,255,.18);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.sig-head2 .fs-seg { flex: 0 0 auto; }
 .sig-branch-seg button { min-width: 44px; }
 .sig-period-seg { flex: 0 0 auto; }
 .sig-period-seg button { min-width: 32px; }
 .sig-date-input {
   flex: 0 0 auto;
-  background: var(--bg3);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-sm);
+  background: rgba(102,163,255,.08);
+  border: 1px solid rgba(102,163,255,.30);
+  border-radius: 9px;
   color: var(--text);
   font-size: 12px;
+  font-weight: 700;
   font-family: inherit;
   padding: 5px 8px;
   color-scheme: dark;
-}
-
-/* --- График «Сигналы сегодня»: BTC/ETH + таймфрейм селектор, свечи, легенда --- */
-.sig-chart-top {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; margin-bottom: 8px; flex-wrap: wrap;
 }
 .sig-asset-seg { flex: 0 0 auto; }
 .sig-tf-seg { flex: 0 0 auto; }
 .sig-tf-seg button { min-width: 36px; }
 .sig-asset-seg button { min-width: 52px; }
 .sig-chart-stat {
-  font-size: 12px; color: var(--text-muted);
-  font-variant-numeric: tabular-nums; text-align: right; flex: 1 1 auto;
+  margin-top: 9px; font-size: 12px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; text-align: center;
+  padding: 6px 9px; border: 1px solid rgba(102,163,255,.16); border-radius: 10px; background: rgba(102,163,255,.05);
 }
+.sig-chart-stat:empty { display: none; }
 .sig-chartwrap {
   position: relative; border-radius: var(--radius-sm); overflow: hidden;
   border: 1px solid rgba(102,163,255,0.10); background: rgba(10,13,24,0.35);

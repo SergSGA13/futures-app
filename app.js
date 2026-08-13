@@ -3572,7 +3572,7 @@ async function fetchBranchSignals_(branch) {
       const dk = devDateKey(datePart);
       if (!dk) return null;
       const dir = String(r[2] || '').trim().toUpperCase();
-      return { dk, time: timePart || '', pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: r[resIdx] };
+      return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: r[resIdx] };
     }).filter(Boolean);
   }
 
@@ -3591,7 +3591,7 @@ async function fetchBranchSignals_(branch) {
     const dk = devDateKey(r[COL_DATE]);
     if (!dk) return null;
     const dir = String(r[2] || '').trim().toUpperCase();
-    return { dk, time: String(r[COL_TIME] || '').trim(), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res };
+    return { dk, time: sigPadTime_(r[COL_TIME]), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res };
   }).filter(Boolean);
 }
 
@@ -3611,6 +3611,16 @@ function sigFmtDk_(dk) {
 function sigFmtDkShort_(dk) {
   const [, m, d] = dk.split('-');
   return `${d}.${m}`;
+}
+// Google Sheets иногда отдаёт время без ведущего нуля у часа ("7:10:02"
+// вместо "07:10:02") - из-за этого сортировка/срез строк по времени как
+// по обычной строке ломается (лексикографически "18:.." < "7:.."). Приводим
+// к единому формату HH:MM:SS сразу при разборе сигналов, дальше время
+// везде можно сравнивать и резать как обычную строку.
+function sigPadTime_(t) {
+  const m = String(t || '').trim().match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+  if (!m) return String(t || '').trim();
+  return `${m[1].padStart(2, '0')}:${m[2].padStart(2, '0')}:${(m[3] || '00').padStart(2, '0')}`;
 }
 
 async function loadSignalsList() {

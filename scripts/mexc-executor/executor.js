@@ -113,21 +113,26 @@ function stakeMax(asset) {
   return l[asset] != null ? l[asset] : 150;
 }
 
-// Биржа держит не больше 5 ставок одновременно. Окно берём ДЛИННЕЕ
-// экспирации (10 мин), иначе слот освободится в учёте раньше, чем на бирже.
-// Храним не только время, но и направление: лимиты бывают отдельные
-// на UP и на DOWN.
+// Биржа держит не больше 5 ставок одновременно. Слот занят до экспирации
+// САМОЙ ставки плюс запас: фиксированное окно годилось, пока все ставки
+// были десятиминутными, а с 30-минутными оно освобождало слот в учёте
+// на двадцать минут раньше, чем на бирже - и шестая ставка ушла бы в
+// отказ. Запас нужен потому, что расчёт на бирже происходит не мгновенно.
+function slotUntil(p) {
+  return p.t + (p.timing ?? 10) * 60000 + (CFG.slotMarginMin ?? 1) * 60000;
+}
 function prunePlaced() {
-  const winMs = (CFG.slotWindowMin ?? 11) * 60000;
   const now = Date.now();
-  state.placed = state.placed.filter(p => now - p.t < winMs);
+  state.placed = state.placed.filter(p => now < slotUntil(p));
   return state.placed;
 }
 function openSlots() { return prunePlaced().length; }
-function dirSlots(dir) { return prunePlaced().filter(p => p.dir === dir).length; }
-// Сколько ставок одного направления пускаем в окно. Смысл в том, что
-// подряд идущие сигналы одной стороны - обычно один и тот же заход,
-// и ставить на него пять раз значит просто впятеро увеличить ставку.
+// Лимит направления считается ПО АКТИВУ: «подряд идущие сигналы одной
+// стороны - обычно один заход» верно внутри одного инструмента, а ETH UP
+// и BTC UP это два разных захода, и делить лимит им незачем.
+function dirSlots(dir, asset) {
+  return prunePlaced().filter(p => p.dir === dir && (!asset || p.asset === asset)).length;
+}
 function dirLimit(dir) {
   const d = CFG.dirLimits || {};
   const v = d[dir];
@@ -500,6 +505,19 @@ async function placeBet(sig) {
   }
   await page.waitForTimeout(randInt(400, 900));
 
+  // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
+  // выходных вместо кнопок Up/Down висит «Market Closed». Без этой
+  // проверки ставка падала бы в ошибку «кнопка не найдена» с дампом -
+  // то есть штатная ситуация выглядела бы как поломка селекторов.
+  const closed = await page.locator('button, div[role=button]')
+    .filter({ hasText: new RegExp(CFG.marketClosedText || 'Market Closed', 'i') })
+    .count().catch(() => 0);
+  if (closed > 0) {
+    log(`пропуск ${sig.asset}: рынок закрыт`);
+    await shot('market-closed');
+    return { status: 'skip-market-closed' };
+  }
+
   // страховка: payout на странице (вебхук уже проверял, но payout плавает)
   const pv = await pagePayout(sig.direction);
   if (pv != null && pv < (CFG.minPayout ?? 80)) {
@@ -664,13 +682,20 @@ async function pollSheet() {
 // обработчика HTTP, и сигнал из таблицы прошёл бы мимо тихих часов,
 // лимитов и дедупа - то есть мимо всего, ради чего они существуют.
 function normalizeSignal(sig) {
-  sig.asset = sig.asset || ((sig.ticker || '').includes('BTC') ? 'BTC' :
-                            ((sig.ticker || '').includes('ETH') ? 'ETH' : ''));
+  // Актив определяем по ключам urls, а не по зашитому списку: добавить
+  // новый актив должно быть можно одной строкой в конфиге. Длинные
+  // тикеры проверяем первыми, иначе короткий совпал бы как подстрока.
+  if (!sig.asset) {
+    const t = String(sig.ticker || '').toUpperCase();
+    sig.asset = Object.keys(CFG.urls || {})
+      .sort((a, b) => b.length - a.length)
+      .find(k => t.includes(k.toUpperCase())) || '';
+  }
   sig.direction = String(sig.direction || '').toUpperCase();
   if (sig.direction === 'BUY') sig.direction = 'UP';
   if (sig.direction === 'SELL') sig.direction = 'DOWN';
   sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
-  return (sig.asset === 'ETH' || sig.asset === 'BTC')
+  return !!(CFG.urls || {})[sig.asset]
       && (sig.direction === 'UP' || sig.direction === 'DOWN');
 }
 
@@ -693,10 +718,11 @@ function acceptSignal(sig, src) {
   if (state.paused) {
     return skip('paused', null, 'исполнитель на паузе');
   }
-  const dirBusy = dirSlots(sig.direction) + state.queue.filter(q => q.direction === sig.direction).length;
+  const dirBusy = dirSlots(sig.direction, sig.asset)
+    + state.queue.filter(q => q.direction === sig.direction && q.asset === sig.asset).length;
   if (dirBusy >= dirLimit(sig.direction)) {
     return skip('dir-limit', 'skip-dir-limit',
-      `${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне ${CFG.slotWindowMin ?? 11}мин`);
+      `${sig.asset} ${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне`);
   }
   const busySlots = openSlots() + state.queue.length;
   if (busySlots >= (CFG.maxOpenBets ?? 5)) {
@@ -814,7 +840,7 @@ async function pump() {
       // превышением биржевого лимита.
       const counts = ['placed', 'placed-unconfirmed', 'placed-unverified'];
       if (counts.includes(r.status) || r.status === 'dry-run') {
-        state.placed.push({ t: Date.now(), dir: sig.direction });
+        state.placed.push({ t: Date.now(), dir: sig.direction, asset: sig.asset, timing: sig.timing });
       }
       if (counts.includes(r.status)) state.betsToday++;
       saveState();
@@ -985,13 +1011,15 @@ function snapshot() {
     busy: state.busy,
     // всё, что редактируется в панели, отдаём одним куском
     settings: {
-      stakes: { ETH: stakeFor('ETH'), BTC: stakeFor('BTC') },
-      stakeLimits: { ETH: stakeMax('ETH'), BTC: stakeMax('BTC') },
+      assets: Object.keys(CFG.urls || {}),
+      stakes: Object.fromEntries(Object.keys(CFG.urls || {}).map(a => [a, stakeFor(a)])),
+      stakeLimits: Object.fromEntries(Object.keys(CFG.urls || {}).map(a => [a, stakeMax(a)])),
+      execTimings: CFG.execTimings || [10],
       dirLimits: { UP: dirLimit('UP'), DOWN: dirLimit('DOWN') },
       maxOpenBets: CFG.maxOpenBets ?? 5,
       maxBetsPerDay: CFG.maxBetsPerDay ?? 40,
       minPayout: CFG.minPayout ?? 80,
-      slotWindowMin: CFG.slotWindowMin ?? 11,
+      slotMarginMin: CFG.slotMarginMin ?? 1,
       humanize: CFG.humanize !== false,
       schedule: {
         enabled: !!(CFG.schedule || {}).enabled,
@@ -1037,7 +1065,7 @@ function applySettings(s) {
   const changed = [];
   if (s.stakes) {
     CFG.stakes = CFG.stakes || {};
-    for (const a of ['ETH', 'BTC']) {
+    for (const a of Object.keys(CFG.urls || {})) {
       if (s.stakes[a] == null) continue;
       const v = Math.round(clamp(s.stakes[a], 1, stakeMax(a), stakeFor(a)));
       if (v !== stakeFor(a)) changed.push(`ставка ${a} ${stakeFor(a)}→${v}`);
@@ -1084,6 +1112,13 @@ function applySettings(s) {
     const v = Math.round(clamp(s.signalSilenceMin, 0, 1440, CFG.signalSilenceMin ?? 0));
     if (v !== (CFG.signalSilenceMin ?? 0)) changed.push(`тишина ${CFG.signalSilenceMin ?? 0}→${v} мин`);
     CFG.signalSilenceMin = v;
+  }
+  if (Array.isArray(s.execTimings)) {
+    const v = s.execTimings.map(Number).filter(x => x === 10 || x === 30);
+    if (v.length) {
+      if (String(v) !== String(CFG.execTimings || [10])) changed.push('таймфреймы: ' + v.join(', ') + 'м');
+      CFG.execTimings = v;
+    }
   }
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;
@@ -1165,10 +1200,12 @@ const server = http.createServer((req, res) => {
       req.on('data', d => { b += d; if (b.length > 4096) req.destroy(); });
       req.on('end', () => {
         let m; try { m = JSON.parse(b); } catch (e) { return sendJson(400, { error: 'bad json' }); }
-        const asset = m.asset === 'BTC' ? 'BTC' : 'ETH';
+        const known = Object.keys(CFG.urls || {});
+        const asset = known.includes(m.asset) ? m.asset : known[0];
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
-        state.queue.push({ asset, direction, timing: 10, receivedAt: Date.now(), label: 'manual' });
-        log(`панель: ручная ставка ${asset} ${direction}`);
+        const timing = Number(m.timing) === 30 ? 30 : 10;
+        state.queue.push({ asset, direction, timing, receivedAt: Date.now(), label: 'manual', mult: 1, burstCount: 1 });
+        log(`панель: ручная ставка ${asset} ${direction} ${timing}м`);
         setImmediate(pump);
         sendJson(200, { ok: true });
       });
@@ -1296,6 +1333,20 @@ if (process.argv[2] === 'login') {
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
 } else {
+  // Ctrl+C и обычное завершение должны закрывать за собой браузер и
+  // отпускать порт. Без этого после остановки оставались висеть окна
+  // Chromium, а следующий запуск падал на EADDRINUSE.
+  let closing = false;
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, async () => {
+      if (closing) process.exit(0);
+      closing = true;
+      log(`получен ${sig}, закрываюсь`);
+      try { server.close(); } catch (e) {}
+      await closeBrowser();
+      process.exit(0);
+    });
+  }
   loadState();
   server.listen(CFG.port ?? 8787, () => {
     log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);

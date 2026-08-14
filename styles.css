@@ -820,14 +820,14 @@ html, body {
   padding: 12px 0;
 }
 .signals-summary {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-muted);
-  padding: 7px 10px;
+  padding: 6px 9px;
   margin-bottom: 10px;
-  border: 1px solid rgba(102,163,255,.20);
-  border-radius: 10px;
-  background: rgba(102,163,255,.05);
-  box-shadow: 0 0 10px rgba(102,163,255,.05);
+  border: 1px solid rgba(102,163,255,.24);
+  border-radius: 9px;
+  background: rgba(102,163,255,.055);
+  box-shadow: 0 0 12px rgba(102,163,255,.08);
   transition: border-color .2s, box-shadow .2s, background .2s;
   text-align: center;
 }
@@ -876,55 +876,57 @@ html, body {
 .sig-headwrap {
   position: relative;
   background: linear-gradient(180deg, #181e3c, #11152a); background-color: #12172c;
-  border: 1px solid rgba(102,163,255,.34); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
-  box-shadow: 0 0 0 1px rgba(157,80,255,.08), 0 12px 34px rgba(102,163,255,.10), inset 0 1px 0 rgba(255,255,255,.05);
+  border: 1px solid rgba(102,163,255,.38); border-radius: var(--radius); padding: 8px 9px; margin-bottom: 12px;
+  box-shadow: 0 0 0 1px rgba(157,80,255,.10), 0 12px 36px rgba(102,163,255,.13), inset 0 1px 0 rgba(255,255,255,.05);
 }
 .sig-head {
-  position: relative; display: flex; align-items: center; gap: 7px;
+  position: relative; display: flex; align-items: center; gap: 6px;
 }
 .sig-head2 {
-  display: flex; align-items: center; gap: 7px; margin-top: 8px; flex-wrap: wrap;
-  border: 1px solid rgba(102,163,255,.24); border-radius: 11px;
-  background: rgba(102,163,255,.05);
-  padding: 5px 6px;
-  box-shadow: 0 0 14px rgba(102,163,255,.08), inset 0 1px 0 rgba(255,255,255,.03);
+  display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap;
+  border: 1px solid rgba(102,163,255,.30); border-radius: 10px;
+  background: rgba(102,163,255,.055);
+  padding: 4px 5px;
+  box-shadow: 0 0 16px rgba(102,163,255,.11), inset 0 1px 0 rgba(255,255,255,.03);
 }
 .sig-spacer { margin-left: auto; }
 .sig-title-pill {
-  flex-shrink: 0; display: flex; align-items: center; gap: 6px;
-  background: rgba(102,163,255,.08); border: 1px solid rgba(102,163,255,.30); border-radius: 9px;
-  padding: 6px 10px; color: var(--text); font-size: 13px; font-weight: 800;
-  box-shadow: 0 0 12px rgba(102,163,255,.10);
+  flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+  background: rgba(102,163,255,.08); border: 1px solid rgba(102,163,255,.34); border-radius: 8px;
+  padding: 5px 9px; color: var(--text); font-size: 12.5px; font-weight: 800;
+  box-shadow: 0 0 14px rgba(102,163,255,.14);
 }
 .sig-timer-badge {
-  flex-shrink: 0; padding: 5px 9px; border-radius: 8px; font-size: 11px; font-weight: 800; color: var(--blue);
-  background: rgba(102,163,255,.10); border: 1px solid rgba(102,163,255,.38); box-shadow: 0 0 12px rgba(102,163,255,.18);
+  flex-shrink: 0; padding: 4px 8px; border-radius: 7px; font-size: 10.5px; font-weight: 800; color: var(--blue);
+  background: rgba(102,163,255,.10); border: 1px solid rgba(102,163,255,.42); box-shadow: 0 0 14px rgba(102,163,255,.22);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .sig-head2 .fs-seg {
   flex: 0 0 auto;
-  background: rgba(10,13,24,.55); border-color: rgba(102,163,255,.22);
+  background: rgba(10,13,24,.55); border-color: rgba(102,163,255,.26);
 }
-.sig-branch-seg button { min-width: 44px; }
+.sig-head2 .fs-seg.compact { padding: 2px; }
+.sig-head2 .fs-seg.compact button { padding: 4px 8px; font-size: 10.5px; }
+.sig-branch-seg button { min-width: 40px; }
 .sig-period-seg { flex: 0 0 auto; }
-.sig-period-seg button { min-width: 32px; }
+.sig-period-seg button { min-width: 28px; }
 .sig-date-input {
   flex: 0 0 auto;
   background: rgba(102,163,255,.10);
-  border: 1px solid rgba(102,163,255,.36);
-  border-radius: 9px;
+  border: 1px solid rgba(102,163,255,.40);
+  border-radius: 8px;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   font-family: inherit;
-  padding: 5px 8px;
+  padding: 4px 7px;
   color-scheme: dark;
-  box-shadow: 0 0 10px rgba(102,163,255,.10);
+  box-shadow: 0 0 12px rgba(102,163,255,.14);
 }
 .sig-asset-seg { flex: 0 0 auto; }
 .sig-tf-seg { flex: 0 0 auto; }
-.sig-tf-seg button { min-width: 36px; }
-.sig-asset-seg button { min-width: 52px; }
+.sig-tf-seg button { min-width: 32px; }
+.sig-asset-seg button { min-width: 46px; }
 
 /* Разные цвета веток/монет в активном состоянии - для наглядности и "живости" панели */
 #sigBranchSeg button.active[data-branch="MEXC"] {
@@ -945,10 +947,10 @@ html, body {
 }
 
 .sig-chart-stat {
-  margin-top: 8px; font-size: 12px; color: var(--text-muted);
+  margin-top: 6px; font-size: 11.5px; color: var(--text-muted);
   font-variant-numeric: tabular-nums; text-align: center;
-  padding: 6px 9px; border: 1px solid rgba(102,163,255,.22); border-radius: 10px; background: rgba(102,163,255,.06);
-  box-shadow: 0 0 12px rgba(102,163,255,.06);
+  padding: 5px 8px; border: 1px solid rgba(102,163,255,.26); border-radius: 9px; background: rgba(102,163,255,.06);
+  box-shadow: 0 0 14px rgba(102,163,255,.09);
   transition: border-color .2s, box-shadow .2s, background .2s;
 }
 .sig-chart-stat:empty { display: none; }

@@ -61,23 +61,28 @@
      выравнивает высоту колонок. break-inside не даёт разорвать карточку
      между колонками. */
   .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
-  /* Сетка часов шире карточки, но уже страницы: 24 колонки занимают
-     ~620px, и справа оставалась пустая половина. Сажаем рядом журнал
-     ставок - он как раз узкий. На тесном экране колонка одна. */
-  .bottom { display:grid; grid-template-columns:minmax(0,640px) minmax(0,1fr);
-            gap:10px; align-items:start; }
-  @media (max-width: 1080px) { .bottom { grid-template-columns:1fr; } }
-  /* min-width:0 обязателен: у элемента grid минимальная ширина по
-     умолчанию равна ширине содержимого, и карточка с сеткой часов
-     (24 колонки, ~550px) отказывалась сжиматься - вместо прокрутки
-     внутри неё ехала вся страница. */
-  .bottom .card { margin:0; min-width:0; }
   .sched, .tablewrap { min-width:0; }
   /* Журнал из восьми колонок не влезает в узкий экран, а панель
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
-  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  .tablewrap table { min-width:430px; }
+  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; max-height:420px; overflow-y:auto; }
+  .tablewrap table { min-width:560px; }
+  /* Шапка таблицы не уезжает при прокрутке журнала */
+  .tablewrap thead th { position:sticky; top:0; background:var(--card); z-index:1; }
+
+  /* Заголовок сворачиваемой секции. Настройки правят раз в месяц, а
+     место они занимали столько же, сколько мониторинг. */
+  .sect-toggle {
+    width:100%; text-align:left; margin:2px 0 10px; padding:9px 14px;
+    background:linear-gradient(90deg, rgba(34,232,255,.10), transparent 60%);
+    border:1px solid var(--line); border-radius:12px;
+    font-size:11px; letter-spacing:1.1px;
+  }
+  .sect-toggle::after { content:' ▾'; color:var(--cyan); }
+  .sect-toggle.open::after { content:' ▴'; }
+  .hidden { display:none; }
+  #logFilter button { padding:5px 11px; font-size:10.5px; }
+  #logFilter button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
   .cards > .card {
     break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
     margin:0 0 10px; width:100%;
@@ -246,129 +251,142 @@
   <h1>MEXC Executor</h1>
   <div class="sub" id="sub">загрузка…</div>
 
+  <!-- Мониторинг: то, на что смотрят каждый раз. Всегда на виду. -->
   <div class="cards">
     <div class="card mode-card" id="modeCard">
-      <h2>Режим</h2>
-      <div class="big" id="mode">—</div>
-      <div class="note modeNote" id="modeNote"></div>
-      <div class="btns" style="margin-top:10px">
-        <button id="btnPause">Пауза</button>
-        <button id="btnDry">В dry-run</button>
-      </div>
+    <h2>Режим</h2>
+    <div class="big" id="mode">—</div>
+    <div class="note modeNote" id="modeNote"></div>
+    <div class="btns" style="margin-top:10px">
+    <button id="btnPause">Пауза</button>
+    <button id="btnDry">В dry-run</button>
+    </div>
     </div>
 
     <div class="card">
-      <h2>Слоты и лимиты</h2>
-      <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
-      <div class="row"><span>UP в окне</span><b id="upUsed">—</b></div>
-      <div class="row"><span>DOWN в окне</span><b id="downUsed">—</b></div>
-      <div class="row"><span>В очереди</span><b id="queue">—</b></div>
-      <div class="row"><span>За сегодня</span><b id="today">—</b></div>
-      <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
+    <h2>Слоты и лимиты</h2>
+    <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
+    <div class="row"><span>UP в окне</span><b id="upUsed">—</b></div>
+    <div class="row"><span>DOWN в окне</span><b id="downUsed">—</b></div>
+    <div class="row"><span>В очереди</span><b id="queue">—</b></div>
+    <div class="row"><span>За сегодня</span><b id="today">—</b></div>
+    <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
     </div>
 
     <div class="card">
-      <h2>Окно биржи</h2>
-      <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
-      <div class="row"><span>Расписание сегодня</span><b id="win" style="font-size:12px">—</b></div>
-      <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
-      <div class="btns" style="margin-top:10px">
-        <button id="btnOpen">Открыть окно</button>
-        <button id="btnClose">Закрыть</button>
-      </div>
-      <div class="note">Только чтобы посмотреть глазами - перед ставкой
-        исполнитель откроет его сам.</div>
+    <h2>Окно биржи</h2>
+    <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
+    <div class="row"><span>Расписание сегодня</span><b id="win" style="font-size:12px">—</b></div>
+    <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
+    <div class="btns" style="margin-top:10px">
+    <button id="btnOpen">Открыть окно</button>
+    <button id="btnClose">Закрыть</button>
+    </div>
+    <div class="note">Только чтобы посмотреть глазами - перед ставкой
+    исполнитель откроет его сам.</div>
     </div>
 
     <div class="card">
-      <h2>Ручная ставка</h2>
-      <div class="btns" style="margin-bottom:8px">
-        <select id="mAsset"><option>ETH</option><option>BTC</option></select>
-        <select id="mDir"><option>UP</option><option>DOWN</option></select>
-      </div>
-      <button class="go" id="btnManual">Поставить</button>
-      <div class="note">Payout и режим проверяются, лимиты слотов и
-        направления - нет: ты нажал сам.</div>
+    <h2>Ручная ставка</h2>
+    <div class="btns" style="margin-bottom:8px">
+    <select id="mAsset"><option>ETH</option><option>BTC</option></select>
+    <select id="mDir"><option>UP</option><option>DOWN</option></select>
     </div>
-    <div class="card">
+    <button class="go" id="btnManual">Поставить</button>
+    <div class="note">Payout и режим проверяются, лимиты слотов и
+    направления - нет: ты нажал сам.</div>
+    </div>
+  </div>
+
+  <!-- Журнал - главный ответ на вопрос «что происходило», ему нужна вся
+       ширина и фильтр: половину строк занимает шум вроде skip-quiet. -->
+  <div class="card">
+  <h2>Журнал ставок</h2>
+  <div class="btns" style="margin-bottom:9px" id="logFilter">
+  <button data-f="all" class="on">Все</button>
+  <button data-f="bets">Только ставки</button>
+  <button data-f="errors">Ошибки</button>
+  <span class="hint" id="logCount" style="align-self:center"></span>
+  </div>
+  <div class="tablewrap">
+  <table>
+  <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Сумма</th><th>Payout</th><th>Реж.</th><th>Статус</th><th>Заметка</th></tr></thead>
+  <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
+  </table>
+  </div>
+  </div>
+
+  <!-- Настройки: их правят раз в месяц, поэтому свёрнуты. -->
+  <button class="sect-toggle" id="btnSettings">Настройки</button>
+  <div id="settingsBox" class="hidden">
+    <div class="cards">
+      <div class="card">
       <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
       <div class="row"><span>Ставка ETH, USDT</span>
-        <input type="number" id="stETH" min="1" step="1"></div>
+      <input type="number" id="stETH" min="1" step="1"></div>
       <div class="row"><span>Ставка BTC, USDT</span>
-        <input type="number" id="stBTC" min="1" step="1"></div>
+      <input type="number" id="stBTC" min="1" step="1"></div>
       <div class="row"><span>Мин. payout, %</span>
-        <input type="number" id="minPay" min="50" max="100" step="1"></div>
+      <input type="number" id="minPay" min="50" max="100" step="1"></div>
       <div class="row"><span>Ставок в день</span>
-        <input type="number" id="perDay" min="1" max="500" step="1"></div>
+      <input type="number" id="perDay" min="1" max="500" step="1"></div>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
-    </div>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Приоритет направлений <span class="saved" id="savedDir">сохранено</span></h2>
       <div class="row"><span>UP в окне, не больше</span>
-        <select id="limUp"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <select id="limUp"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
       <div class="row"><span>DOWN в окне, не больше</span>
-        <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
       <div class="note" id="dirHint"></div>
       <button style="margin-top:10px" id="btnSaveDir">Сохранить</button>
-    </div>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Пачки сигналов <span class="saved" id="savedBurst">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="burstOn"> Складывать в одну ставку</label>
       <div class="row"><span>Окно сбора, сек</span>
-        <input type="number" id="burstWin" min="0" max="60" step="1"></div>
+      <input type="number" id="burstWin" min="0" max="60" step="1"></div>
       <div class="row"><span>Множитель не больше</span>
-        <input type="number" id="burstMax" min="1" max="10" step="1"></div>
+      <input type="number" id="burstMax" min="1" max="10" step="1"></div>
       <button style="margin-top:8px" id="btnSaveBurst">Сохранить</button>
       <div class="note" id="burstHint"></div>
-    </div>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Холостые действия <span class="saved" id="savedIdle">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="idleOn"> Включены</label>
       <div id="idleActs" style="margin:6px 0 4px"></div>
       <div class="row"><span>Раз в, минут</span>
-        <span><input type="number" id="idleFrom" min="1" max="240" step="1" style="width:62px">
-        –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
+      <span><input type="number" id="idleFrom" min="1" max="240" step="1" style="width:62px">
+      –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
       <div class="row"><span>Клик с разбросом</span>
-        <input type="checkbox" id="humanize"></div>
+      <input type="checkbox" id="humanize"></div>
       <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
       <div class="note" id="lastIdle"></div>
+      </div>
     </div>
-  </div>
-
-  <div class="bottom">
-  <div class="card">
+    <div class="card">
     <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
     <div class="row" style="margin-bottom:10px">
-      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-      <span><span class="hint">разброс краёв, мин</span>
-        <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+    <span><span class="hint">разброс краёв, мин</span>
+    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
     </div>
     <div class="sched"><table id="schedGrid"></table></div>
     <div class="note">Клик по клетке переключает час, протяжка мышью красит
-      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
+    несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
+    час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+    минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
     <div class="btns" style="margin-top:10px">
-      <button id="btnSaveSched">Сохранить</button>
-      <button id="btnAll">Все часы</button>
-      <button id="btnWorkday">08:00–23:00</button>
-      <button id="btnNone">Снять всё</button>
+    <button id="btnSaveSched">Сохранить</button>
+    <button id="btnAll">Все часы</button>
+    <button id="btnWorkday">08:00–23:00</button>
+    <button id="btnNone">Снять всё</button>
     </div>
-  </div>
-
-  <div class="card">
-    <h2>Последние ставки</h2>
-    <div class="tablewrap">
-    <table>
-      <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Сумма</th><th>Payout</th><th>Реж.</th><th>Статус</th></tr></thead>
-      <tbody id="bets"><tr><td colspan="7" style="color:var(--muted)">пусто</td></tr></tbody>
-    </table>
     </div>
-  </div>
   </div>
 </div>
 
@@ -380,6 +398,42 @@ const post = (a, body) => api(a, body === undefined
   ? { method: 'POST' }
   : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const $ = id => document.getElementById(id);
+
+// ── фильтр журнала ──
+// Половину строк занимает шум: ночные skip-quiet, дубли, merged. Ставки
+// в нём тонут, а смотрят журнал ради них и ради ошибок.
+const BET_STATUSES = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
+const ERR_STATUSES = ['error', 'placed-unconfirmed', 'placed-unverified'];
+let logFilter = localStorage.getItem('mx_logfilter') || 'all';
+function passesFilter(st) {
+  if (logFilter === 'bets') return BET_STATUSES.includes(st);
+  if (logFilter === 'errors') return ERR_STATUSES.includes(st);
+  return true;
+}
+document.getElementById('logFilter').addEventListener('click', e => {
+  const f = e.target.dataset.f;
+  if (!f) return;
+  logFilter = f;
+  localStorage.setItem('mx_logfilter', f);
+  document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  refresh();
+});
+document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
+
+// ── свёрнутые настройки ──
+// Состояние держим в localStorage: панель обновляется каждые 5 секунд, и
+// секция, свёрнутая по умолчанию, разворачивалась бы обратно при каждом
+// заходе, хотя правишь ты её сериями.
+(function () {
+  const box = document.getElementById('settingsBox'), btn = document.getElementById('btnSettings');
+  const apply = open => {
+    box.classList.toggle('hidden', !open);
+    btn.classList.toggle('open', open);
+    localStorage.setItem('mx_settings', open ? '1' : '0');
+  };
+  apply(localStorage.getItem('mx_settings') === '1');
+  btn.onclick = () => apply(box.classList.contains('hidden'));
+})();
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
@@ -592,12 +646,15 @@ async function refresh() {
     // Заметка ушла из отдельной колонки в подсказку статуса: восьми
     // колонок в узкой карточке не хватало, и обрезался как раз статус -
     // единственное, ради чего в журнал и смотрят.
-    tb.innerHTML = st.bets.map(b => {
-      const note = (b.note || '').replace(/^"|"$/g, '').slice(0, 120);
+    // Во всю ширину заметка снова помещается своей колонкой - в узкой
+    // карточке она вытесняла статус, ради которого в журнал и смотрят.
+    tb.innerHTML = rows.map(b => {
+      const note = (b.note || '').replace(/^"|"$/g, '');
       return `<tr>
       <td>${fmtTime(b.time)}</td><td>${b.asset || ''}</td><td>${b.direction || ''}</td>
       <td>${b.stake || ''}</td><td>${b.payout_page || '—'}</td><td>${b.mode || ''}</td>
-      <td class="${statusClass(b.status)}"${note ? ` title="${note.replace(/"/g, '&quot;')}"` : ''}>${b.status || ''}${note ? ' ·' : ''}</td>
+      <td class="${statusClass(b.status)}">${b.status || ''}</td>
+      <td style="color:var(--muted)" title="${note.replace(/"/g, '&quot;')}">${note.slice(0, 70)}</td>
     </tr>`; }).join('');
   }
 }

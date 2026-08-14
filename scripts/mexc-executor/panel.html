@@ -120,15 +120,44 @@
 
   .big { font-size:20px; font-weight:800; }
 
+  /* ── Пульт: четыре секции в ряд, разделённые линиями ── */
+  .ctl { display:grid; grid-template-columns:minmax(190px,1fr) minmax(150px,.85fr) minmax(160px,.9fr) minmax(170px,.95fr);
+         gap:0; padding:0; }
+  .ctl-sec { padding:12px 14px; border-left:1px solid rgba(34,232,255,.14); }
+  .ctl-sec:first-child { border-left:none; }
+  @media (max-width: 860px) {
+    .ctl { grid-template-columns:1fr 1fr; }
+    .ctl-sec:nth-child(odd) { border-left:none; }
+    .ctl-sec:nth-child(n+3) { border-top:1px solid rgba(34,232,255,.14); }
+  }
+  @media (max-width: 520px) {
+    .ctl { grid-template-columns:1fr; }
+    .ctl-sec { border-left:none; }
+    .ctl-sec + .ctl-sec { border-top:1px solid rgba(34,232,255,.14); }
+  }
+  .ctl-h { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:1.1px;
+           color:var(--muted); margin-bottom:7px; }
+  .ctl-note { font-size:10px; color:var(--muted); margin:4px 0 8px; line-height:1.4; }
+  /* Яркость по важности: режим кричит, счётчики говорят, служебное шепчет */
+  .ctl-mode .ctl-h { color:#CFF6FF; text-shadow:0 0 10px rgba(34,232,255,.4); }
+  .ctl-slots .row > b { font-size:13px; }
+  .ctl-dim { opacity:.72; transition:opacity .2s; }
+  .ctl-dim:hover, .ctl-dim:focus-within { opacity:1; }
+  .ctl-dim .row > b { text-shadow:none; color:#B9C4E8; }
+  .ctl-sec .row { padding:1.5px 0; }
+  /* Свечение режима - на всей карточке пульта: оно и есть главный
+     индикатор, и полсекции подсвечивать бессмысленно. */
+  .ctl-mode.live ~ * { }
+
   /* ── Карточка режима ──
      Это единственный переключатель, который стоит денег, поэтому она
      кричит громче остальных: свой цвет свечения на каждое состояние и
      пульс в боевом. Цвет ведёт рамка, свечение и плашка - одного
      текста мало, состояние должно читаться боковым зрением. */
-  .mode-card { transition:box-shadow .3s, border-color .3s; }
-  .mode-card .big { margin-bottom:4px; }
-  .mode-card .pill { font-size:12.5px; padding:6px 16px; letter-spacing:2px; }
-  .mode-card.live {
+  #ctlCard { transition:box-shadow .3s, border-color .3s; }
+  .ctl-mode .big { margin-bottom:2px; }
+  .ctl-mode .pill { font-size:12.5px; padding:6px 16px; letter-spacing:2px; }
+  #ctlCard.live {
     border-color:rgba(78,255,160,.5);
     box-shadow:
       inset 0 1px 0 rgba(78,255,160,.18),
@@ -137,29 +166,29 @@
       0 8px 26px rgba(0,0,0,.55);
     animation:liveBreath 2.6s ease-in-out infinite;
   }
-  .mode-card.live::before { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
-  .mode-card.live::after  { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
-  .mode-card.live .modeNote { color:#8CFFC6; }
+  #ctlCard.live::before { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
+  #ctlCard.live::after  { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
+  #ctlCard.live .modeNote { color:#8CFFC6; }
   @keyframes liveBreath {
     0%,100% { box-shadow: inset 0 1px 0 rgba(78,255,160,.18), inset 0 0 40px rgba(78,255,160,.07),
                           0 0 22px rgba(78,255,160,.18), 0 8px 26px rgba(0,0,0,.55); }
     50%     { box-shadow: inset 0 1px 0 rgba(78,255,160,.18), inset 0 0 40px rgba(78,255,160,.12),
                           0 0 40px rgba(78,255,160,.38), 0 8px 26px rgba(0,0,0,.55); }
   }
-  .mode-card.dry {
+  #ctlCard.dry {
     border-color:rgba(34,232,255,.42);
     box-shadow: inset 0 1px 0 rgba(34,232,255,.14), inset 0 0 36px rgba(34,232,255,.06),
                 0 0 20px rgba(34,232,255,.16), 0 8px 26px rgba(0,0,0,.55);
   }
-  .mode-card.paused {
+  #ctlCard.paused {
     border-color:rgba(255,209,102,.45);
     box-shadow: inset 0 1px 0 rgba(255,209,102,.14), inset 0 0 36px rgba(255,209,102,.06),
                 0 0 20px rgba(255,209,102,.18), 0 8px 26px rgba(0,0,0,.55);
   }
-  .mode-card.paused::before, .mode-card.paused::after {
+  #ctlCard.paused::before, #ctlCard.paused::after {
     border-color:var(--yellow); filter:drop-shadow(0 0 6px rgba(255,209,102,.8));
   }
-  @media (prefers-reduced-motion: reduce) { .mode-card.live { animation:none; } }
+  @media (prefers-reduced-motion: reduce) { #ctlCard.live { animation:none; } }
   .row { display:flex; justify-content:space-between; align-items:center; padding:2.5px 0; font-size:12.5px; gap:8px; }
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
@@ -251,50 +280,51 @@
   <h1>MEXC Executor</h1>
   <div class="sub" id="sub">загрузка…</div>
 
-  <!-- Мониторинг: то, на что смотрят каждый раз. Всегда на виду. -->
-  <div class="cards">
-    <div class="card mode-card" id="modeCard">
-    <h2>Режим</h2>
-    <div class="big" id="mode">—</div>
-    <div class="note modeNote" id="modeNote"></div>
-    <div class="btns" style="margin-top:10px">
-    <button id="btnPause">Пауза</button>
-    <button id="btnDry">В dry-run</button>
-    </div>
-    </div>
-
-    <div class="card">
-    <h2>Слоты и лимиты</h2>
-    <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
-    <div class="row"><span>UP в окне</span><b id="upUsed">—</b></div>
-    <div class="row"><span>DOWN в окне</span><b id="downUsed">—</b></div>
-    <div class="row"><span>В очереди</span><b id="queue">—</b></div>
-    <div class="row"><span>За сегодня</span><b id="today">—</b></div>
-    <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
+  <!-- Управление одним блоком. Четыре карточки рядом читались как четыре
+       независимые темы, хотя это один пульт: режим - слоты - окно - ручная
+       ставка. Разделители вместо рамок, яркость по важности: режим
+       кричит, счётчики говорят, служебное шепчет. -->
+  <div class="card ctl" id="ctlCard">
+    <div class="ctl-sec ctl-mode mode-card" id="modeCard">
+      <div class="ctl-h">Режим</div>
+      <div class="big" id="mode">—</div>
+      <div class="ctl-note modeNote" id="modeNote"></div>
+      <div class="btns">
+        <button id="btnPause">Пауза</button>
+        <button id="btnDry">В dry-run</button>
+      </div>
     </div>
 
-    <div class="card">
-    <h2>Окно биржи</h2>
-    <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
-    <div class="row"><span>Расписание сегодня</span><b id="win" style="font-size:12px">—</b></div>
-    <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
-    <div class="btns" style="margin-top:10px">
-    <button id="btnOpen">Открыть окно</button>
-    <button id="btnClose">Закрыть</button>
-    </div>
-    <div class="note">Только чтобы посмотреть глазами - перед ставкой
-    исполнитель откроет его сам.</div>
+    <div class="ctl-sec ctl-slots">
+      <div class="ctl-h">Слоты</div>
+      <div class="row"><span>Открыто</span><b id="slots">—</b></div>
+      <div class="row"><span>UP</span><b id="upUsed">—</b></div>
+      <div class="row"><span>DOWN</span><b id="downUsed">—</b></div>
+      <div class="row"><span>Очередь</span><b id="queue">—</b></div>
+      <div class="row"><span>Сегодня</span><b id="today">—</b></div>
+      <div class="row"><span>Ошибки</span><b id="errs">—</b></div>
     </div>
 
-    <div class="card">
-    <h2>Ручная ставка</h2>
-    <div class="btns" style="margin-bottom:8px">
-    <select id="mAsset"><option>ETH</option><option>BTC</option></select>
-    <select id="mDir"><option>UP</option><option>DOWN</option></select>
+    <div class="ctl-sec ctl-dim">
+      <div class="ctl-h">Окно биржи</div>
+      <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
+      <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
+      <div class="row"><span>Часы</span><b id="win" style="font-size:11px">—</b></div>
+      <div class="btns" style="margin-top:7px">
+        <button id="btnOpen" title="Открыть окно биржи, чтобы посмотреть глазами. Перед ставкой исполнитель откроет его сам.">Открыть</button>
+        <button id="btnClose">Закрыть</button>
+      </div>
     </div>
-    <button class="go" id="btnManual">Поставить</button>
-    <div class="note">Payout и режим проверяются, лимиты слотов и
-    направления - нет: ты нажал сам.</div>
+
+    <div class="ctl-sec ctl-dim">
+      <div class="ctl-h">Ручная ставка</div>
+      <div class="btns" style="margin-bottom:7px">
+        <select id="mAsset"></select>
+        <select id="mDir"><option>UP</option><option>DOWN</option></select>
+        <select id="mTiming"><option value="10">10м</option><option value="30">30м</option></select>
+      </div>
+      <button class="go" id="btnManual"
+        title="Payout и режим проверяются как обычно. Лимиты слотов и направления ручная ставка обходит: ты нажал сам.">Поставить</button>
     </div>
   </div>
 
@@ -322,14 +352,12 @@
     <div class="cards">
       <div class="card">
       <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
-      <div class="row"><span>Ставка ETH, USDT</span>
-      <input type="number" id="stETH" min="1" step="1"></div>
-      <div class="row"><span>Ставка BTC, USDT</span>
-      <input type="number" id="stBTC" min="1" step="1"></div>
+      <div id="stakeRows"></div>
       <div class="row"><span>Мин. payout, %</span>
       <input type="number" id="minPay" min="50" max="100" step="1"></div>
       <div class="row"><span>Ставок в день</span>
       <input type="number" id="perDay" min="1" max="500" step="1"></div>
+      <div class="row"><span>Таймфреймы</span><span id="tfBox"></span></div>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
       </div>
@@ -534,6 +562,30 @@ const ACT_NAMES = {
   'history':      'Открыть историю сделок',
   'scroll':       'Полистать страницу',
 };
+// Список активов приходит с сервера (ключи urls), поэтому поля ставок и
+// выбор актива для ручной ставки строятся из него - добавление актива в
+// конфиг не требует правки панели.
+let assetsBuilt = null;
+function buildAssetControls(st) {
+  const key = st.settings.assets.join(',');
+  if (assetsBuilt === key) return;
+  assetsBuilt = key;
+  $('stakeRows').innerHTML = st.settings.assets.map(a =>
+    `<div class="row"><span>Ставка ${a}, USDT</span>
+      <input type="number" id="st_${a}" min="1" step="1" data-asset="${a}"></div>`).join('');
+  st.settings.assets.forEach(a => {
+    const el = $('st_' + a);
+    CARDS.stakes.push('st_' + a);
+    ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add('st_' + a)));
+  });
+  $('mAsset').innerHTML = st.settings.assets.map(a => `<option>${a}</option>`).join('');
+  $('tfBox').innerHTML = [10, 30].map(t =>
+    `<label class="chk" style="display:inline-flex;margin-left:8px">
+      <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
+  document.querySelectorAll('.tfBox').forEach(c =>
+    c.addEventListener('change', () => dirty.add('tfBox')));
+}
+
 let idleBuilt = false;
 function buildIdleActions(all, chosen) {
   if (idleBuilt) return;
@@ -550,7 +602,7 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
+  stakes: ['minPay', 'perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
@@ -613,15 +665,18 @@ async function refresh() {
   $('activeNow').innerHTML = st.activeNow
     ? '<span class="pill ok">активен</span>' : '<span class="pill warn">тихие часы</span>';
 
-  setVal('stETH', s.stakes.ETH); setVal('stBTC', s.stakes.BTC);
-  $('stETH').max = s.stakeLimits.ETH; $('stBTC').max = s.stakeLimits.BTC;
-  $('stakeHint').textContent =
-    `Границы биржи: ETH 1–${s.stakeLimits.ETH}, BTC 1–${s.stakeLimits.BTC} USDT.`;
+  buildAssetControls(st);
+  for (const a of s.assets) { setVal('st_' + a, s.stakes[a]); $('st_' + a).max = s.stakeLimits[a]; }
+  if (!dirty.has('tfBox')) {
+    document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
+  }
+  $('stakeHint').textContent = 'Границы биржи: '
+    + s.assets.map(a => `${a} 1–${s.stakeLimits[a]}`).join(', ') + ' USDT.';
   setVal('minPay', s.minPayout); setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
-    `Сколько ставок одной стороны пускаем в окно ${s.slotWindowMin} мин. `
-    + 'Подряд идущие сигналы одной стороны - обычно один заход.';
+    'Сколько ставок одной стороны пускаем по КАЖДОМУ активу, пока они не '
+    + 'истекли. Подряд идущие сигналы одной стороны - обычно один заход.';
 
   setChk('idleOn', s.idleRotation.enabled);
   setChk('humanize', s.humanize);
@@ -672,20 +727,24 @@ $('btnDry').onclick = async () => {
   refresh();
 };
 $('btnManual').onclick = async () => {
-  const asset = $('mAsset').value, direction = $('mDir').value;
-  if (!confirm(`Поставить ${asset} ${direction}?`)) return;
-  await post('manual', { asset, direction });
+  const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
+  if (!confirm(`Поставить ${asset} ${direction} на ${timing} минут?`)) return;
+  await post('manual', { asset, direction, timing });
   setTimeout(refresh, 800);
 };
 $('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('browser-open'); refresh(); };
 $('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };
 
 $('btnSaveStakes').onclick = async () => {
+  const stakes = {};
+  document.querySelectorAll('#stakeRows input').forEach(i => { stakes[i.dataset.asset] = +i.value; });
   await post('settings', {
-    stakes: { ETH: +$('stETH').value, BTC: +$('stBTC').value },
+    stakes,
     minPayout: +$('minPay').value,
     maxBetsPerDay: +$('perDay').value,
+    execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });
+  dirty.delete('tfBox');
   flash('savedStakes'); afterSave('stakes');
 };
 $('btnSaveDir').onclick = async () => {

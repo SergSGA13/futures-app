@@ -4,13 +4,13 @@
 
   "dryRun": true,
 
-  "stakes": { "ETH": 150, "BTC": 250 },
-  "stakeLimits": { "ETH": 150, "BTC": 250 },
+  "stakes": { "ETH": 150, "BTC": 250, "SPCX": 30 },
+  "stakeLimits": { "ETH": 150, "BTC": 250, "SPCX": 150 },
 
   "minPayout": 80,
   "maxOpenBets": 5,
   "dirLimits": { "UP": 5, "DOWN": 5 },
-  "slotWindowMin": 11,
+  "slotMarginMin": 1,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
   "maxConsecutiveErrors": 3,
@@ -24,7 +24,7 @@
     "pollSec": 5
   },
   "burst": { "enabled": true, "windowSec": 3, "maxMultiplier": 3 },
-  "execTimings": [10],
+  "execTimings": [10, 30],
 
   "humanize": true,
   "schedule": {
@@ -56,8 +56,11 @@
 
   "urls": {
     "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
-    "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT"
+    "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
+    "SPCX": "https://www.mexc.com/futures/event-futures/SPCX_USDT"
   },
+
+  "marketClosedText": "Market Closed",
 
   "timeUnitText": { "10": "10m", "30": "30m" },
 

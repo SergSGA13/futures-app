@@ -824,10 +824,10 @@ html, body {
   color: var(--text-muted);
   padding: 6px 9px;
   margin-bottom: 10px;
-  border: 1px solid rgba(102,163,255,.24);
+  border: 1px solid rgba(102,163,255,.34);
   border-radius: 9px;
-  background: rgba(102,163,255,.055);
-  box-shadow: 0 0 12px rgba(102,163,255,.08);
+  background: linear-gradient(180deg, rgba(102,163,255,.09), rgba(157,80,255,.05));
+  box-shadow: 0 0 18px rgba(102,163,255,.14), inset 0 1px 0 rgba(255,255,255,.04);
   transition: border-color .2s, box-shadow .2s, background .2s;
   text-align: center;
 }
@@ -872,48 +872,68 @@ html, body {
   border-color: rgba(102,163,255,0.5);
 }
 
-/* --- Неоновая шапка «Сигналы сегодня»: заголовок, ветка, дата/период, монета/таймфрейм --- */
+/* --- Неоновая шапка «Лента сигналов»: заголовок, ветка+дата, период+монета+таймфрейм --- */
 .sig-headwrap {
-  position: relative;
-  background: linear-gradient(180deg, #181e3c, #11152a); background-color: #12172c;
-  border: 1px solid rgba(102,163,255,.38); border-radius: var(--radius); padding: 8px 9px; margin-bottom: 12px;
-  box-shadow: 0 0 0 1px rgba(157,80,255,.10), 0 12px 36px rgba(102,163,255,.13), inset 0 1px 0 rgba(255,255,255,.05);
+  position: relative; overflow: hidden;
+  background: linear-gradient(180deg, #1a2042, #10142a); background-color: #12172c;
+  border: 1px solid rgba(102,163,255,.45); border-radius: var(--radius); padding: 8px 9px; margin-bottom: 12px;
+  box-shadow: 0 0 0 1px rgba(157,80,255,.14), 0 0 26px rgba(102,163,255,.12),
+              0 14px 40px rgba(102,163,255,.16), inset 0 1px 0 rgba(255,255,255,.06);
+}
+/* неоновая полоса по верхней кромке панели */
+.sig-headwrap::before {
+  content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--blue), var(--purple), transparent);
+  opacity: .85; box-shadow: 0 0 14px rgba(102,163,255,.55);
 }
 .sig-head {
   position: relative; display: flex; align-items: center; gap: 6px;
 }
 .sig-head2 {
-  display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap;
-  border: 1px solid rgba(102,163,255,.30); border-radius: 10px;
-  background: rgba(102,163,255,.055);
+  display: flex; align-items: center; gap: 5px; margin-top: 6px; flex-wrap: wrap;
+  border: 1px solid rgba(102,163,255,.34); border-radius: 10px;
+  background: linear-gradient(180deg, rgba(102,163,255,.09), rgba(157,80,255,.05));
   padding: 4px 5px;
-  box-shadow: 0 0 16px rgba(102,163,255,.11), inset 0 1px 0 rgba(255,255,255,.03);
+  box-shadow: 0 0 20px rgba(102,163,255,.14), inset 0 1px 0 rgba(255,255,255,.05);
+}
+/* неоновый разделитель между группами управления внутри одной строки */
+.sig-div {
+  flex: 0 0 auto; width: 1px; align-self: stretch; margin: 1px 1px;
+  background: linear-gradient(180deg, transparent, rgba(102,163,255,.75), rgba(157,80,255,.55), transparent);
+  box-shadow: 0 0 8px rgba(102,163,255,.55);
 }
 .sig-spacer { margin-left: auto; }
 .sig-title-pill {
   flex-shrink: 0; display: flex; align-items: center; gap: 5px;
-  background: rgba(102,163,255,.08); border: 1px solid rgba(102,163,255,.34); border-radius: 8px;
+  background: linear-gradient(135deg, rgba(102,163,255,.16), rgba(157,80,255,.12));
+  border: 1px solid rgba(102,163,255,.48); border-radius: 8px;
   padding: 5px 9px; color: var(--text); font-size: 12.5px; font-weight: 800;
-  box-shadow: 0 0 14px rgba(102,163,255,.14);
+  text-shadow: 0 0 12px rgba(102,163,255,.45);
+  box-shadow: 0 0 18px rgba(102,163,255,.22), inset 0 1px 0 rgba(255,255,255,.06);
 }
+.sig-title-pill svg { filter: drop-shadow(0 0 5px rgba(102,163,255,.9)); }
 .sig-timer-badge {
   flex-shrink: 0; padding: 4px 8px; border-radius: 7px; font-size: 10.5px; font-weight: 800; color: var(--blue);
-  background: rgba(102,163,255,.10); border: 1px solid rgba(102,163,255,.42); box-shadow: 0 0 14px rgba(102,163,255,.22);
+  background: rgba(102,163,255,.12); border: 1px solid rgba(102,163,255,.55);
+  box-shadow: 0 0 18px rgba(102,163,255,.30), inset 0 0 10px rgba(102,163,255,.10);
+  text-shadow: 0 0 10px rgba(102,163,255,.55);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .sig-head2 .fs-seg {
   flex: 0 0 auto;
-  background: rgba(10,13,24,.55); border-color: rgba(102,163,255,.26);
+  background: rgba(8,11,22,.62); border-color: rgba(102,163,255,.30);
+  box-shadow: inset 0 0 12px rgba(102,163,255,.07);
 }
-.sig-head2 .fs-seg.compact { padding: 2px; }
-.sig-head2 .fs-seg.compact button { padding: 4px 8px; font-size: 10.5px; }
-.sig-branch-seg button { min-width: 40px; }
+.sig-head2 .fs-seg.compact { padding: 2px; gap: 2px; }
+.sig-head2 .fs-seg.compact button { padding: 4px 4px; font-size: 10.5px; }
+.sig-head2 .fs-seg button.active { box-shadow: 0 0 16px rgba(157,80,255,.50); }
+.sig-branch-seg button { min-width: 38px; }
 .sig-period-seg { flex: 0 0 auto; }
-.sig-period-seg button { min-width: 28px; }
+.sig-period-seg button { min-width: 22px; }
 .sig-date-input {
-  flex: 0 0 auto;
-  background: rgba(102,163,255,.10);
-  border: 1px solid rgba(102,163,255,.40);
+  flex: 1 1 auto; min-width: 0;
+  background: linear-gradient(135deg, rgba(102,163,255,.14), rgba(157,80,255,.10));
+  border: 1px solid rgba(102,163,255,.50);
   border-radius: 8px;
   color: var(--text);
   font-size: 11px;
@@ -921,12 +941,26 @@ html, body {
   font-family: inherit;
   padding: 4px 7px;
   color-scheme: dark;
-  box-shadow: 0 0 12px rgba(102,163,255,.14);
+  text-shadow: 0 0 10px rgba(102,163,255,.35);
+  box-shadow: 0 0 16px rgba(102,163,255,.20), inset 0 1px 0 rgba(255,255,255,.05);
 }
 .sig-asset-seg { flex: 0 0 auto; }
 .sig-tf-seg { flex: 0 0 auto; }
-.sig-tf-seg button { min-width: 32px; }
-.sig-asset-seg button { min-width: 46px; }
+.sig-tf-seg button { min-width: 24px; }
+.sig-asset-seg button { min-width: 34px; }
+
+/* Узкие экраны (Android 360px и уже): ужимаем сегменты, чтобы
+   период+монета+таймфрейм остались одной строкой. */
+@media (max-width: 389px) {
+  .sig-head2 { gap: 4px; }
+  .sig-head2 .fs-seg.compact { padding: 2px; gap: 1px; }
+  .sig-head2 .fs-seg.compact button { padding: 4px 3px; font-size: 10px; }
+  .sig-branch-seg button { min-width: 34px; }
+  .sig-period-seg button { min-width: 20px; }
+  .sig-asset-seg button { min-width: 30px; }
+  .sig-tf-seg button { min-width: 22px; }
+  .sig-date-input { font-size: 10px; padding: 4px 5px; }
+}
 
 /* Разные цвета веток/монет в активном состоянии - для наглядности и "живости" панели */
 #sigBranchSeg button.active[data-branch="MEXC"] {
@@ -949,16 +983,19 @@ html, body {
 .sig-chart-stat {
   margin-top: 6px; font-size: 11.5px; color: var(--text-muted);
   font-variant-numeric: tabular-nums; text-align: center;
-  padding: 5px 8px; border: 1px solid rgba(102,163,255,.26); border-radius: 9px; background: rgba(102,163,255,.06);
-  box-shadow: 0 0 14px rgba(102,163,255,.09);
+  padding: 5px 8px; border: 1px solid rgba(102,163,255,.34); border-radius: 9px;
+  background: linear-gradient(180deg, rgba(102,163,255,.09), rgba(157,80,255,.05));
+  box-shadow: 0 0 18px rgba(102,163,255,.14), inset 0 1px 0 rgba(255,255,255,.04);
   transition: border-color .2s, box-shadow .2s, background .2s;
 }
 .sig-chart-stat:empty { display: none; }
 .sig-chart-stat.sig-wr-good, .signals-summary.sig-wr-good {
-  border-color: rgba(78,255,160,.32); background: rgba(78,255,160,.06); box-shadow: 0 0 14px rgba(78,255,160,.12);
+  border-color: rgba(78,255,160,.45); background: rgba(78,255,160,.08);
+  box-shadow: 0 0 20px rgba(78,255,160,.22), inset 0 1px 0 rgba(255,255,255,.04);
 }
 .sig-chart-stat.sig-wr-bad, .signals-summary.sig-wr-bad {
-  border-color: rgba(255,82,114,.32); background: rgba(255,82,114,.06); box-shadow: 0 0 14px rgba(255,82,114,.12);
+  border-color: rgba(255,82,114,.45); background: rgba(255,82,114,.08);
+  box-shadow: 0 0 20px rgba(255,82,114,.20), inset 0 1px 0 rgba(255,255,255,.04);
 }
 .sig-chartwrap {
   position: relative; border-radius: var(--radius-sm); overflow: hidden;

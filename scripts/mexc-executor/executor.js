@@ -59,6 +59,9 @@ const state = {
   startedAt: Date.now(),
   lastIdle: null,                      // последнее холостое действие
   lastSignalAt: null,                  // когда пришёл последний сигнал
+  sheetRows: null,                     // сколько строк листа уже обработано
+  sheetPolledAt: null,
+  sheetError: null,
   silenceAlerted: false,               // алерт о тишине уже отправлен
 };
 
@@ -67,7 +70,7 @@ const state = {
 // максимум 5 одновременных ставок, а исполнитель после рестарта считал
 // бы, что открыто ноль, и мог открыть шестую.
 const STATE_PATH = path.join(ROOT, 'state.json');
-const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt'];
+const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows'];
 function saveState() {
   try {
     const o = {};
@@ -563,6 +566,170 @@ async function placeBet(sig) {
   return { status: 'placed', payoutPage: pv };
 }
 
+// ── источник: лист MEXCsignal ──
+// Вебхук через туннель - самое хрупкое место всей схемы: адрес меняется
+// при каждом запуске cloudflared, а на время обрыва сигналы теряются
+// НАВСЕГДА (Apps Script шлёт и забывает, очереди нет). При этом лист
+// MEXCsignal и так система записи - каждый принятый веткой сигнал в нём
+// уже лежит. Поэтому исполнитель просто ходит за ними сам.
+//
+// Метка прочитанного - количество строк данных, а не дата: формат даты
+// в gviz зависит от локали таблицы, а число строк не зависит ни от чего.
+// На старте метка ставится по текущему количеству, иначе первый же опрос
+// отыграл бы всю историю сигналов.
+function csvRows(text) {
+  const rows = [];
+  let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else if (c !== '\r') cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+// "dd.mm.yyyy HH:MM:SS" (формат листа) либо что-то, что понимает Date.
+function parseSheetTime(v) {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})[ ,]+(\d{1,2}):(\d{2}):(\d{2})/.exec(String(v || ''));
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +m[6]).getTime();
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? null : t;
+}
+
+async function pollSheet() {
+  const S = CFG.sheet || {};
+  if ((CFG.source || 'webhook') !== 'sheet' || !S.id) return;
+  const url = `https://docs.google.com/spreadsheets/d/${S.id}/gviz/tq?tqx=out:csv&sheet=`
+            + encodeURIComponent(S.tab || 'MEXCsignal');
+  let rows;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    rows = csvRows(await r.text());
+  } catch (e) {
+    state.sheetError = e.message;
+    // Не шумим на каждый неудачный опрос: сеть моргает, а опрос частый.
+    if (!state.sheetErrorLogged) { log('лист не прочитался: ' + e.message); state.sheetErrorLogged = true; }
+    return;
+  }
+  state.sheetError = null;
+  state.sheetErrorLogged = false;
+  state.sheetPolledAt = Date.now();
+
+  const data = rows.slice(1).filter(r => r.length > 2 && (r[1] || '').trim());
+  if (state.sheetRows == null) {
+    state.sheetRows = data.length;
+    saveState();
+    log(`лист ${S.tab || 'MEXCsignal'}: ${data.length} строк, слежу за новыми`);
+    return;
+  }
+  if (data.length <= state.sheetRows) {
+    // Строк стало меньше - лист правили руками. Просто переставляем метку.
+    if (data.length < state.sheetRows) {
+      log(`лист укоротился (${state.sheetRows} -> ${data.length}), метка переставлена`);
+      state.sheetRows = data.length;
+      saveState();
+    }
+    return;
+  }
+
+  const fresh = data.slice(state.sheetRows);
+  state.sheetRows = data.length;
+  saveState();
+  for (let i = 0; i < fresh.length; i++) {
+    const r = fresh[i];
+    // Колонки листа: A Time, B Ticker, C Direction, ... J Payout, K Timing
+    const sig = {
+      ticker: r[1], direction: r[2], payout: parseFloat(r[9]) || null,
+      timing: r[10] || 'MEXC _10m',
+      receivedAt: parseSheetTime(r[0]) || Date.now(),
+      // Номер строки - естественный уникальный ключ: повторный опрос той
+      // же строки не создаст вторую ставку даже при сбое метки.
+      dedupKey: 'row' + (state.sheetRows - fresh.length + i + 1),
+    };
+    if (!normalizeSignal(sig)) { log('строка листа непонятна: ' + JSON.stringify(r.slice(0, 3))); continue; }
+    acceptSignal(sig, 'лист');
+  }
+}
+
+// ── приём сигнала ──
+// Один набор правил на оба источника. Раньше проверки жили внутри
+// обработчика HTTP, и сигнал из таблицы прошёл бы мимо тихих часов,
+// лимитов и дедупа - то есть мимо всего, ради чего они существуют.
+function normalizeSignal(sig) {
+  sig.asset = sig.asset || ((sig.ticker || '').includes('BTC') ? 'BTC' :
+                            ((sig.ticker || '').includes('ETH') ? 'ETH' : ''));
+  sig.direction = String(sig.direction || '').toUpperCase();
+  if (sig.direction === 'BUY') sig.direction = 'UP';
+  if (sig.direction === 'SELL') sig.direction = 'DOWN';
+  sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
+  return (sig.asset === 'ETH' || sig.asset === 'BTC')
+      && (sig.direction === 'UP' || sig.direction === 'DOWN');
+}
+
+// Возвращает 'queued' | 'merged' | причину отказа.
+function acceptSignal(sig, src) {
+  const mode = state.dryRun ? 'DRY' : 'LIVE';
+  const skip = (reason, status, msg) => {
+    if (msg) log(`пропуск (${src}): ${msg}`);
+    if (status) logBet({ ...sig, stake: stakeFor(sig.asset), mode, status });
+    return reason;
+  };
+
+  const execTimings = CFG.execTimings || [10];
+  if (execTimings.indexOf(sig.timing) < 0) {
+    return skip('timing', null, `тайминг ${sig.timing}м не в execTimings`);
+  }
+  if (!inActiveHours()) {
+    return skip('quiet-hours', 'skip-quiet', `тихие часы (сегодня ${todayWindows()})`);
+  }
+  if (state.paused) {
+    return skip('paused', null, 'исполнитель на паузе');
+  }
+  const dirBusy = dirSlots(sig.direction) + state.queue.filter(q => q.direction === sig.direction).length;
+  if (dirBusy >= dirLimit(sig.direction)) {
+    return skip('dir-limit', 'skip-dir-limit',
+      `${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне ${CFG.slotWindowMin ?? 11}мин`);
+  }
+  const busySlots = openSlots() + state.queue.length;
+  if (busySlots >= (CFG.maxOpenBets ?? 5)) {
+    return skip('slots', 'skip-slots', `занято слотов ${busySlots}/${CFG.maxOpenBets ?? 5}`);
+  }
+
+  // новый день - сброс дневного счётчика
+  const today = new Date().toDateString();
+  if (today !== state.day) { state.day = today; state.betsToday = 0; }
+  if (!state.dryRun && state.betsToday >= (CFG.maxBetsPerDay ?? 40)) {
+    return skip('daily-limit', null, 'дневной лимит ставок достигнут');
+  }
+
+  // Дедуп повторных доставок. Ключ - ВРЕМЯ ДОСТАВКИ, а не свеча:
+  // Apps Script умеет повторить отправку при таймауте, и тело у повтора
+  // побайтово то же, включая receivedAt. А два настоящих сигнала по
+  // одной свече приходят с разным receivedAt - раньше ключ по bartime
+  // считал их одним и молча выбрасывал второй и третий.
+  const now = Date.now();
+  const key = `${sig.asset}|${sig.direction}|${sig.dedupKey || sig.receivedAt || sig.bartime || sig.sentAt}`;
+  state.recent = state.recent.filter(r => now - r.t < 120000);
+  if (state.recent.some(r => r.key === key)) return 'duplicate';
+  state.recent.push({ key, t: now });
+
+  sig.receivedAt = sig.receivedAt && !isNaN(Date.parse(sig.receivedAt))
+    ? Math.min(Date.parse(sig.receivedAt), now) : now;
+  state.lastSignalAt = now;
+  state.silenceAlerted = false;
+  saveState();
+  log(`сигнал принят (${src}): ${sig.asset} ${sig.direction} ${sig.timing}м payout=${sig.payout}`);
+  return enqueueSignal(sig);
+}
+
 // ── пачки сигналов ──
 // Несколько сигналов одного направления подряд - это один и тот же
 // заход. Три отдельные ставки по нему проигрывают одной тройной: вход
@@ -848,6 +1015,10 @@ function snapshot() {
     },
     dirUsed: { UP: dirSlots('UP'), DOWN: dirSlots('DOWN') },
     dayNames: DAY_NAMES,
+    source: CFG.source || 'webhook',
+    sheetRows: state.sheetRows ?? null,
+    sheetPolledAt: state.sheetPolledAt ?? null,
+    sheetError: state.sheetError ?? null,
     lastSignalAt: state.lastSignalAt,
     silenceMin: silenceMinutes(),
     sinceStart: !state.lastSignalAt,
@@ -1056,97 +1227,22 @@ const server = http.createServer((req, res) => {
     if (!CFG.secret || (sig.secret !== CFG.secret && qsecret !== CFG.secret)) {
       res.writeHead(403); res.end('forbidden'); return;
     }
-    // актив: из ticker ("ETHUSDT.P"/"BTCUSDT.P") или явного поля
-    sig.asset = sig.asset || ((sig.ticker || '').includes('BTC') ? 'BTC' :
-                              ((sig.ticker || '').includes('ETH') ? 'ETH' : ''));
-    sig.direction = String(sig.direction || '').toUpperCase();
-    if (sig.direction === 'BUY') sig.direction = 'UP';
-    if (sig.direction === 'SELL') sig.direction = 'DOWN';
-    // тайминг: из метки "MEXC _10m"/"MEXC _30m" (или числа)
-    sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
-    if (sig.asset !== 'ETH' && sig.asset !== 'BTC') { res.writeHead(400); res.end('bad asset'); return; }
-    if (sig.direction !== 'UP' && sig.direction !== 'DOWN') { res.writeHead(400); res.end('bad direction'); return; }
-    // исполняем только разрешённые таймфреймы (по умолчанию 10m)
-    const execTimings = CFG.execTimings || [10];
-    if (execTimings.indexOf(sig.timing) < 0) {
-      log(`пропуск: тайминг ${sig.timing}м не в execTimings`);
+    if (!normalizeSignal(sig)) { res.writeHead(400); res.end('bad asset or direction'); return; }
+
+    // Когда источник - таблица, вебхук молчит: иначе один и тот же сигнал
+    // пришёл бы дважды разными путями и открыл бы две ставки. ?force=1
+    // оставлен для ручной проверки пути снаружи.
+    if ((CFG.source || 'webhook') === 'sheet' && u.searchParams.get('force') !== '1') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'timing' }));
+      res.end(JSON.stringify({ ok: true, skipped: 'source-sheet' }));
       return;
     }
 
-    // тихие часы: аккаунт не торгует круглосуточно
-    if (!inActiveHours()) {
-      log(`пропуск: тихие часы (сегодня ${todayWindows()})`);
-      logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-quiet' });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'quiet-hours' }));
-      return;
-    }
-
-    // пауза с панели
-    if (state.paused) {
-      log('пропуск: исполнитель на паузе');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'paused' }));
-      return;
-    }
-
-    // лимит ставок одного направления в окне
-    const dirBusy = dirSlots(sig.direction) + state.queue.filter(q => q.direction === sig.direction).length;
-    if (dirBusy >= dirLimit(sig.direction)) {
-      log(`пропуск: ${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне ${CFG.slotWindowMin ?? 11}мин`);
-      logBet({ ...sig, timing: sig.timing, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-dir-limit' });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'dir-limit' }));
-      return;
-    }
-
-    // биржевой лимит одновременных ставок
-    const busySlots = openSlots() + state.queue.length;
-    if (busySlots >= (CFG.maxOpenBets ?? 5)) {
-      log(`пропуск: занято слотов ${busySlots}/${CFG.maxOpenBets ?? 5}`);
-      logBet({ ...sig, timing: sig.timing, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE', status: 'skip-slots' });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'slots' }));
-      return;
-    }
-
-    // новый день - сброс дневного счётчика
-    const today = new Date().toDateString();
-    if (today !== state.day) { state.day = today; state.betsToday = 0; }
-
-    // дневной лимит ставок
-    if (!state.dryRun && state.betsToday >= (CFG.maxBetsPerDay ?? 40)) {
-      log('дневной лимит ставок достигнут - пропуск');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'daily-limit' }));
-      return;
-    }
-
-    // Дедуп повторных доставок. Ключ - ВРЕМЯ ДОСТАВКИ, а не свеча:
-    // Apps Script умеет повторить отправку при таймауте, и тело у повтора
-    // побайтово то же, включая receivedAt. А два настоящих сигнала по
-    // одной свече приходят с разным receivedAt - раньше ключ по bartime
-    // считал их одним и молча выбрасывал второй и третий.
-    const key = `${sig.asset}|${sig.direction}|${sig.receivedAt || sig.bartime || sig.sentAt}`;
-    const now = Date.now();
-    state.recent = state.recent.filter(r => now - r.t < 120000);
-    if (state.recent.some(r => r.key === key)) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, skipped: 'duplicate' }));
-      return;
-    }
-    state.recent.push({ key, t: now });
-
-    sig.receivedAt = now;
-    state.lastSignalAt = now;
-    state.silenceAlerted = false;
-    saveState();
-    log(`сигнал принят: ${sig.asset} ${sig.direction} ${sig.label || sig.timing} payout=${sig.payout}`);
-    const how = enqueueSignal(sig);
+    const r = acceptSignal(sig, 'вебхук');
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, queued: how === 'queued', merged: how === 'merged', dryRun: state.dryRun }));
+    res.end(JSON.stringify({ ok: true, queued: r === 'queued', merged: r === 'merged',
+                             skipped: (r === 'queued' || r === 'merged') ? undefined : r,
+                             dryRun: state.dryRun }));
   });
 });
 
@@ -1210,6 +1306,12 @@ if (process.argv[2] === 'login') {
       + ` | человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
       + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`);
     scheduleIdle();
+    if ((CFG.source || 'webhook') === 'sheet') {
+      const every = Math.max(2, (CFG.sheet || {}).pollSec ?? 5) * 1000;
+      pollSheet();
+      const sp = setInterval(() => pollSheet().catch(e => log('опрос листа упал: ' + e.message)), every);
+      if (sp.unref) sp.unref();
+    }
     // Сторож тишины: раз в минуту, дешевле некуда.
     const sil = setInterval(checkSilence, 60000);
     if (sil.unref) sil.unref();

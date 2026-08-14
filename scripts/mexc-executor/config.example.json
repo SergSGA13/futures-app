@@ -16,6 +16,13 @@
   "maxConsecutiveErrors": 3,
 
   "signalSilenceMin": 120,
+
+  "source": "webhook",
+  "sheet": {
+    "id": "1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o",
+    "tab": "MEXCsignal",
+    "pollSec": 5
+  },
   "burst": { "enabled": true, "windowSec": 3, "maxMultiplier": 3 },
   "execTimings": [10],
 

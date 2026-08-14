@@ -1151,7 +1151,7 @@ const server = http.createServer((req, res) => {
   if (am) {
     if (am[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
     const action = am[2];
-    if (action === 'state') return sendJson(200, { ...snapshot(), bets: recentBets(40) });
+    if (action === 'state') return sendJson(200, { ...snapshot(), bets: recentBets(150) });
     if (req.method === 'POST' && action === 'pause')  { state.paused = true;  log('панель: пауза'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'resume') { state.paused = false; log('панель: снято с паузы'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'dry-on')  { state.dryRun = true;  log('панель: DRY-RUN включён'); return sendJson(200, snapshot()); }

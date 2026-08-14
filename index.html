@@ -156,38 +156,37 @@
             <div class="sig-head">
               <div class="sig-title-pill">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                <span data-i18n="sig.today">Сигналы сегодня</span>
+                <span data-i18n="sig.today">Лента сигналов</span>
               </div>
               <span class="sig-spacer"></span>
               <div class="sig-timer-badge" id="signalTimer">-</div>
             </div>
 
-            <!-- Branch (PRO/MEXC/ALT10m) selector -->
+            <!-- Ветка (PRO/MEXC/ALT10m) + дата -->
             <div class="sig-head2">
               <div class="fs-seg compact sig-branch-seg" id="sigBranchSeg">
                 <button class="active" data-branch="PRO">PRO</button>
                 <button data-branch="MEXC">MEXC</button>
                 <button data-branch="ALT10m">ALT10</button>
               </div>
+              <span class="sig-div"></span>
+              <input type="date" id="sigDateInput" class="sig-date-input" />
             </div>
 
-            <!-- Date + period (1/3/7/14 дней) selector -->
+            <!-- Период + монета + таймфрейм -->
             <div class="sig-head2">
-              <input type="date" id="sigDateInput" class="sig-date-input" />
               <div class="fs-seg compact sig-period-seg" id="sigPeriodSeg">
                 <button class="active" data-days="1">1Д</button>
                 <button data-days="3">3Д</button>
                 <button data-days="7">7Д</button>
                 <button data-days="14">14Д</button>
               </div>
-            </div>
-
-            <!-- BTC / ETH + таймфрейм селектор -->
-            <div class="sig-head2">
+              <span class="sig-div"></span>
               <div class="fs-seg compact sig-asset-seg" id="sigAssetSeg">
                 <button data-coin="BTC">BTC</button>
                 <button class="active" data-coin="ETH">ETH</button>
               </div>
+              <span class="sig-div"></span>
               <div class="fs-seg compact sig-tf-seg" id="sigTfSeg">
                 <button class="active" data-tf="5m">5м</button>
                 <button data-tf="15m">15м</button>

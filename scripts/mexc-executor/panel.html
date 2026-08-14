@@ -77,7 +77,7 @@
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
   .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  .tablewrap table { min-width:520px; }
+  .tablewrap table { min-width:430px; }
   .cards > .card {
     break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
     margin:0 0 10px; width:100%;
@@ -267,17 +267,6 @@
       <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
     </div>
 
-    <div class="card" id="pulseCard">
-      <h2>Связь <span class="saved" id="savedSil">сохранено</span></h2>
-      <div class="row"><span>Последний сигнал</span><b id="lastSig">—</b></div>
-      <div class="row"><span>Порог тишины, мин</span>
-        <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
-      <button style="margin-top:8px" id="btnSaveSil">Сохранить</button>
-      <div class="note">Молчание в активные часы - единственный признак,
-        что упал туннель или слетел деплой Apps Script: в журнале ставок
-        при этом не появляется ничего. 0 - алерт выключен.</div>
-    </div>
-
     <div class="card">
       <h2>Окно биржи</h2>
       <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
@@ -375,8 +364,8 @@
     <h2>Последние ставки</h2>
     <div class="tablewrap">
     <table>
-      <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Ставка</th><th>Payout</th><th>Режим</th><th>Статус</th><th>Заметка</th></tr></thead>
-      <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
+      <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Сумма</th><th>Payout</th><th>Реж.</th><th>Статус</th></tr></thead>
+      <tbody id="bets"><tr><td colspan="7" style="color:var(--muted)">пусто</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -399,10 +388,16 @@ const statusClass = (s) =>
   s === 'merged' ? 's-dry' :
   s === 'error' ? 's-error' : 's-skip';
 
+// В журнале лежат ставки за несколько суток, а показывалось только
+// время: строка «08:55» из вчера выглядела свежее, чем «00:12» из
+// сегодня. Дату дописываем ровно там, где день не сегодняшний.
 function fmtTime(v) {
   if (!v) return '—';
   const d = new Date(v);
-  return isNaN(d) ? v : d.toLocaleTimeString('ru-RU');
+  if (isNaN(d)) return v;
+  const t = d.toLocaleTimeString('ru-RU');
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? t : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
 function flash(id) {
   const el = $(id);
@@ -504,7 +499,6 @@ const CARDS = {
   stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
-  sil:    ['brkSilence'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
   sched:  ['schedOn', 'jitter'],
 };
@@ -547,14 +541,6 @@ async function refresh() {
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
   $('errs').textContent = st.consecutiveErrors;
 
-  // Тишина сигналов: жёлтым с половины порога, красным за порогом -
-  // чтобы «что-то отвалилось» было видно до того, как станет поздно.
-  const lim = s.signalSilenceMin || 0;
-  const m = st.silenceMin;
-  const sigCls = (lim && m >= lim) ? 'bad' : (lim && m >= lim / 2) ? 'warn' : 'ok';
-  $('lastSig').innerHTML = `<span class="pill ${sigCls}" title="${st.sinceStart
-    ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${m} мин${st.sinceStart ? '*' : ''}</span>`;
-  setVal('brkSilence', s.signalSilenceMin);
   setChk('burstOn', s.burst.enabled);
   setVal('burstWin', s.burst.windowSec);
   setVal('burstMax', s.burst.maxMultiplier);
@@ -601,14 +587,18 @@ async function refresh() {
 
   const tb = $('bets');
   if (!st.bets || !st.bets.length) {
-    tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">пока ставок не было</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">пока ставок не было</td></tr>';
   } else {
-    tb.innerHTML = st.bets.map(b => `<tr>
+    // Заметка ушла из отдельной колонки в подсказку статуса: восьми
+    // колонок в узкой карточке не хватало, и обрезался как раз статус -
+    // единственное, ради чего в журнал и смотрят.
+    tb.innerHTML = st.bets.map(b => {
+      const note = (b.note || '').replace(/^"|"$/g, '').slice(0, 120);
+      return `<tr>
       <td>${fmtTime(b.time)}</td><td>${b.asset || ''}</td><td>${b.direction || ''}</td>
       <td>${b.stake || ''}</td><td>${b.payout_page || '—'}</td><td>${b.mode || ''}</td>
-      <td class="${statusClass(b.status)}">${b.status || ''}</td>
-      <td style="color:var(--muted)">${(b.note || '').replace(/^"|"$/g, '').slice(0, 60)}</td>
-    </tr>`).join('');
+      <td class="${statusClass(b.status)}"${note ? ` title="${note.replace(/"/g, '&quot;')}"` : ''}>${b.status || ''}${note ? ' ·' : ''}</td>
+    </tr>`; }).join('');
   }
 }
 
@@ -664,10 +654,6 @@ $('btnSaveBurst').onclick = async () => {
     maxMultiplier: +$('burstMax').value,
   } });
   flash('savedBurst'); afterSave('burst');
-};
-$('btnSaveSil').onclick = async () => {
-  await post('settings', { signalSilenceMin: +$('brkSilence').value });
-  flash('savedSil'); afterSave('sil');
 };
 $('btnSaveSched').onclick = async () => {
   await post('settings', {

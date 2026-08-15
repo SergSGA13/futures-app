@@ -488,22 +488,74 @@ async function placeBet(sig) {
     throw new Error('НЕ ЗАЛОГИНЕН - выполни: node executor.js login');
   }
 
-  // таймфрейм (10m / 30m)
+  // ── таймфрейм ──
+  // Экспирация НЕ подтверждается ничем, кроме выбранного чипа, поэтому
+  // ошибиться тут значит открыть ставку не на те минуты. Так и вышло:
+  // .first() брал первое совпадение, оно оказывалось скрытым, клик
+  // молча пропускался, и ставка уходила на тот таймфрейм, что стоял на
+  // странице. Пока каждая ставка перезагружала страницу, чип сбрасывался
+  // сам; после оптимизации «не перезагружать, если уже открыто» прежний
+  // выбор стал сохраняться - и 10-минутные сигналы поехали на 30 минут.
   const tfText = CFG.timeUnitText[String(sig.timing)] || '10m';
-  // ВАЖНО: раньше строка склеивалась в
-  //   'button, div[role=button], span:has-text("10m")'
-  // а CSS читает это как СПИСОК через запятую - :has-text() относился
-  // только к span. Локатор совпадал с ЛЮБОЙ кнопкой страницы, и .first()
-  // хватал то скрытый ant-tabs-nav-more, то кнопку Deposit в шапке.
-  // filter() применяет условие ко всему набору, как и задумано.
-  const tf = page.locator(CFG.selectors.timeUnit)
-    .filter({ hasText: new RegExp('^\\s*' + tfText + '\\s*$') }).first();
-  // именно visible: селектор широкий и легко цепляет скрытый элемент,
-  // клик по которому висел бы до таймаута
-  if (await tf.isVisible().catch(() => false)) {
-    await humanClick(tf).catch(e => log('чип таймфрейма не кликнулся: ' + e.message));
+  const tfRe = new RegExp('^\\s*' + tfText + '\\s*$');
+
+  // Берём первый ВИДИМЫЙ чип, а не первый попавшийся: селектор широкий
+  // и легко цепляет скрытую разметку вкладок.
+  async function visibleChip(re) {
+    const all = page.locator(CFG.selectors.timeUnit).filter({ hasText: re });
+    const n = Math.min(await all.count().catch(() => 0), 12);
+    for (let i = 0; i < n; i++) {
+      const c = all.nth(i);
+      if (await c.isVisible().catch(() => false)) return c;
+    }
+    return null;
   }
-  await page.waitForTimeout(randInt(400, 900));
+  // «Выбран» на разных вёрстках отмечается по-разному: aria-selected на
+  // самом элементе или класс active/selected/checked на нём либо на
+  // обёртке вкладки. Поэтому смотрим и вверх по нескольким предкам.
+  const chipActive = c => c.evaluate(el => {
+    const hit = e => !!e && (
+      (e.getAttribute && e.getAttribute('aria-selected') === 'true') ||
+      /(^|[-_ ])(active|selected|checked)([-_ ]|$)/i.test(String(e.className || '')));
+    for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) if (hit(e)) return true;
+    return false;
+  }).catch(() => false);
+
+  // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
+  // понять; тогда проверять нечего, но и ломать исполнение нельзя.
+  async function activeChipName() {
+    for (const t of Object.values(CFG.timeUnitText || { 10: '10m' })) {
+      const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
+      if (c && await chipActive(c)) return t;
+    }
+    return null;
+  }
+
+  const tf = await visibleChip(tfRe);
+  if (!tf) {
+    await shot('no-timeframe');
+    await dumpPage('no-timeframe');
+    throw new Error(`чип таймфрейма "${tfText}" не найден - смотри ДАМП выше`);
+  }
+  const before = await activeChipName();
+  if (before !== tfText) {
+    await humanClick(tf).catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
+    await page.waitForTimeout(randInt(500, 900));
+  }
+  // Проверяем РЕЗУЛЬТАТ, а не факт клика: клик мог не переключить вкладку,
+  // и ставка ушла бы не на те минуты. Но если разметка вообще не отмечает
+  // выбранный чип (activeChipName вернул null и до, и после), проверять
+  // нечем - тогда идём дальше с записью в лог. Запрет на этом основании
+  // остановил бы вообще все ставки, а это хуже исходной ошибки.
+  const after = await activeChipName();
+  if (after === tfText) {
+    log(`таймфрейм ${tfText} выбран`);
+  } else if (after == null && before == null) {
+    log(`таймфрейм ${tfText}: кликнул, но проверить выбор нечем - разметка не отмечает активный чип`);
+  } else {
+    await shot('timeframe-mismatch');
+    throw new Error(`таймфрейм не переключился на ${tfText}, на странице выбран ${after}`);
+  }
 
   // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
   // выходных вместо кнопок Up/Down висит «Market Closed». Без этой

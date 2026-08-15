@@ -711,14 +711,17 @@ async function refresh() {
     + new Date().toLocaleTimeString('ru-RU') + (schedDirty ? ' · есть несохранённые правки расписания' : '');
 
   const tb = $('bets');
-  if (!st.bets || !st.bets.length) {
-    tb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">пока ставок не было</td></tr>';
+  const all = st.bets || [];
+  const rows = all.filter(b => passesFilter(b.status));
+  $('logCount').textContent = logFilter === 'all'
+    ? `${all.length} строк`
+    : `${rows.length} из ${all.length}`;
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="8" style="color:var(--muted)">${
+      all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
-    // Заметка ушла из отдельной колонки в подсказку статуса: восьми
-    // колонок в узкой карточке не хватало, и обрезался как раз статус -
-    // единственное, ради чего в журнал и смотрят.
-    // Во всю ширину заметка снова помещается своей колонкой - в узкой
-    // карточке она вытесняла статус, ради которого в журнал и смотрят.
+    // Во всю ширину заметка помещается своей колонкой - в узкой карточке
+    // она вытесняла статус, ради которого в журнал и смотрят.
     tb.innerHTML = rows.map(b => {
       const note = (b.note || '').replace(/^"|"$/g, '');
       return `<tr>

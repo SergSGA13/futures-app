@@ -62,6 +62,13 @@
      между колонками. */
   .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
   .sched, .tablewrap { min-width:0; }
+  /* Журнал и часы работы одной полосой. min-width:0 обязателен: элемент
+     grid по умолчанию не сжимается уже содержимого, и сетка на 24
+     колонки распирала бы страницу вместо прокрутки внутри себя. */
+  .duo { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,566px);
+         gap:10px; align-items:start; margin-bottom:10px; }
+  .duo > .card { margin:0; min-width:0; }
+  @media (max-width: 1100px) { .duo { grid-template-columns:1fr; } }
   /* Журнал из восьми колонок не влезает в узкий экран, а панель
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
@@ -82,6 +89,11 @@
   .sect-toggle.open::after { content:' ▴'; }
   .hidden { display:none; }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
+  #logHead th[data-c] { cursor:pointer; user-select:none; }
+  #logHead th[data-c]:hover { color:var(--cyan); }
+  #logHead th.sorted { color:var(--cyan); text-shadow:0 0 9px rgba(34,232,255,.5); }
+  #logHead th.sorted::after { content:' ↑'; }
+  #logHead[data-dir="down"] th.sorted::after { content:' ↓'; }
   #logFilter button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
   .cards > .card {
     break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
@@ -126,25 +138,22 @@
      приоритет задавался общей прозрачностью секции, отчего текст просто
      мутнел. Теперь: разделитель - световой луч, а важность выражена
      размером и цветом, не мутью. */
-  .ctl { display:grid; grid-template-columns:minmax(210px,1.05fr) minmax(150px,.8fr) minmax(160px,.85fr) minmax(180px,.9fr);
-         gap:0; padding:11px; }
-  .ctl-sec { position:relative; padding:9px 15px; }
-  .ctl-sec + .ctl-sec::before {
-    content:''; position:absolute; left:0; top:6%; bottom:6%; width:1px;
-    background:linear-gradient(180deg, transparent, rgba(34,232,255,.55) 25%,
-                               rgba(157,80,255,.55) 75%, transparent);
-    box-shadow:0 0 8px rgba(34,232,255,.45);
+  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(150px,.8fr) minmax(175px,.9fr);
+         gap:9px; padding:11px; }
+  /* Каждая секция - своё окно с рамкой в собственном цвете. Линия-
+     разделитель этого не давала: блоки читались как один сплошной текст. */
+  .ctl-sec {
+    position:relative; padding:11px 13px; border-radius:11px;
+    border:1px solid rgba(34,232,255,.22);
+    background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.07), transparent 70%);
   }
-  @media (max-width: 900px) {
-    .ctl { grid-template-columns:1fr 1fr; }
-    .ctl-sec:nth-child(odd)::before { display:none; }
-    .ctl-sec:nth-child(n+3) { border-top:1px solid rgba(34,232,255,.16); }
-  }
-  @media (max-width: 540px) {
-    .ctl { grid-template-columns:1fr; }
-    .ctl-sec::before { display:none; }
-    .ctl-sec + .ctl-sec { border-top:1px solid rgba(34,232,255,.16); }
-  }
+  .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
+  .ctl-sec-win   { border-color:rgba(102,163,255,.24);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
+  .ctl-sec-man   { border-color:rgba(157,80,255,.32);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(157,80,255,.09), transparent 70%); }
+  @media (max-width: 900px) { .ctl { grid-template-columns:1fr 1fr; } }
+  @media (max-width: 540px) { .ctl { grid-template-columns:1fr; } }
 
   /* Заголовки секций: у режима яркий, у остальных служебный */
   .ctl-h { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:1.2px;
@@ -155,7 +164,7 @@
      вместе с режимом. Именно она отвечает на вопрос «что сейчас», и
      видно её должно быть боковым зрением, из другого конца комнаты. */
   .ctl-mode {
-    margin:-4px 0; padding:12px 15px;
+    padding:11px 13px;
     border:1px solid rgba(34,232,255,.35); border-radius:11px;
     background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.10), transparent 68%);
     transition:border-color .3s, box-shadow .3s, background .3s;
@@ -163,7 +172,6 @@
   .ctl-mode .ctl-h { color:#DFF7FF; text-shadow:0 0 10px rgba(34,232,255,.5); }
   .ctl-mode .pill { font-size:14px; padding:7px 20px; letter-spacing:2.5px; }
   .ctl-mode .big { margin-bottom:3px; }
-  .ctl-sec + .ctl-mode::before { display:none; }
 
   /* ── Состояние режима красит главный блок ──
      Цвет ведут рамка, подложка и свечение: одного текста мало, режим
@@ -194,6 +202,13 @@
 
   /* Счётчики - второй уровень: цифры крупные и яркие, подписи тихие */
   .ctl-slots .row > b { font-size:13.5px; color:#DFF7FF; }
+  /* Спарклайн ставок по часам: одна картинка вместо строки цифр -
+     видно не только «сколько сегодня», но и когда они шли. */
+  .spark-row { gap:7px; }
+  .spark { flex:1; min-width:44px; height:20px; display:block; }
+  .spark svg { width:100%; height:100%; display:block; overflow:visible; }
+  #errPill { font-size:9px; padding:2px 7px; border-radius:6px; margin-left:5px;
+             background:rgba(255,82,114,.16); color:var(--red); border:1px solid rgba(255,82,114,.45); }
   .ctl-slots .row > span:first-child { font-size:11.5px; }
 
   /* Служебное - третий уровень. Приглушаем ЦВЕТОМ, а не прозрачностью:
@@ -267,7 +282,7 @@
               color:var(--muted); font-family:var(--mono); letter-spacing:0; }
   .sched td { padding:0; border:none; }
   .cell {
-    width:20px; height:18px; border-radius:4px; cursor:pointer;
+    width:19px; height:18px; border-radius:4px; cursor:pointer;
     background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.05);
     transition:background .12s, box-shadow .12s;
   }
@@ -311,17 +326,16 @@
       </div>
     </div>
 
-    <div class="ctl-sec ctl-slots">
-      <div class="ctl-h">Слоты</div>
+    <div class="ctl-sec ctl-slots ctl-sec-slots">
+      <div class="ctl-h">Слоты <span id="errPill"></span></div>
       <div class="row"><span>Открыто</span><b id="slots">—</b></div>
-      <div class="row"><span>UP</span><b id="upUsed">—</b></div>
-      <div class="row"><span>DOWN</span><b id="downUsed">—</b></div>
+      <div class="row"><span>UP / DOWN</span><b id="updown">—</b></div>
       <div class="row"><span>Очередь</span><b id="queue">—</b></div>
-      <div class="row"><span>Сегодня</span><b id="today">—</b></div>
-      <div class="row"><span>Ошибки</span><b id="errs">—</b></div>
+      <div class="row spark-row"><span>Сегодня</span>
+        <span class="spark" id="todaySpark"></span><b id="today">—</b></div>
     </div>
 
-    <div class="ctl-sec ctl-dim">
+    <div class="ctl-sec ctl-dim ctl-sec-win">
       <div class="ctl-h">Окно биржи</div>
       <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
       <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
@@ -332,7 +346,7 @@
       </div>
     </div>
 
-    <div class="ctl-sec ctl-dim">
+    <div class="ctl-sec ctl-dim ctl-sec-man">
       <div class="ctl-h">Ручная ставка</div>
       <div class="btns" style="margin-bottom:7px">
         <select id="mAsset"></select>
@@ -344,8 +358,10 @@
     </div>
   </div>
 
-  <!-- Журнал - главный ответ на вопрос «что происходило», ему нужна вся
-       ширина и фильтр: половину строк занимает шум вроде skip-quiet. -->
+  <!-- Журнал и часы работы - одна полоса: оба отвечают на вопрос
+       «когда», и по отдельности занимали две. Журналу отдана большая
+       доля: в нём восемь колонок, а в сетке часов ширина фиксированная. -->
+  <div class="duo">
   <div class="card">
   <h2>Журнал ставок</h2>
   <div class="btns" style="margin-bottom:9px" id="logFilter">
@@ -356,13 +372,37 @@
   </div>
   <div class="tablewrap">
   <table>
-  <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Сумма</th><th>Payout</th><th>Реж.</th><th>Статус</th><th>Заметка</th></tr></thead>
+  <thead><tr id="logHead">
+        <th data-c="time">Время</th><th data-c="asset">Актив</th><th data-c="direction">Напр.</th>
+        <th data-c="stake">Сумма</th><th data-c="payout_page">Payout</th><th data-c="mode">Реж.</th>
+        <th data-c="status">Статус</th><th>Заметка</th>
+      </tr></thead>
   <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
   </div>
   </div>
 
-  <!-- Настройки: их правят раз в месяц, поэтому свёрнуты. -->
+  <div class="card">
+      <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
+      <div class="row" style="margin-bottom:10px">
+      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+      <span><span class="hint">разброс краёв, мин</span>
+      <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+      </div>
+      <div class="sched"><table id="schedGrid"></table></div>
+      <div class="note">Клик по клетке переключает час, протяжка мышью красит
+      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
+      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
+      <div class="btns" style="margin-top:10px">
+      <button id="btnSaveSched">Сохранить</button>
+      <button id="btnAll">Все часы</button>
+      <button id="btnWorkday">08:00–23:00</button>
+      <button id="btnNone">Снять всё</button>
+      </div>
+      </div>
+  </div>
+
   <button class="sect-toggle" id="btnSettings">Настройки</button>
   <div id="settingsBox" class="hidden">
     <div class="cards">
@@ -412,25 +452,7 @@
       <div class="note" id="lastIdle"></div>
       </div>
     </div>
-    <div class="card">
-    <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
-    <div class="row" style="margin-bottom:10px">
-    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-    <span><span class="hint">разброс краёв, мин</span>
-    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
-    </div>
-    <div class="sched"><table id="schedGrid"></table></div>
-    <div class="note">Клик по клетке переключает час, протяжка мышью красит
-    несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-    час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-    минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
-    <div class="btns" style="margin-top:10px">
-    <button id="btnSaveSched">Сохранить</button>
-    <button id="btnAll">Все часы</button>
-    <button id="btnWorkday">08:00–23:00</button>
-    <button id="btnNone">Снять всё</button>
-    </div>
-    </div>
+    
   </div>
 </div>
 
@@ -454,6 +476,15 @@ function passesFilter(st) {
   if (logFilter === 'errors') return ERR_STATUSES.includes(st);
   return true;
 }
+document.getElementById('logHead').addEventListener('click', e => {
+  const c = e.target.dataset.c;
+  if (!c) return;
+  if (sortBy === c) sortDir = -sortDir; else { sortBy = c; sortDir = 1; }
+  document.querySelectorAll('#logHead th').forEach(th =>
+    th.classList.toggle('sorted', th.dataset.c === sortBy));
+  document.getElementById('logHead').dataset.dir = sortDir > 0 ? 'up' : 'down';
+  refresh();
+});
 document.getElementById('logFilter').addEventListener('click', e => {
   const f = e.target.dataset.f;
   if (!f) return;
@@ -478,6 +509,43 @@ document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('
   apply(localStorage.getItem('mx_settings') === '1');
   btn.onclick = () => apply(box.classList.contains('hidden'));
 })();
+
+// ── спарклайн ставок по часам ──
+// Число «5 из 44» говорит сколько, но не говорит когда. Двадцать четыре
+// столбика рядом отвечают на оба вопроса и занимают строку, а не блок.
+function sparkline(el, counts) {
+  const max = Math.max(1, ...counts);
+  const w = 100, h = 20, bw = w / counts.length;
+  const bars = counts.map((v, i) => {
+    const bh = v ? Math.max(2, (v / max) * h) : 0;
+    return bh ? `<rect x="${(i * bw).toFixed(2)}" y="${(h - bh).toFixed(2)}"
+      width="${(bw * .74).toFixed(2)}" height="${bh.toFixed(2)}" rx="0.6"
+      fill="url(#sg)"></rect>` : '';
+  }).join('');
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <defs><linearGradient id="sg" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#22E8FF" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#22E8FF" stop-opacity="1"/>
+    </linearGradient></defs>${bars}</svg>`;
+}
+// Считаем только настоящие ставки: skip/merged/duplicate - это шум, и в
+// картинке активности им делать нечего.
+const PLACED = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
+function betsByHour(bets) {
+  const today = new Date().toDateString();
+  const h = new Array(24).fill(0);
+  for (const b of bets || []) {
+    if (!PLACED.includes(b.status)) continue;
+    const d = new Date(b.time);
+    if (isNaN(d) || d.toDateString() !== today) continue;
+    h[d.getHours()]++;
+  }
+  return h;
+}
+
+// ── сортировка журнала ──
+let sortBy = null, sortDir = 1;
+const SORT_COLS = ['time', 'asset', 'direction', 'stake', 'payout_page', 'mode', 'status'];
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
@@ -657,11 +725,14 @@ async function refresh() {
   $('btnDry').className = st.dryRun ? 'danger' : '';
 
   $('slots').textContent = `${st.slots} / ${s.maxOpenBets}`;
-  $('upUsed').textContent = `${st.dirUsed.UP} / ${s.dirLimits.UP}`;
-  $('downUsed').textContent = `${st.dirUsed.DOWN} / ${s.dirLimits.DOWN}`;
+  $('updown').textContent = `${st.dirUsed.UP}/${s.dirLimits.UP} · ${st.dirUsed.DOWN}/${s.dirLimits.DOWN}`;
   $('queue').textContent = st.queue;
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
-  $('errs').textContent = st.consecutiveErrors;
+  sparkline($('todaySpark'), betsByHour(st.bets));
+  // Ошибки занимали строку ради нуля в 99% времени. Теперь плашка, и
+  // только когда есть о чём говорить.
+  $('errPill').textContent = st.consecutiveErrors ? st.consecutiveErrors + ' ошиб.' : '';
+  $('errPill').style.display = st.consecutiveErrors ? '' : 'none';
 
   setChk('burstOn', s.burst.enabled);
   setVal('burstWin', s.burst.windowSec);
@@ -713,6 +784,17 @@ async function refresh() {
   const tb = $('bets');
   const all = st.bets || [];
   const rows = all.filter(b => passesFilter(b.status));
+  // Журнал приходит от новых к старым. Сортировка нужна, чтобы собрать
+  // вместе ставки одного актива или все ошибки, не листая полторы сотни
+  // строк; числовые колонки сравниваем как числа, а не как текст.
+  if (sortBy) {
+    const num = ['stake', 'payout_page'].includes(sortBy);
+    rows.sort((x, y) => {
+      const a = x[sortBy] ?? '', b = y[sortBy] ?? '';
+      const r = num ? (parseFloat(a) || 0) - (parseFloat(b) || 0) : String(a).localeCompare(String(b));
+      return r * sortDir;
+    });
+  }
   $('logCount').textContent = logFilter === 'all'
     ? `${all.length} строк`
     : `${rows.length} из ${all.length}`;

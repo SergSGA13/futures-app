@@ -439,6 +439,18 @@ async function pagePayout(direction) {
   } catch (e) { return null; }
 }
 
+// Какой актив показывает страница СЕЙЧАС - по заголовку документа.
+// Адрес меняется мгновенно, а SPA перерисовывает панель позже, поэтому
+// url тут не свидетель: он уже говорит BTC, когда на экране ещё ETH.
+// Заголовок биржа переписывает вместе с контрактом.
+// null - определить не удалось (нет символа или их несколько).
+async function pageAsset() {
+  const t = await page.title().catch(() => '');
+  const keys = Object.keys(CFG.urls || {}).sort((a, b) => b.length - a.length);
+  const hit = keys.filter(k => new RegExp(k + '\\s*[_/-]?\\s*USDT', 'i').test(t));
+  return hit.length === 1 ? hit[0] : null;
+}
+
 // ── ставка ──
 async function placeBet(sig) {
   const t0 = Date.now();
@@ -480,6 +492,25 @@ async function placeBet(sig) {
     throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
   }
   log('панель готова, поле суммы: ' + ready.sel);
+
+  // Ставка не на тот актив - самая дорогая из возможных ошибок, и
+  // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
+  // пока SPA договорит: сразу после goto заголовок ещё прежний.
+  let seen = await pageAsset();
+  if (seen && seen !== sig.asset) {
+    const until = Date.now() + (CFG.assetSettleMs ?? 6000);
+    while (Date.now() < until && seen && seen !== sig.asset) {
+      await page.waitForTimeout(400);
+      seen = await pageAsset();
+    }
+  }
+  if (seen && seen !== sig.asset) {
+    await shot('wrong-asset');
+    throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset} - ставку не делаю`);
+  }
+  // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
+  // основании остановил бы все ставки, если биржа сменит заголовок.
+  log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
 
   // залогинены ли мы: на странице не должно быть кнопки Log In
   const loginBtn = page.locator(CFG.selectors.loginMarker).first();
@@ -958,7 +989,12 @@ async function idleAction() {
     }
 
     if (act === 'switch-asset') {
-      const other = /BTC/.test(page.url()) ? 'ETH' : 'BTC';
+      // Список берём из конфига: захардкоженные ETH/BTC делали вид, что
+      // третьего актива не существует, и со SPCX уводили страницу на ETH.
+      const all = Object.keys(CFG.urls || {});
+      const cur = all.find(a => page.url().startsWith(CFG.urls[a]));
+      const rest = all.filter(a => a !== cur);
+      const other = rest.length ? rest[randInt(0, rest.length - 1)] : all[0];
       await page.goto(CFG.urls[other], { waitUntil: 'domcontentloaded', timeout: 15000 });
       await idleWait(randInt(2000, 6000));
 
@@ -1252,8 +1288,13 @@ const server = http.createServer((req, res) => {
       req.on('data', d => { b += d; if (b.length > 4096) req.destroy(); });
       req.on('end', () => {
         let m; try { m = JSON.parse(b); } catch (e) { return sendJson(400, { error: 'bad json' }); }
+        // Раньше неизвестный актив молча подменялся первым из списка -
+        // то есть опечатка в запросе открывала ставку по чужой монете.
         const known = Object.keys(CFG.urls || {});
-        const asset = known.includes(m.asset) ? m.asset : known[0];
+        if (!known.includes(m.asset)) {
+          return sendJson(400, { error: 'неизвестный актив: ' + m.asset, known });
+        }
+        const asset = m.asset;
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
         const timing = Number(m.timing) === 30 ? 30 : 10;
         state.queue.push({ asset, direction, timing, receivedAt: Date.now(), label: 'manual', mult: 1, burstCount: 1 });

@@ -61,6 +61,7 @@
   },
 
   "marketClosedText": "Market Closed",
+  "assetSettleMs": 6000,
 
   "timeUnitText": { "10": "10m", "30": "30m" },
 

@@ -1073,6 +1073,12 @@ function recentBets(n) {
     const cells = l.split(',');
     const o = {};
     head.forEach((h, i) => { o[h] = cells[i]; });
+    // Заметка - последний столбец, и в ней бывают запятые: «таймфрейм не
+    // переключился на 10m, на странице выбран 30m». Разбиение по запятой
+    // оставляло от такой заметки только начало - то есть ровно ту часть,
+    // где ещё не сказано, что именно пошло не так. Хвост собираем назад.
+    const last = head[head.length - 1];
+    if (cells.length > head.length) o[last] = cells.slice(head.length - 1).join(',');
     return o;
   });
 }

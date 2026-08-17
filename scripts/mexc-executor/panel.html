@@ -62,13 +62,8 @@
      между колонками. */
   .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
   .sched, .tablewrap { min-width:0; }
-  /* Журнал и часы работы одной полосой. min-width:0 обязателен: элемент
-     grid по умолчанию не сжимается уже содержимого, и сетка на 24
-     колонки распирала бы страницу вместо прокрутки внутри себя. */
-  .duo { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,566px);
-         gap:10px; align-items:start; margin-bottom:10px; }
-  .duo > .card { margin:0; min-width:0; }
-  @media (max-width: 1100px) { .duo { grid-template-columns:1fr; } }
+  /* Карточки верхнего уровня идут стопкой: пульт, журнал, настройки. */
+  .wrap > .card { margin-bottom:10px; }
   /* Журнал из восьми колонок не влезает в узкий экран, а панель
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
@@ -209,6 +204,23 @@
   .spark svg { width:100%; height:100%; display:block; overflow:visible; }
   #errPill { font-size:9px; padding:2px 7px; border-radius:6px; margin-left:5px;
              background:rgba(255,82,114,.16); color:var(--red); border:1px solid rgba(255,82,114,.45); }
+  /* Возраст сигнала красим так же, как режим: на него смотрят боковым
+     зрением, и красное здесь означает «проверь туннель», а не «рынок тих». */
+  #sigAge.fresh { color:var(--green);  text-shadow:0 0 10px rgba(78,255,160,.45); }
+  #sigAge.stale { color:var(--yellow); text-shadow:0 0 10px rgba(255,209,102,.45); }
+  #sigAge.dead  { color:var(--red);    text-shadow:0 0 10px rgba(255,82,114,.5); }
+  #lostPill { font-size:9.5px; padding:3px 9px; border-radius:6px; align-self:center;
+              background:rgba(255,82,114,.14); color:var(--red);
+              border:1px solid rgba(255,82,114,.42);
+              text-transform:uppercase; letter-spacing:.8px; font-weight:700; }
+  /* Раскрытая строка журнала. Заметка в колонке обрезана, а именно в ней
+     написано, почему ставка не ушла - целиком её видно только здесь. */
+  #bets tr[data-k] { cursor:pointer; }
+  #bets tr.open td { background:rgba(34,232,255,.07); }
+  #bets tr.detail td { color:#9FB0D8; font-size:11.5px; white-space:pre-wrap;
+                       word-break:break-word; padding:2px 9px 9px 24px;
+                       box-shadow:inset 2px 0 0 rgba(34,232,255,.45);
+                       background:rgba(34,232,255,.03); }
   .ctl-slots .row > span:first-child { font-size:11.5px; }
 
   /* Служебное - третий уровень. Приглушаем ЦВЕТОМ, а не прозрачностью:
@@ -328,6 +340,10 @@
 
     <div class="ctl-sec ctl-slots ctl-sec-slots">
       <div class="ctl-h">Слоты <span id="errPill"></span></div>
+      <!-- Возраст последнего сигнала. Молчащий хук и тихий рынок выглядят
+           в журнале одинаково - никак, в нём просто ничего не появляется.
+           Эта строка единственная их различает. -->
+      <div class="row"><span>Сигнал</span><b id="sigAge" title="">—</b></div>
       <div class="row"><span>Открыто</span><b id="slots">—</b></div>
       <div class="row"><span>UP / DOWN</span><b id="updown">—</b></div>
       <div class="row"><span>Очередь</span><b id="queue">—</b></div>
@@ -358,10 +374,11 @@
     </div>
   </div>
 
-  <!-- Журнал и часы работы - одна полоса: оба отвечают на вопрос
-       «когда», и по отдельности занимали две. Журналу отдана большая
-       доля: в нём восемь колонок, а в сетке часов ширина фиксированная. -->
-  <div class="duo">
+  <!-- Журнал во всю ширину. Соседство с часами работы («оба про время»)
+       стоило ему трети экрана: восемь колонок не влезали, ехал
+       горизонтальный скролл, а заметка - единственное, что объясняет
+       ошибку - обрезалась. Часы правят раз в месяц, они уехали в
+       настройки; журнал смотрят каждый день. -->
   <div class="card">
   <h2>Журнал ставок</h2>
   <div class="btns" style="margin-bottom:9px" id="logFilter">
@@ -369,6 +386,7 @@
   <button data-f="bets">Только ставки</button>
   <button data-f="errors">Ошибки</button>
   <span class="hint" id="logCount" style="align-self:center"></span>
+  <span id="lostPill" style="display:none"></span>
   </div>
   <div class="tablewrap">
   <table>
@@ -380,27 +398,6 @@
   <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
   </div>
-  </div>
-
-  <div class="card">
-      <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
-      <div class="row" style="margin-bottom:10px">
-      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-      <span><span class="hint">разброс краёв, мин</span>
-      <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
-      </div>
-      <div class="sched"><table id="schedGrid"></table></div>
-      <div class="note">Клик по клетке переключает час, протяжка мышью красит
-      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
-      <div class="btns" style="margin-top:10px">
-      <button id="btnSaveSched">Сохранить</button>
-      <button id="btnAll">Все часы</button>
-      <button id="btnWorkday">08:00–23:00</button>
-      <button id="btnNone">Снять всё</button>
-      </div>
-      </div>
   </div>
 
   <button class="sect-toggle" id="btnSettings">Настройки</button>
@@ -452,7 +449,29 @@
       <div class="note" id="lastIdle"></div>
       </div>
     </div>
-    
+
+    <!-- Часы работы шире колонки в 250px (сетка на 24 клетки), поэтому
+         стоят отдельным блоком под многоколоночными карточками, а не
+         внутри них. -->
+    <div class="card">
+      <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
+      <div class="row" style="margin-bottom:10px">
+      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+      <span><span class="hint">разброс краёв, мин</span>
+      <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+      </div>
+      <div class="sched"><table id="schedGrid"></table></div>
+      <div class="note">Клик по клетке переключает час, протяжка мышью красит
+      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
+      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
+      <div class="btns" style="margin-top:10px">
+      <button id="btnSaveSched">Сохранить</button>
+      <button id="btnAll">Все часы</button>
+      <button id="btnWorkday">08:00–23:00</button>
+      <button id="btnNone">Снять всё</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -545,7 +564,39 @@ function betsByHour(bets) {
 
 // ── сортировка журнала ──
 let sortBy = null, sortDir = 1;
-const SORT_COLS = ['time', 'asset', 'direction', 'stake', 'payout_page', 'mode', 'status'];
+
+// ── раскрытые строки журнала ──
+// Ключ - время строки: журнал перерисовывается каждые 5 секунд, и по
+// индексу раскрытие переезжало бы на соседнюю ставку, стоит прийти новой.
+const openRows = new Set();
+const rowKey = b => `${b.time}|${b.asset || ''}|${b.direction || ''}`;
+// Заметки собираются из текста биржевой страницы и текста ошибок, то есть
+// приходят снаружи. В разметку их вставляем только экранированными.
+const esc = v => String(v ?? '').replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Заметка пишется через JSON.stringify, поэтому приходит в кавычках и с
+// экранированием. Разбираем обратно, а если не вышло - снимаем кавычки.
+function noteText(v) {
+  if (!v) return '';
+  try { const p = JSON.parse(v); return typeof p === 'string' ? p : String(v); }
+  catch (e) { return String(v).replace(/^"|"$/g, ''); }
+}
+document.getElementById('bets').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-k]');
+  if (!tr) return;
+  const k = tr.dataset.k;
+  if (openRows.has(k)) openRows.delete(k); else openRows.add(k);
+  refresh();
+});
+
+// Возраст последнего сигнала словами. Колонка узкая, поэтому коротко.
+function fmtAgo(min) {
+  if (min == null || isNaN(min)) return '—';
+  if (min < 1) return 'только что';
+  if (min < 60) return min + ' мин';
+  const h = Math.floor(min / 60);
+  return h + ' ч ' + (min % 60) + ' мин';
+}
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
@@ -739,6 +790,21 @@ async function refresh() {
   $('errPill').textContent = st.consecutiveErrors ? st.consecutiveErrors + ' ошиб.' : '';
   $('errPill').style.display = st.consecutiveErrors ? '' : 'none';
 
+  // ── возраст последнего сигнала ──
+  // Пороги берём от сторожа тишины: жёлтый на половине, красный на самом
+  // пороге, после которого исполнитель уже шлёт алерт. Если сторож
+  // выключен - 30 и 60 минут просто как разумное «давно».
+  const sa = $('sigAge');
+  const lim = s.signalSilenceMin || 0;
+  const warnAt = lim ? Math.round(lim / 2) : 30, deadAt = lim || 60;
+  const mins = st.silenceMin;
+  sa.textContent = st.sinceStart ? `нет ${fmtAgo(mins)}` : fmtAgo(mins);
+  sa.className = mins >= deadAt ? 'dead' : (mins >= warnAt ? 'stale' : 'fresh');
+  sa.title = st.sinceStart
+    ? 'С запуска исполнителя не пришло ни одного сигнала. '
+      + 'Если это надолго - проверь туннель и адрес хука в Apps Script.'
+    : 'последний сигнал: ' + fmtTime(st.lastSignalAt);
+
   setChk('burstOn', s.burst.enabled);
   setVal('burstWin', s.burst.windowSec);
   setVal('burstMax', s.burst.maxMultiplier);
@@ -803,20 +869,45 @@ async function refresh() {
   $('logCount').textContent = logFilter === 'all'
     ? `${all.length} строк`
     : `${rows.length} из ${all.length}`;
+
+  // Сколько входов сегодня НЕ ушло. Ошибка в журнале - это чаще всего
+  // отбитая проверкой ставка (не тот таймфрейм, не тот актив, форма не
+  // отрисовалась). По одной строке среди полутора сотен это незаметно, а
+  // три подряд означают, что автоматика стоит и надо смотреть логи.
+  const today = new Date().toDateString();
+  const lost = all.filter(b => b.status === 'error'
+    && new Date(b.time).toDateString() === today).length;
+  const lp = $('lostPill');
+  lp.style.display = lost ? '' : 'none';
+  lp.textContent = `сегодня не ушло: ${lost}`;
+  lp.title = 'Ставки, отбитые проверками или ошибками страницы за сегодня. '
+    + 'Нажми «Ошибки» и раскрой строку, чтобы увидеть причину целиком.';
   if (!rows.length) {
     tb.innerHTML = `<tr><td colspan="8" style="color:var(--muted)">${
       all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
-    // Во всю ширину заметка помещается своей колонкой - в узкой карточке
-    // она вытесняла статус, ради которого в журнал и смотрят.
+    // Клик по строке раскрывает заметку целиком: в колонке она обрезана,
+    // а длинные причины отказа («таймфрейм не переключился на 10m, на
+    // странице выбран 30m») начинаются одинаково и различаются в хвосте.
     tb.innerHTML = rows.map(b => {
-      const note = (b.note || '').replace(/^"|"$/g, '');
-      return `<tr>
-      <td>${fmtTime(b.time)}</td><td>${b.asset || ''}</td><td>${b.direction || ''}</td>
-      <td>${b.stake || ''}</td><td>${b.payout_page || '—'}</td><td>${b.mode || ''}</td>
-      <td class="${statusClass(b.status)}">${b.status || ''}</td>
-      <td style="color:var(--muted)" title="${note.replace(/"/g, '&quot;')}">${note.slice(0, 70)}</td>
-    </tr>`; }).join('');
+      const note = noteText(b.note);
+      const k = rowKey(b);
+      const open = openRows.has(k);
+      // Журнал теперь во всю ширину, и в колонку помещается заметно
+      // больше: обрезка на 70 символах осталась от узкой карточки.
+      const short = note.length > 110 ? note.slice(0, 110) + '…' : note;
+      const main = `<tr data-k="${esc(k)}"${open ? ' class="open"' : ''}>
+      <td>${fmtTime(b.time)}</td><td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
+      <td>${esc(b.stake)}</td><td>${esc(b.payout_page) || '—'}</td><td>${esc(b.mode)}</td>
+      <td class="${statusClass(b.status)}">${esc(b.status)}</td>
+      <td style="color:var(--muted)">${esc(short)}</td>
+    </tr>`;
+      if (!open) return main;
+      const tf = b.timing ? ` · ${esc(b.timing)} мин` : '';
+      return main + `<tr class="detail"><td colspan="8">${
+        esc(note) || 'заметки нет'}<div style="margin-top:4px;color:var(--muted);font-size:10.5px">${
+        fmtTime(b.time)}${tf}</div></td></tr>`;
+    }).join('');
   }
 }
 
@@ -832,11 +923,31 @@ $('btnDry').onclick = async () => {
   await post(st.dryRun ? 'dry-off' : 'dry-on');
   refresh();
 };
+// Ручная ставка обходит лимиты слотов и направления - значит второй клик
+// по кнопке это вторая ставка на реальные деньги, и ничто её не остановит.
+// Кнопку держим выключенной до ответа исполнителя.
+let manualBusy = false;
 $('btnManual').onclick = async () => {
+  if (manualBusy) return;
   const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
   if (!confirm(`Поставить ${asset} ${direction} на ${timing} минут?`)) return;
-  await post('manual', { asset, direction, timing });
-  setTimeout(refresh, 800);
+  manualBusy = true;
+  const btn = $('btnManual'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Ставлю…';
+  try {
+    const r = await post('manual', { asset, direction, timing });
+    if (r && r.error) alert('Не принято: ' + r.error);
+  } catch (e) {
+    alert('Не дошло до исполнителя: ' + e.message);
+  } finally {
+    // Исполнитель отвечает сразу, как только положил ставку в очередь -
+    // то есть за десятки миллисекунд. Разблокируй кнопку по ответу, и
+    // двойной клик всё равно даст две ставки, поэтому держим паузу.
+    setTimeout(() => {
+      manualBusy = false; btn.disabled = false; btn.textContent = label;
+    }, 2500);
+    refresh(); setTimeout(refresh, 800);
+  }
 };
 $('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('browser-open'); refresh(); };
 $('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };

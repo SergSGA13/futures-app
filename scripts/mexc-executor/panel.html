@@ -316,7 +316,7 @@
        ставка. Разделители вместо рамок, яркость по важности: режим
        кричит, счётчики говорят, служебное шепчет. -->
   <div class="card ctl" id="ctlCard">
-    <div class="ctl-sec ctl-mode mode-card" id="modeCard">
+    <div class="ctl-sec ctl-mode" id="modeCard">
       <div class="ctl-h">Режим</div>
       <div class="big" id="mode">—</div>
       <div class="ctl-note modeNote" id="modeNote"></div>
@@ -714,7 +714,12 @@ async function refresh() {
   $('mode').innerHTML = st.paused
     ? '<span class="pill warn">ПАУЗА</span>'
     : (st.dryRun ? '<span class="pill warn">DRY-RUN</span>' : '<span class="pill ok">БОЕВОЙ</span>');
-  $('modeCard').className = 'card mode-card '
+  // Класс состояния вешаем на ВЕСЬ пульт: правила покраски написаны как
+  // «#ctlCard.live .ctl-mode». Раньше он присваивался внутреннему блоку
+  // через .className, и присваивание стирало ему ctl-sec/ctl-mode - блок
+  // «Режим» терял свою рамку, неон и крупную плашку, а сам #ctlCard
+  // состояние так и не получал. Отсюда и «неон вокруг Режим пропал».
+  $('ctlCard').className = 'card ctl '
     + (st.paused ? 'paused' : (st.dryRun ? 'dry' : 'live'));
   $('modeNote').textContent = st.dryRun
     ? 'Проходит весь путь до кнопки, но не нажимает её.'

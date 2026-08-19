@@ -41,8 +41,12 @@ fs.mkdirSync(SHOTS, { recursive: true });
 let playwright;
 try { playwright = require('playwright'); }
 catch (e) {
-  console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
-  process.exit(1);
+  // migrate только переписывает config.json - браузер ему не нужен, и
+  // требовать установку Playwright ради правки файла незачем.
+  if (process.argv[2] !== 'migrate') {
+    console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
+    process.exit(1);
+  }
 }
 
 // ── биржи ──
@@ -1706,7 +1710,9 @@ const server = http.createServer((req, res) => {
     if (pm[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
     const f = path.join(ROOT, 'panel.html');
     if (!fs.existsSync(f)) { res.writeHead(404); res.end('panel.html не найден'); return; }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    // no-store: панель обновляется вместе с исполнителем, и старая
+    // версия из кэша браузера выглядит как «правки не приехали».
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(fs.readFileSync(f));
     return;
   }
@@ -1836,6 +1842,99 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// ── режим migrate: старый плоский конфиг → раздел exchanges ──
+// Руками это правится долго и с ошибками: половина ключей переезжает
+// внутрь биржи, половина остаётся снаружи. Команда делает то же самое,
+// сохраняя все твои значения и складывая копию старого файла рядом.
+function migrateMode() {
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const had = raw.exchanges && Object.keys(raw.exchanges).length;
+  const out = {};
+  // Часы. Если расписание уже было настроено, оно остаётся у MEXC как
+  // есть, а Toobit получает зеркало - работает ровно тогда, когда MEXC
+  // молчит. Иначе делим сутки пополам: 08-20 и 20-08.
+  const oldRows = Array.isArray((raw.schedule || {}).hours) && raw.schedule.hours.length === 7
+    ? raw.schedule.hours.map(r => String(r || '').replace(/[^01]/g, '0').padEnd(24, '0').slice(0, 24))
+    : null;
+  const useOld = !!(oldRows && (raw.schedule || {}).enabled
+    && oldRows.some(r => r.includes('0')) && oldRows.some(r => r.includes('1')));
+  const mexcHours = useOld ? oldRows : Array(7).fill('0'.repeat(8) + '1'.repeat(12) + '0'.repeat(4));
+  const toobitHours = mexcHours.map(r => r.replace(/[01]/g, c => (c === '1' ? '0' : '1')));
+  // Ключи, которые переезжают ВНУТРЬ биржи по умолчанию.
+  const MOVE = ['stakes', 'stakeLimits', 'urls', 'timeUnitText',
+                'marketClosedText', 'openPositionsLabel', 'minPayout', 'maxOpenBets'];
+  const mexc = (had && raw.exchanges.mexc) ? { ...raw.exchanges.mexc } : {
+    title: 'MEXC', enabled: true,
+    maxOpenBets: raw.maxOpenBets ?? 5,
+    minPayout: raw.minPayout ?? 80,
+    minPayoutStrict: false,
+    requirePagePayout: false,
+    signalTimings: ['MEXC _10m', 'MEXC _30m', 'MEXC_10m', 'MEXC_30m'],
+    schedule: { hours: mexcHours },
+    stakes: raw.stakes || { ETH: 150, BTC: 250, SPCX: 30 },
+    stakeLimits: raw.stakeLimits || { ETH: 150, BTC: 250, SPCX: 150 },
+    urls: raw.urls || {},
+    timeUnitText: raw.timeUnitText || { 10: '10m', 30: '30m' },
+    marketClosedText: raw.marketClosedText || 'Market Closed',
+    openPositionsLabel: raw.openPositionsLabel || 'Open Positions',
+  };
+  const toobit = (had && raw.exchanges.toobit) ? { ...raw.exchanges.toobit } : {
+    title: 'Toobit', enabled: true,
+    maxOpenBets: 5,
+    // Сигналы на Toobit приходят без выплаты: порог проверяется только
+    // на странице, и не прочитали - значит не ставим.
+    minPayout: 75, minPayoutStrict: true, requirePagePayout: true,
+    signalTimings: ['10m'],
+    execTimings: [10],
+    schedule: { hours: toobitHours },
+    stakes: { ETH: 20, BTC: 20 },
+    stakeLimits: { ETH: 50, BTC: 50 },
+    urls: {
+      ETH: 'https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT',
+      BTC: 'https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT',
+    },
+    timeUnitText: { 10: '10m', 30: '30m' },
+    marketClosedText: 'Market Closed',
+    openPositionsLabel: 'Open Positions',
+    payoutRe: '{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%',
+    selectors: {
+      loginMarker: 'button:has-text("Log In"), button:has-text("Sign In")',
+      timeUnit: 'button, div[role=button], span',
+      amount: 'input[placeholder*="USDT"], input[inputmode="decimal"], input[type="number"]',
+      up: 'button:has-text("Up")',
+      down: 'button:has-text("Down")',
+      confirm: 'button:has-text("Confirm")',
+    },
+  };
+  // Порядок ключей сохраняем: конфиг читают глазами.
+  for (const [k, v] of Object.entries(raw)) {
+    if (MOVE.includes(k) || k === 'exchanges' || k === 'defaultExchange') continue;
+    out[k] = v;
+    if (k === 'dryRun') {
+      out.defaultExchange = raw.defaultExchange || 'mexc';
+      out.exchanges = { mexc, toobit, ...(had ? raw.exchanges : {}) };
+      out.exchanges.mexc = mexc; out.exchanges.toobit = toobit;
+    }
+  }
+  if (!out.exchanges) { out.defaultExchange = 'mexc'; out.exchanges = { mexc, toobit }; }
+  // Общее расписание остаётся выключателем для сеток бирж.
+  out.schedule = out.schedule || { enabled: false, jitterMin: 20, hours: Array(7).fill('1'.repeat(24)) };
+
+  const bak = CFG_PATH.replace(/\.json$/, '.pre-exchanges.json');
+  fs.copyFileSync(CFG_PATH, bak);
+  fs.writeFileSync(CFG_PATH, JSON.stringify(out, null, 2) + '\n');
+  console.log('config.json переписан в формат с биржами.');
+  console.log('копия старого: ' + bak);
+  console.log('биржи: ' + Object.keys(out.exchanges).join(', ') + ' | по умолчанию: ' + out.defaultExchange);
+  console.log(useOld
+    ? 'часы: у MEXC оставлено твоё расписание, Toobit работает в зеркальные часы'
+    : 'часы: смена 12/12 - MEXC 08:00-20:00, Toobit 20:00-08:00'
+      + ((raw.schedule || {}).enabled ? '' : ' (расписание пока выключено - включи в панели)'));
+  console.log('\nПроверь ставки и часы в панели, потом:');
+  console.log('  node executor.js login toobit');
+  console.log('  node executor.js diag ETH toobit');
+}
+
 // ── режим login ──
 async function loginMode() {
   // node executor.js login [биржа] - профиль браузера общий, но войти
@@ -1894,7 +1993,9 @@ async function diagMode() {
   process.exit(0);
 }
 
-if (process.argv[2] === 'login') {
+if (process.argv[2] === 'migrate') {
+  migrateMode();
+} else if (process.argv[2] === 'login') {
   loginMode();
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });

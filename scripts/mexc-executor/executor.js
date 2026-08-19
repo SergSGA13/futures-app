@@ -63,12 +63,17 @@ const state = {
   sheetPolledAt: null,
   sheetError: null,
   silenceAlerted: false,               // алерт о тишине уже отправлен
+  windowManual: false,                 // окно открыто руками из панели
+  windowAt: null,                      // когда окно открылось/закрылось само
 };
 
 // ── состояние на диске ──
 // Слоты и дневной счётчик обязаны переживать перезапуск: биржа держит
 // максимум 5 одновременных ставок, а исполнитель после рестарта считал
 // бы, что открыто ноль, и мог открыть шестую.
+// Минимум биржи по сумме ставки. Максимум у каждого актива свой и лежит
+// в stakeLimits, а нижняя граница общая.
+const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
 const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows'];
 function saveState() {
@@ -860,6 +865,9 @@ function burstCfg() {
 }
 // Ставка с учётом множителя, прижатая к потолку поля ввода на бирже.
 function betStake(sig) {
+  // Сумма, названная явно (ручная ставка из панели), важнее настройки:
+  // человек нажал её сам. Границы всё равно биржевые.
+  if (sig.stake) return Math.round(clamp(sig.stake, MANUAL_STAKE_MIN, stakeMax(sig.asset), stakeFor(sig.asset)));
   const base = stakeFor(sig.asset);
   const m = Math.max(1, Math.min(sig.mult || 1, burstCfg().max));
   return Math.min(Math.round(base * m), stakeMax(sig.asset));
@@ -1053,6 +1061,49 @@ function checkSilence() {
   tgAlert(`сигналов нет ${silenceMinutes()} мин в активные часы - проверь туннель и вебхук Apps Script`);
 }
 
+// ── окно биржи по расписанию ──
+// Две задачи сразу. Первая - человечность: живой трейдер не держит
+// терминал открытым круглые сутки, окно появляется утром и исчезает
+// ночью. Вторая - скорость: холодный старт съедает секунды (запуск
+// Chromium, логин из профиля, отрисовка SPA), и первая ставка после
+// ночи рискует не уложиться в свою свечу. Поэтому окно открывается
+// заранее, к началу активных часов, а не по приходу сигнала.
+async function windowBySchedule() {
+  if (CFG.autoWindow === false) return;
+  if (process.env.TEST_MODE === '1') return;
+  // Под руку не лезем: идёт ставка, что-то в очереди - не наше время.
+  if (state.busy || state.queue.length) return;
+  const active = inActiveHours();
+
+  if (active && !browserOpen()) {
+    // На паузе окно не открываем: пауза - это «не трогай биржу».
+    if (state.paused) return;
+    state.busy = true;
+    try {
+      await browser();
+      // Актив выбираем случайно: одна и та же стартовая страница каждое
+      // утро - такая же сигнатура, как одинаковая точка клика.
+      const all = Object.keys(CFG.urls || {});
+      const a = all[randInt(0, all.length - 1)];
+      await page.goto(CFG.urls[a], { waitUntil: 'domcontentloaded', timeout: 25000 });
+      state.windowAt = Date.now();
+      log(`окно биржи открыто заранее (${a}): начались активные часы`);
+    } catch (e) {
+      log('окно биржи не открылось по расписанию: ' + e.message);
+      await closeBrowser();
+    } finally { state.busy = false; }
+    return;
+  }
+
+  if (!active && browserOpen()) {
+    // Открытое руками не закрываем: человек смотрит на него сам.
+    if (state.windowManual) return;
+    await closeBrowser();
+    state.windowAt = Date.now();
+    log('окно биржи закрыто: начались тихие часы');
+  }
+}
+
 function scheduleIdle() {
   const I = CFG.idleRotation || {};
   if (I.enabled === false) return;
@@ -1122,6 +1173,7 @@ function snapshot() {
         jitterMin: (CFG.schedule || {}).jitterMin ?? 0,
       },
       signalSilenceMin: CFG.signalSilenceMin ?? 0,
+      autoWindow: CFG.autoWindow !== false,
       burst: {
         enabled: (CFG.burst || {}).enabled !== false,
         windowSec: (CFG.burst || {}).windowSec ?? 3,
@@ -1214,6 +1266,14 @@ function applySettings(s) {
       CFG.execTimings = v;
     }
   }
+  if (s.autoWindow != null) {
+    const v = !!s.autoWindow;
+    if (v !== (CFG.autoWindow !== false)) changed.push('окно по расписанию ' + (v ? 'вкл' : 'выкл'));
+    CFG.autoWindow = v;
+    // Сразу приводим окно в соответствие: включил - открылось, выключил -
+    // осталось как есть, но больше не закроется само.
+    setImmediate(() => windowBySchedule().catch(() => {}));
+  }
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;
     changed.push('человечный клик ' + (CFG.humanize ? 'вкл' : 'выкл'));
@@ -1303,8 +1363,13 @@ const server = http.createServer((req, res) => {
         const asset = m.asset;
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
         const timing = Number(m.timing) === 30 ? 30 : 10;
-        state.queue.push({ asset, direction, timing, receivedAt: Date.now(), label: 'manual', mult: 1, burstCount: 1 });
-        log(`панель: ручная ставка ${asset} ${direction} ${timing}м`);
+        // Сумму присылает панель. Клампим здесь, а не только в панели:
+        // запрос можно отправить и мимо неё, а верхняя граница - биржевая.
+        const stake = m.stake == null ? null
+          : Math.round(clamp(m.stake, MANUAL_STAKE_MIN, stakeMax(asset), stakeFor(asset)));
+        state.queue.push({ asset, direction, timing, stake, receivedAt: Date.now(),
+          label: 'manual', mult: 1, burstCount: 1 });
+        log(`панель: ручная ставка ${asset} ${direction} ${timing}м на ${stake ?? stakeFor(asset)} USDT`);
         setImmediate(pump);
         sendJson(200, { ok: true });
       });
@@ -1328,6 +1393,7 @@ const server = http.createServer((req, res) => {
         if (!/mexc\.com/.test(page.url())) {
           await page.goto(CFG.urls.ETH, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
         }
+        state.windowManual = true;
         log('панель: окно биржи открыто');
         sendJson(200, { ok: true });
       }).catch(e => { log('окно биржи не открылось: ' + e.message); sendJson(500, { error: e.message }); });
@@ -1335,7 +1401,11 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'POST' && action === 'browser-close') {
       if (state.busy) return sendJson(409, { error: 'исполнитель занят' });
-      closeBrowser().then(() => { log('панель: окно биржи закрыто'); sendJson(200, { ok: true }); });
+      closeBrowser().then(() => {
+        state.windowManual = false;
+        log('панель: окно биржи закрыто');
+        sendJson(200, { ok: true });
+      });
       return;
     }
     return sendJson(404, { error: 'unknown action' });
@@ -1465,5 +1535,10 @@ if (process.argv[2] === 'login') {
     // Сторож тишины: раз в минуту, дешевле некуда.
     const sil = setInterval(checkSilence, 60000);
     if (sil.unref) sil.unref();
+    // Окно биржи по расписанию - тем же тиком.
+    const win = setInterval(() => windowBySchedule().catch(e =>
+      log('окно по расписанию: ' + e.message)), 60000);
+    if (win.unref) win.unref();
+    windowBySchedule().catch(() => {});
   });
 }

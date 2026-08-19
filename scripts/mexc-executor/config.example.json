@@ -27,6 +27,7 @@
   "execTimings": [10, 30],
 
   "humanize": true,
+  "autoWindow": true,
   "schedule": {
     "enabled": false,
     "jitterMin": 20,

@@ -54,13 +54,13 @@
   .sub { color:var(--muted); font-size:11px; margin-bottom:12px; letter-spacing:.6px;
          font-family:var(--mono); }
 
-  /* Колоночная раскладка вместо сетки. У grid высота СТРОКИ равна самой
-     высокой карточке в ней, и под короткими зияла пустота до следующего
-     ряда - align-items:start убирал растягивание, но не дыру. В multicol
-     карточки текут сверху вниз и пакуются вплотную, а браузер сам
-     выравнивает высоту колонок. break-inside не даёт разорвать карточку
-     между колонками. */
-  .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
+  /* Карточки настроек - сетка равных колонок. Многоколоночная раскладка
+     паковала их плотно, но каждая получалась своей высоты и своей ширины,
+     и блок выглядел рваным. В сетке колонки равны по определению, а
+     stretch (он по умолчанию) равняет высоту внутри ряда. Пустоту снизу
+     съедает кнопка «Сохранить», прижатая к низу карточки. */
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr));
+           gap:10px; margin-bottom:10px; }
   .sched, .tablewrap { min-width:0; }
   /* Карточки верхнего уровня идут стопкой: пульт, журнал, настройки. */
   .wrap > .card { margin-bottom:10px; }
@@ -83,6 +83,22 @@
   .sect-toggle::after { content:' ▾'; color:var(--cyan); }
   .sect-toggle.open::after { content:' ▴'; }
   .hidden { display:none; }
+  /* Вкладки. Ведут себя как заголовки карточки, поэтому и выглядят как
+     h2: тот же кегль и разрядка, активная подчёркнута лучом. */
+  .tabs { display:flex; gap:2px; align-items:center; margin-bottom:10px;
+          border-bottom:1px solid rgba(34,232,255,.16); }
+  .tabs button {
+    background:none; border:none; border-radius:0; color:var(--muted);
+    padding:5px 13px 9px; font-size:11px; letter-spacing:1.1px; position:relative;
+  }
+  .tabs button:hover { background:none; box-shadow:none; color:#CFF6FF; }
+  .tabs button.on { color:#CFF6FF; text-shadow:0 0 12px rgba(34,232,255,.4); }
+  .tabs button.on::after {
+    content:''; position:absolute; left:9px; right:9px; bottom:-1px; height:2px;
+    border-radius:2px; box-shadow:var(--glow);
+    background:linear-gradient(90deg,var(--cyan),var(--violet));
+  }
+  .tabs .saved { margin-left:auto; padding-right:4px; }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -90,10 +106,10 @@
   #logHead th.sorted::after { content:' ↑'; }
   #logHead[data-dir="down"] th.sorted::after { content:' ↓'; }
   #logFilter button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
-  .cards > .card {
-    break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
-    margin:0 0 10px; width:100%;
-  }
+  .cards > .card { margin:0; display:flex; flex-direction:column; }
+  /* Кнопка сохранения - к низу карточки: одинаковая высота карточек без
+     этого означала бы просто дырку разного размера под содержимым. */
+  .cards > .card > button:last-child { margin-top:auto; align-self:flex-start; }
   .card {
     position:relative;
     background:linear-gradient(180deg, rgba(34,232,255,.05), transparent 42%), var(--card);
@@ -141,7 +157,13 @@
     position:relative; padding:11px 13px; border-radius:11px;
     border:1px solid rgba(34,232,255,.22);
     background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.07), transparent 70%);
+    display:flex; flex-direction:column;
   }
+  /* Секции пульта равны по высоте (grid растягивает их), поэтому ряд
+     кнопок прижимаем к низу - иначе у одной секции кнопки посередине,
+     у другой под самым краем, и ряд выглядит случайным. */
+  .ctl-sec > .btns:last-child,
+  .ctl-sec > button:last-child { margin-top:auto; }
   .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
   .ctl-sec-win   { border-color:rgba(102,163,255,.24);
                    background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
@@ -284,7 +306,9 @@
   input[type=number] { width:74px; text-align:right; }
   label.chk { display:flex; align-items:center; gap:7px; font-size:12.5px; padding:2px 0; cursor:pointer; }
   input[type=checkbox] { accent-color:var(--cyan); width:15px; height:15px; cursor:pointer; }
-  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; }
+  /* Пояснения читают глазами, а не сканируют: строка во всю ширину
+     панели уводит взгляд, поэтому ограничиваем длину. */
+  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; max-width:78ch; }
   .hint { color:var(--muted); font-size:11px; }
 
   /* недельная сетка часов */
@@ -364,23 +388,33 @@
 
     <div class="ctl-sec ctl-dim ctl-sec-man">
       <div class="ctl-h">Ручная ставка</div>
-      <div class="btns" style="margin-bottom:7px">
+      <div class="btns" style="margin-bottom:6px">
         <select id="mAsset"></select>
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
         <select id="mTiming"><option value="10">10м</option><option value="30">30м</option></select>
       </div>
+      <!-- Сумма отдельно от настроечной ставки: разовый заход руками чаще
+           всего отличается от той, что автомат ставит по сигналу. Границы
+           биржевые и у каждого актива свои - подставляются по выбору. -->
+      <div class="row"><span>Сумма, USDT</span>
+        <input type="number" id="mStake" min="5" step="5"></div>
+      <div class="ctl-note" id="mStakeHint" style="margin:2px 0 7px"></div>
       <button class="go" id="btnManual"
         title="Payout и режим проверяются как обычно. Лимиты слотов и направления ручная ставка обходит: ты нажал сам.">Поставить</button>
     </div>
   </div>
 
-  <!-- Журнал во всю ширину. Соседство с часами работы («оба про время»)
-       стоило ему трети экрана: восемь колонок не влезали, ехал
-       горизонтальный скролл, а заметка - единственное, что объясняет
-       ошибку - обрезалась. Часы правят раз в месяц, они уехали в
-       настройки; журнал смотрят каждый день. -->
+  <!-- Журнал и часы работы в одной карточке, но вкладками, а не рядом.
+       Бок о бок журнал терял треть ширины и ехал горизонтально; во
+       вкладках он получает всю ширину, а панель остаётся короткой -
+       смотрят в них всё равно по очереди. -->
   <div class="card">
-  <h2>Журнал ставок</h2>
+  <div class="tabs" id="tabs">
+    <button data-t="log" class="on">Журнал ставок</button>
+    <button data-t="sched">Часы работы</button>
+    <span class="saved" id="savedSched">сохранено</span>
+  </div>
+  <div id="tabLog">
   <div class="btns" style="margin-bottom:9px" id="logFilter">
   <button data-f="all" class="on">Все</button>
   <button data-f="bets">Только ставки</button>
@@ -397,6 +431,31 @@
       </tr></thead>
   <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
+  </div>
+  </div>
+
+  <div id="tabSched" class="hidden">
+    <div class="row" style="margin-bottom:10px">
+    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+    <span><span class="hint">разброс краёв, мин</span>
+    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+    </div>
+    <label class="chk" style="margin-bottom:8px">
+      <input type="checkbox" id="autoWindow"> Открывать окно биржи на активные часы</label>
+    <div class="sched"><table id="schedGrid"></table></div>
+    <div class="note">Клик по клетке переключает час, протяжка мышью красит
+    несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
+    час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+    минуты, чтобы старт не приходился ровно на :00 изо дня в день.
+    Окно биржи с галочкой выше открывается само к началу активных часов и
+    закрывается в тихие: холодный старт съедает секунды, а первая ставка
+    после ночи должна успеть в свою свечу.</div>
+    <div class="btns" style="margin-top:10px">
+    <button id="btnSaveSched">Сохранить</button>
+    <button id="btnAll">Все часы</button>
+    <button id="btnWorkday">08:00-23:00</button>
+    <button id="btnNone">Снять всё</button>
+    </div>
   </div>
   </div>
 
@@ -432,8 +491,8 @@
       <input type="number" id="burstWin" min="0" max="60" step="1"></div>
       <div class="row"><span>Множитель не больше</span>
       <input type="number" id="burstMax" min="1" max="10" step="1"></div>
-      <button style="margin-top:8px" id="btnSaveBurst">Сохранить</button>
       <div class="note" id="burstHint"></div>
+      <button style="margin-top:10px" id="btnSaveBurst">Сохранить</button>
       </div>
 
       <div class="card">
@@ -445,33 +504,11 @@
       –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
       <div class="row"><span>Клик с разбросом</span>
       <input type="checkbox" id="humanize"></div>
-      <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
       <div class="note" id="lastIdle"></div>
+      <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
       </div>
     </div>
 
-    <!-- Часы работы шире колонки в 250px (сетка на 24 клетки), поэтому
-         стоят отдельным блоком под многоколоночными карточками, а не
-         внутри них. -->
-    <div class="card">
-      <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
-      <div class="row" style="margin-bottom:10px">
-      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-      <span><span class="hint">разброс краёв, мин</span>
-      <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
-      </div>
-      <div class="sched"><table id="schedGrid"></table></div>
-      <div class="note">Клик по клетке переключает час, протяжка мышью красит
-      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
-      <div class="btns" style="margin-top:10px">
-      <button id="btnSaveSched">Сохранить</button>
-      <button id="btnAll">Все часы</button>
-      <button id="btnWorkday">08:00–23:00</button>
-      <button id="btnNone">Снять всё</button>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -513,6 +550,22 @@ document.getElementById('logFilter').addEventListener('click', e => {
   refresh();
 });
 document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
+
+// ── вкладки журнала и часов ──
+// Выбор держим в localStorage: панель перечитывает состояние каждые 5
+// секунд, но вкладку выбирают один раз и надолго.
+(function () {
+  const apply = t => {
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    $('tabLog').classList.toggle('hidden', t !== 'log');
+    $('tabSched').classList.toggle('hidden', t !== 'sched');
+    localStorage.setItem('mx_tab', t);
+  };
+  document.getElementById('tabs').addEventListener('click', e => {
+    if (e.target.dataset.t) apply(e.target.dataset.t);
+  });
+  apply(localStorage.getItem('mx_tab') === 'sched' ? 'sched' : 'log');
+})();
 
 // ── свёрнутые настройки ──
 // Состояние держим в localStorage: панель обновляется каждые 5 секунд, и
@@ -714,11 +767,34 @@ function buildAssetControls(st) {
     ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add('st_' + a)));
   });
   $('mAsset').innerHTML = st.settings.assets.map(a => `<option>${a}</option>`).join('');
+  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || st.settings, true));
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
   document.querySelectorAll('.tfBox').forEach(c =>
     c.addEventListener('change', () => dirty.add('tfBox')));
+}
+
+// Сумма ручной ставки. Значение подставляем по активу - но только когда
+// актив сменили, иначе автообновление раз в 5 секунд затирало бы то, что
+// ты набираешь прямо сейчас.
+const MSTAKE_MIN = 5;
+let mStakeAsset = null;
+function syncManualStake(s, force) {
+  const a = $('mAsset').value;
+  if (!a || !s.stakeLimits) return;
+  const max = s.stakeLimits[a] ?? 150;
+  $('mStake').max = max;
+  $('mStake').min = MSTAKE_MIN;
+  $('mStakeHint').textContent = `${MSTAKE_MIN}-${max} USDT`;
+  if (force || a !== mStakeAsset) {
+    mStakeAsset = a;
+    // Стартуем от настроечной ставки актива, прижатой к границам.
+    $('mStake').value = Math.min(Math.max(s.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
+  } else {
+    const v = +$('mStake').value;
+    if (v > max) $('mStake').value = max;
+  }
 }
 
 let idleBuilt = false;
@@ -741,7 +817,7 @@ const CARDS = {
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
-  sched:  ['schedOn', 'jitter'],
+  sched:  ['schedOn', 'jitter', 'autoWindow'],
 };
 const dirty = new Set();
 Object.values(CARDS).flat().forEach(id => {
@@ -756,11 +832,13 @@ function setChk(id, v) { if (!dirty.has(id)) $(id).checked = v; }
 function clearCard(card) { CARDS[card].forEach(id => dirty.delete(id)); }
 function afterSave(card) { clearCard(card); refresh(); setTimeout(refresh, 700); }
 
+let lastSettings = null;
 async function refresh() {
   let st;
   try { st = await api('state'); }
   catch (e) { $('sub').textContent = 'нет связи с исполнителем'; return; }
   const s = st.settings;
+  lastSettings = s;
 
   $('mode').innerHTML = st.paused
     ? '<span class="pill warn">ПАУЗА</span>'
@@ -824,6 +902,7 @@ async function refresh() {
     ? '<span class="pill ok">активен</span>' : '<span class="pill warn">тихие часы</span>';
 
   buildAssetControls(st);
+  syncManualStake(s, false);
   for (const a of s.assets) { setVal('st_' + a, s.stakes[a]); $('st_' + a).max = s.stakeLimits[a]; }
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
@@ -846,6 +925,7 @@ async function refresh() {
     : 'холостых действий ещё не было';
 
   setChk('schedOn', s.schedule.enabled);
+  setChk('autoWindow', s.autoWindow);
   setVal('jitter', s.schedule.jitterMin);
   if (!schedDirty) { sched = s.schedule.hours.slice(); buildGrid(); }
 
@@ -930,12 +1010,15 @@ let manualBusy = false;
 $('btnManual').onclick = async () => {
   if (manualBusy) return;
   const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
-  if (!confirm(`Поставить ${asset} ${direction} на ${timing} минут?`)) return;
+  const max = +$('mStake').max || 150;
+  const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
+  $('mStake').value = stake;
+  if (!confirm(`Поставить ${asset} ${direction} на ${timing} минут, ${stake} USDT?`)) return;
   manualBusy = true;
   const btn = $('btnManual'), label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Ставлю…';
   try {
-    const r = await post('manual', { asset, direction, timing });
+    const r = await post('manual', { asset, direction, timing, stake });
     if (r && r.error) alert('Не принято: ' + r.error);
   } catch (e) {
     alert('Не дошло до исполнителя: ' + e.message);
@@ -991,6 +1074,7 @@ $('btnSaveBurst').onclick = async () => {
 $('btnSaveSched').onclick = async () => {
   await post('settings', {
     schedule: { enabled: $('schedOn').checked, hours: sched, jitterMin: +$('jitter').value },
+    autoWindow: $('autoWindow').checked,
   });
   schedDirty = false; flash('savedSched'); afterSave('sched');
 };

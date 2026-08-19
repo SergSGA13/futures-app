@@ -83,16 +83,15 @@
         "BTC": 50
       },
       "urls": {
-        "ETH": "https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT",
-        "BTC": "https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT"
+        "ETH": "https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT",
+        "BTC": "https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT"
       },
       "timeUnitText": {
-        "10": "10m",
-        "30": "30m"
+        "10": "10m"
       },
       "marketClosedText": "Market Closed",
       "openPositionsLabel": "Open Positions",
-      "payoutRe": "{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%",
+      "payoutRe": "{DIR}[^%]{0,80}?([0-9.]+)\\s*%",
       "selectors": {
         "loginMarker": "button:has-text(\"Log In\"), button:has-text(\"Sign In\")",
         "timeUnit": "button, div[role=button], span",

@@ -537,12 +537,60 @@ async function dumpPage(tag) {
         buttons: [...new Set([...document.querySelectorAll('button,[role=button]')]
           .filter(vis).map(b => (b.innerText || '').trim()).filter(t => t && t.length < 40))],
         payoutText: (document.body.innerText.match(/[^\n]*Payout[^\n]*/gi) || []).slice(0, 6),
+
+        // Кнопки направления бывают не button и без role=button - на
+        // Toobit в списке кнопок нет ни Up, ни Down. Ищем ЛЮБОЙ видимый
+        // элемент, чей собственный текст равен слову направления, и
+        // показываем тег с классами: по ним и пишется селектор.
+        dirLike: (() => {
+          const words = /^(up|down|buy|sell|rise|fall|higher|lower|long|short)$/i;
+          const out = [];
+          for (const el of document.querySelectorAll('*')) {
+            if (!vis(el) || el.children.length > 2) continue;
+            const t = (el.innerText || '').trim();
+            if (!words.test(t)) continue;
+            out.push({
+              t, tag: el.tagName.toLowerCase(),
+              cls: String(el.className || '').slice(0, 60),
+              role: el.getAttribute('role') || '',
+            });
+            if (out.length >= 12) break;
+          }
+          return out;
+        })(),
+
+        // Что написано ВОКРУГ каждого упоминания выплаты. Сама строка
+        // «Expected Payout Ratio» без числа бесполезна: процент лежит в
+        // соседнем узле, и увидеть надо именно связку.
+        payoutBlocks: (() => {
+          const out = [];
+          for (const el of document.querySelectorAll('*')) {
+            if (!vis(el) || el.children.length > 3) continue;
+            const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+            if (!/payout|ratio|return/i.test(t) || t.length > 160) continue;
+            // Поднимаемся до предка, где рядом с надписью появилось число
+            let box = el, txt = t;
+            for (let i = 0; i < 4 && box.parentElement; i++) {
+              if (/[0-9]+(\.[0-9]+)?\s*%/.test(txt)) break;
+              box = box.parentElement;
+              txt = (box.innerText || '').replace(/\s+/g, ' ').trim();
+            }
+            if (txt.length <= 220 && !out.includes(txt)) out.push(txt);
+            if (out.length >= 6) break;
+          }
+          return out;
+        })(),
       };
     });
     log(`ДАМП [${tag}] url=${info.url} | фреймов на странице: ${page.frames().length}`);
     log(`  поля ввода (${info.inputs.length}): ` + JSON.stringify(info.inputs.slice(0, 12)));
     log(`  кнопки (${info.buttons.length}): ` + JSON.stringify(info.buttons.slice(0, 30)));
     log(`  строки с Payout: ` + JSON.stringify(info.payoutText));
+    log(`  выплата в контексте: ` + JSON.stringify(info.payoutBlocks));
+    log(`  похожее на Up/Down (${info.dirLike.length}): ` + JSON.stringify(info.dirLike));
+    if (page.frames().length > 1) {
+      log('  фреймы: ' + JSON.stringify(page.frames().map(f => f.url()).slice(0, 6)));
+    }
     return info;
   } catch (e) {
     log(`ДАМП [${tag}] не удался: ${e.message}`);
@@ -630,22 +678,29 @@ async function pagePayout(direction) {
     if (m && m[1]) return parseFloat(m[1]);
   } catch (e) { /* пробуем запасной путь */ }
   try {
-    const btn = page.locator('button, div[role=button]')
-      .filter({ hasText: new RegExp('^\\s*' + word + '\\b', 'i') }).first();
-    if (await btn.count() === 0) return null;
-    const txt = await btn.evaluate(el => {
-      for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) {
-        const t = e.innerText || '';
-        if (t.includes('%')) return t;
+    // Ищем не только button/[role=button]: на Toobit кнопки направления
+    // вообще не значатся кнопками, в списке страницы их нет. Берём любой
+    // ВИДИМЫЙ элемент, чей собственный текст равен слову направления, и
+    // поднимаемся к ближайшему предку, где рядом появился процент.
+    const txt = await page.evaluate(w => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      const exact = new RegExp('^\\s*' + w + '\\s*$', 'i');
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 2) continue;
+        if (!exact.test((el.innerText || '').trim())) continue;
+        for (let e = el, i = 0; e && i < 5; e = e.parentElement, i++) {
+          const t = e.innerText || '';
+          if (t.includes('%')) return t;
+        }
       }
       return '';
-    });
+    }, word);
     const vals = [...String(txt).matchAll(/([0-9]{1,3}(?:[.,][0-9]+)?)\s*%/g)]
       .map(m => parseFloat(m[1].replace(',', '.')))
       .filter(v => v >= 10 && v <= 500);
     const uniq = [...new Set(vals)];
     if (uniq.length === 1) return uniq[0];
-    if (uniq.length > 1) log(`payout у кнопки ${word} неоднозначен: ${uniq.join('%, ')}% - считаю непрочитанным`);
+    if (uniq.length > 1) log(`выплата у «${word}» неоднозначна: ${uniq.join('%, ')}% - считаю непрочитанной`);
     return null;
   } catch (e) { return null; }
 }
@@ -858,6 +913,13 @@ async function placeBet(sig) {
   let btn = page.locator('button')
     .filter({ hasText: new RegExp('^\\s*' + dirWord + '\\s*$') }).first();
   if (await btn.count() === 0) btn = page.locator(btnSel).first();
+  // Третий заход: элемент с таким текстом, каким бы тегом он ни был. На
+  // Toobit «кнопки» Up/Down - обычные div, и в списке кнопок страницы их
+  // нет вовсе; getByText находит самый глубокий узел с точным текстом.
+  if (await btn.count() === 0) {
+    btn = page.getByText(new RegExp('^\\s*' + dirWord + '\\s*$', 'i')).first();
+    if (await btn.count() > 0) log(`кнопка ${dirWord} найдена по тексту, а не по селектору`);
+  }
   if (await btn.count() === 0) {
     await shot('no-button');
     await dumpPage('no-button');
@@ -1889,14 +1951,15 @@ function migrateMode() {
     schedule: { hours: toobitHours },
     stakes: { ETH: 20, BTC: 20 },
     stakeLimits: { ETH: 50, BTC: 50 },
+    // Адрес из живого осмотра: сайт сам приводит ?symbol=... к этому виду.
     urls: {
-      ETH: 'https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT',
-      BTC: 'https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT',
+      ETH: 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT',
+      BTC: 'https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT',
     },
-    timeUnitText: { 10: '10m', 30: '30m' },
+    timeUnitText: { 10: '10m' },        // 30m на странице Toobit нет
     marketClosedText: 'Market Closed',
     openPositionsLabel: 'Open Positions',
-    payoutRe: '{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%',
+    payoutRe: '{DIR}[^%]{0,80}?([0-9.]+)\\s*%',
     selectors: {
       loginMarker: 'button:has-text("Log In"), button:has-text("Sign In")',
       timeUnit: 'button, div[role=button], span',
@@ -1968,6 +2031,10 @@ async function diagMode() {
   const loginBtn = page.locator(EX.selectors.loginMarker).first();
   const notLogged = await loginBtn.isVisible().catch(() => false);
   log(notLogged ? 'ВНИМАНИЕ: похоже, НЕ залогинен (видна кнопка Log In)' : 'логин на месте');
+  if (notLogged) {
+    log(`!! разлогиненный осмотр показывает НЕ ВСЮ страницу: кнопок Up/Down и выплаты`
+      + ` на ней обычно просто нет. Сначала: node executor.js login ${EX.name}`);
+  }
 
   // Ждём отрисовку, иначе дамп опишет пустую страницу и введёт в заблуждение
   const ready = await waitForPanel();

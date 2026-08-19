@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MEXC Executor</title>
+<title>Event Futures Executor</title>
 <style>
   :root {
     /* Пара холодный/тёплый: циан и фиолетовый.
@@ -237,6 +237,13 @@
   #sigAge.fresh { color:var(--green);  text-shadow:0 0 10px rgba(78,255,160,.45); }
   #sigAge.stale { color:var(--yellow); text-shadow:0 0 10px rgba(255,209,102,.45); }
   #sigAge.dead  { color:var(--red);    text-shadow:0 0 10px rgba(255,82,114,.5); }
+  /* Заголовок биржи в списке ставок и порогов. */
+  .ex-h { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:1.1px;
+          color:var(--cyan); margin:9px 0 3px; padding-bottom:3px;
+          border-bottom:1px solid rgba(34,232,255,.16); text-shadow:0 0 10px rgba(34,232,255,.35); }
+  .ex-h:first-child { margin-top:0; }
+  /* Занятые под завязку слоты - повод не ждать входа, а не просто цифра. */
+  .slots-full { color:var(--yellow) !important; text-shadow:0 0 10px rgba(255,209,102,.45) !important; }
   #lostPill { font-size:9.5px; padding:3px 9px; border-radius:6px; align-self:center;
               background:rgba(255,82,114,.14); color:var(--red);
               border:1px solid rgba(255,82,114,.42);
@@ -350,7 +357,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>MEXC Executor</h1>
+  <h1>Event Futures Executor</h1>
   <div class="sub" id="sub">загрузка…</div>
 
   <!-- Управление одним блоком. Четыре карточки рядом читались как четыре
@@ -374,7 +381,9 @@
            в журнале одинаково - никак, в нём просто ничего не появляется.
            Эта строка единственная их различает. -->
       <div class="row"><span>Сигнал</span><b id="sigAge" title="">—</b></div>
-      <div class="row"><span>Открыто</span><b id="slots">—</b></div>
+      <!-- Слоты держит сама биржа, поэтому при двух биржах это две
+           независимые пятёрки, а не общая. -->
+      <div id="slotRows"></div>
       <div class="row"><span>UP / DOWN</span><b id="updown">—</b></div>
       <div class="row"><span>Очередь</span><b id="queue">—</b></div>
       <div class="row spark-row"><span>Сегодня</span>
@@ -395,6 +404,7 @@
     <div class="ctl-sec ctl-dim ctl-sec-man">
       <div class="ctl-h">Ручная ставка</div>
       <div class="btns" style="margin-bottom:6px">
+        <select id="mEx" title="Биржа"></select>
         <select id="mAsset"></select>
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
         <select id="mTiming"><option value="10">10м</option><option value="30">30м</option></select>
@@ -453,11 +463,12 @@
   <div class="tablewrap">
   <table>
   <thead><tr id="logHead">
-        <th data-c="time">Время</th><th data-c="asset">Актив</th><th data-c="direction">Напр.</th>
+        <th data-c="time">Время</th><th data-c="exchange">Биржа</th>
+        <th data-c="asset">Актив</th><th data-c="direction">Напр.</th>
         <th data-c="stake">Сумма</th><th data-c="payout_page">Payout</th><th data-c="mode">Реж.</th>
         <th data-c="status">Статус</th><th>Заметка</th>
       </tr></thead>
-  <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
+  <tbody id="bets"><tr><td colspan="9" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
   </div>
   </div>
@@ -469,8 +480,9 @@
       <div class="card">
       <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
       <div id="stakeRows"></div>
-      <div class="row"><span>Мин. payout, %</span>
-      <input type="number" id="minPay" min="50" max="100" step="1"></div>
+      <!-- Ниже - общее для всех бирж. Без заголовка эти строки читались
+           как продолжение блока последней биржи. -->
+      <div class="ex-h" id="commonHead" style="display:none">Общее</div>
       <div class="row"><span>Ставок в день</span>
       <input type="number" id="perDay" min="1" max="500" step="1"></div>
       <div class="row"><span>Таймфреймы</span><span id="tfBox"></span></div>
@@ -611,7 +623,7 @@ let sortBy = null, sortDir = 1;
 // Ключ - время строки: журнал перерисовывается каждые 5 секунд, и по
 // индексу раскрытие переезжало бы на соседнюю ставку, стоит прийти новой.
 const openRows = new Set();
-const rowKey = b => `${b.time}|${b.asset || ''}|${b.direction || ''}`;
+const rowKey = b => `${b.time}|${b.exchange || ''}|${b.asset || ''}|${b.direction || ''}`;
 // Заметки собираются из текста биржевой страницы и текста ошибок, то есть
 // приходят снаружи. В разметку их вставляем только экранированными.
 const esc = v => String(v ?? '').replace(/[&<>"]/g,
@@ -739,29 +751,60 @@ const ACT_NAMES = {
   'history':      'Открыть историю сделок',
   'scroll':       'Полистать страницу',
 };
-// Список активов приходит с сервера (ключи urls), поэтому поля ставок и
-// выбор актива для ручной ставки строятся из него - добавление актива в
-// конфиг не требует правки панели.
+// Биржи и их активы приходят с сервера, поэтому поля ставок, порогов
+// выплаты и выбор для ручной ставки строятся из ответа: добавить биржу
+// или актив можно одним конфигом, панель править не нужно.
+const exs = s => s.exchanges || [];
+const exBy = (s, name) => exs(s).find(e => e.name === name) || exs(s)[0] || null;
+
 let assetsBuilt = null;
 function buildAssetControls(st) {
-  const key = st.settings.assets.join(',');
+  const s = st.settings;
+  const key = exs(s).map(e => e.name + ':' + e.assets.join('+')).join('|');
   if (assetsBuilt === key) return;
   assetsBuilt = key;
-  $('stakeRows').innerHTML = st.settings.assets.map(a =>
-    `<div class="row"><span>Ставка ${a}, USDT</span>
-      <input type="number" id="st_${a}" min="1" step="1" data-asset="${a}"></div>`).join('');
-  st.settings.assets.forEach(a => {
-    const el = $('st_' + a);
-    CARDS.stakes.push('st_' + a);
-    ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add('st_' + a)));
-  });
-  $('mAsset').innerHTML = st.settings.assets.map(a => `<option>${a}</option>`).join('');
-  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || st.settings, true));
+  const multi = exs(s).length > 1;
+
+  // Ставка и порог выплаты - у каждой биржи свои. Заголовок биржи
+  // показываем только когда их больше одной: иначе это лишний шум.
+  $('stakeRows').innerHTML = exs(s).map(e =>
+    (multi ? `<div class="ex-h">${e.title}</div>` : '')
+    + e.assets.map(a =>
+      `<div class="row"><span>Ставка ${a}, USDT</span>
+        <input type="number" id="st_${e.name}_${a}" min="1" step="1"
+          data-ex="${e.name}" data-asset="${a}"></div>`).join('')
+    + `<div class="row"><span>Мин. выплата, %</span>
+        <input type="number" id="mp_${e.name}" min="50" max="100" step="1"
+          data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
+            e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>`
+  ).join('');
+  for (const e of exs(s)) {
+    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`]) {
+      CARDS.stakes.push(id);
+      ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
+    }
+  }
+
+  $('mEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
+  $('mEx').style.display = multi ? '' : 'none';
+  $('commonHead').style.display = multi ? '' : 'none';
+  buildManualAssets(s);
+  $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
+  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || s, true));
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
   document.querySelectorAll('.tfBox').forEach(c =>
     c.addEventListener('change', () => dirty.add('tfBox')));
+}
+
+// Активы в ручной ставке - только те, что торгуются на выбранной бирже.
+function buildManualAssets(s) {
+  const e = exBy(s, $('mEx').value);
+  if (!e) return;
+  const keep = $('mAsset').value;
+  $('mAsset').innerHTML = e.assets.map(a => `<option>${a}</option>`).join('');
+  if (e.assets.includes(keep)) $('mAsset').value = keep;
 }
 
 // Сумма ручной ставки. Значение подставляем по активу - но только когда
@@ -771,15 +814,17 @@ const MSTAKE_MIN = 5;
 let mStakeAsset = null;
 function syncManualStake(s, force) {
   const a = $('mAsset').value;
-  if (!a || !s.stakeLimits) return;
-  const max = s.stakeLimits[a] ?? 150;
+  const e = exBy(s, $('mEx').value);
+  if (!a || !e) return;
+  const max = e.stakeLimits[a] ?? 150;
   $('mStake').max = max;
   $('mStake').min = MSTAKE_MIN;
   $('mStakeHint').textContent = `${MSTAKE_MIN}-${max} USDT`;
-  if (force || a !== mStakeAsset) {
-    mStakeAsset = a;
-    // Стартуем от настроечной ставки актива, прижатой к границам.
-    $('mStake').value = Math.min(Math.max(s.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
+  const tag = e.name + '|' + a;
+  if (force || tag !== mStakeAsset) {
+    mStakeAsset = tag;
+    // Стартуем от настроечной ставки актива на этой бирже.
+    $('mStake').value = Math.min(Math.max(e.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
   } else {
     const v = +$('mStake').value;
     if (v > max) $('mStake').value = max;
@@ -802,7 +847,7 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['minPay', 'perDay'],
+  stakes: ['perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
@@ -847,7 +892,12 @@ async function refresh() {
   $('btnDry').textContent = st.dryRun ? 'В боевой режим' : 'В dry-run';
   $('btnDry').className = st.dryRun ? 'danger' : '';
 
-  $('slots').textContent = `${st.slots} / ${s.maxOpenBets}`;
+  // Слоты рисуем по биржам: у каждой свой предел, и общая сумма ничего
+  // не говорит - пять занятых на MEXC не мешают ставке на Toobit.
+  $('slotRows').innerHTML = exs(s).map(e =>
+    `<div class="row"><span>${exs(s).length > 1 ? e.title : 'Открыто'}</span>`
+    + `<b class="${e.slots >= e.maxOpenBets ? 'slots-full' : ''}">${e.slots} / ${e.maxOpenBets}</b></div>`
+  ).join('');
   $('updown').textContent = `${st.dirUsed.UP}/${s.dirLimits.UP} · ${st.dirUsed.DOWN}/${s.dirLimits.DOWN}`;
   $('queue').textContent = st.queue;
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
@@ -877,7 +927,7 @@ async function refresh() {
   setVal('burstMax', s.burst.maxMultiplier);
   $('burstHint').textContent = s.burst.enabled
     ? `Сигналы одного направления за ${s.burst.windowSec} с складываются в одну ставку `
-      + `до ${s.burst.maxMultiplier}x (максимум ${Math.min(s.stakes.ETH * s.burst.maxMultiplier, s.stakeLimits.ETH)} USDT по ETH). `
+      + `до ${s.burst.maxMultiplier}x, но не выше потолка биржи по активу. `
       + 'Ценой этого вход задерживается на окно сбора: узнать, что сигналов три, можно только дав им прийти.'
     : 'Каждый сигнал - своя ставка. Вход мгновенный, но три сигнала подряд '
       + 'растянутся секунд на десять и займут три биржевых слота из пяти.';
@@ -892,13 +942,21 @@ async function refresh() {
 
   buildAssetControls(st);
   syncManualStake(s, false);
-  for (const a of s.assets) { setVal('st_' + a, s.stakes[a]); $('st_' + a).max = s.stakeLimits[a]; }
+  for (const e of exs(s)) {
+    for (const a of e.assets) {
+      setVal(`st_${e.name}_${a}`, e.stakes[a]);
+      $(`st_${e.name}_${a}`).max = e.stakeLimits[a];
+    }
+    setVal(`mp_${e.name}`, e.minPayout);
+  }
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
   }
-  $('stakeHint').textContent = 'Границы биржи: '
-    + s.assets.map(a => `${a} 1–${s.stakeLimits[a]}`).join(', ') + ' USDT.';
-  setVal('minPay', s.minPayout); setVal('perDay', s.maxBetsPerDay);
+  $('stakeHint').textContent = exs(s).map(e =>
+    `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
+    + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
+    + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')).join('. ') + '.';
+  setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
     'Сколько ставок одной стороны пускаем по КАЖДОМУ активу, пока они не '
@@ -952,7 +1010,7 @@ async function refresh() {
   lp.title = 'Ставки, отбитые проверками или ошибками страницы за сегодня. '
     + 'Нажми «Ошибки» и раскрой строку, чтобы увидеть причину целиком.';
   if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="8" style="color:var(--muted)">${
+    tb.innerHTML = `<tr><td colspan="9" style="color:var(--muted)">${
       all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
     // Клик по строке раскрывает заметку целиком: в колонке она обрезана,
@@ -966,14 +1024,15 @@ async function refresh() {
       // больше: обрезка на 70 символах осталась от узкой карточки.
       const short = note.length > 110 ? note.slice(0, 110) + '…' : note;
       const main = `<tr data-k="${esc(k)}"${open ? ' class="open"' : ''}>
-      <td>${fmtTime(b.time)}</td><td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
+      <td>${fmtTime(b.time)}</td><td>${esc(b.exchange || '')}</td>
+      <td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
       <td>${esc(b.stake)}</td><td>${esc(b.payout_page) || '—'}</td><td>${esc(b.mode)}</td>
       <td class="${statusClass(b.status)}">${esc(b.status)}</td>
       <td style="color:var(--muted)">${esc(short)}</td>
     </tr>`;
       if (!open) return main;
       const tf = b.timing ? ` · ${esc(b.timing)} мин` : '';
-      return main + `<tr class="detail"><td colspan="8">${
+      return main + `<tr class="detail"><td colspan="9">${
         esc(note) || 'заметки нет'}<div style="margin-top:4px;color:var(--muted);font-size:10.5px">${
         fmtTime(b.time)}${tf}</div></td></tr>`;
     }).join('');
@@ -999,15 +1058,17 @@ let manualBusy = false;
 $('btnManual').onclick = async () => {
   if (manualBusy) return;
   const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
+  const exchange = $('mEx').value;
   const max = +$('mStake').max || 150;
   const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
   $('mStake').value = stake;
-  if (!confirm(`Поставить ${asset} ${direction} на ${timing} минут, ${stake} USDT?`)) return;
+  const exTitle = (exBy(lastSettings || {}, exchange) || {}).title || exchange;
+  if (!confirm(`Поставить ${exTitle} ${asset} ${direction} на ${timing} минут, ${stake} USDT?`)) return;
   manualBusy = true;
   const btn = $('btnManual'), label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Ставлю…';
   try {
-    const r = await post('manual', { asset, direction, timing, stake });
+    const r = await post('manual', { exchange, asset, direction, timing, stake });
     if (r && r.error) alert('Не принято: ' + r.error);
   } catch (e) {
     alert('Не дошло до исполнителя: ' + e.message);
@@ -1025,11 +1086,16 @@ $('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('b
 $('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };
 
 $('btnSaveStakes').onclick = async () => {
-  const stakes = {};
-  document.querySelectorAll('#stakeRows input').forEach(i => { stakes[i.dataset.asset] = +i.value; });
+  // Ставки уходят по биржам: { mexc: {ETH: 150}, toobit: {ETH: 20} }.
+  const stakes = {}, minPayouts = {};
+  document.querySelectorAll('#stakeRows input[data-asset]').forEach(i => {
+    (stakes[i.dataset.ex] = stakes[i.dataset.ex] || {})[i.dataset.asset] = +i.value;
+  });
+  document.querySelectorAll('#stakeRows input[id^="mp_"]').forEach(i => {
+    minPayouts[i.dataset.ex] = +i.value;
+  });
   await post('settings', {
-    stakes,
-    minPayout: +$('minPay').value,
+    stakes, minPayouts,
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });

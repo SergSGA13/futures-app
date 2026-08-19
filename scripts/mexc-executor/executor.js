@@ -45,6 +45,66 @@ catch (e) {
   process.exit(1);
 }
 
+// ── биржи ──
+// Сначала исполнитель умел одну биржу, и её описание лежало в конфиге
+// плоскими ключами: urls, selectors, timeUnitText. Теперь бирж может
+// быть несколько (MEXC и Toobit), но старый плоский вид продолжает
+// работать: он превращается в единственную биржу с именем
+// defaultExchange. Всё, что не задано у биржи, наследуется от верхнего
+// уровня - так добавление второй биржи не требует дублировать общее.
+if (!CFG.exchanges || !Object.keys(CFG.exchanges).length) {
+  CFG.exchanges = { [CFG.defaultExchange || 'mexc']: {} };
+}
+const EX_CACHE = new Map();
+function exNames() {
+  return Object.keys(CFG.exchanges).filter(n => CFG.exchanges[n].enabled !== false);
+}
+function defaultEx() {
+  const names = exNames();
+  const d = CFG.defaultExchange;
+  return (d && names.includes(d)) ? d : (names[0] || 'mexc');
+}
+function exCfg(name) {
+  const key = name || defaultEx();
+  if (EX_CACHE.has(key)) return EX_CACHE.get(key);
+  const e = CFG.exchanges[key] || {};
+  const v = {
+    name: key,
+    title: e.title || key.toUpperCase(),
+    urls: e.urls || CFG.urls || {},
+    // Селекторы сливаем, а не заменяем: у второй биржи обычно отличаются
+    // один-два, а не весь набор.
+    selectors: { ...(CFG.selectors || {}), ...(e.selectors || {}) },
+    timeUnitText: e.timeUnitText || CFG.timeUnitText || { 10: '10m', 30: '30m' },
+    marketClosedText: e.marketClosedText || CFG.marketClosedText || 'Market Closed',
+    openPositionsLabel: e.openPositionsLabel || CFG.openPositionsLabel || 'Open Positions',
+    // Порог выплаты у каждой биржи свой. minPayoutStrict - когда нужно
+    // именно БОЛЬШЕ порога, а не «не меньше».
+    minPayout: e.minPayout ?? CFG.minPayout ?? 80,
+    minPayoutStrict: e.minPayoutStrict === true,
+    // Главное отличие Toobit: сигналы приходят без выплаты, и проверить
+    // её можно только на странице. Не прочитали - не ставим.
+    requirePagePayout: e.requirePagePayout === true,
+    payoutRe: e.payoutRe || CFG.payoutRe || '{DIR}\\s*Payout\\s*([0-9.]+)\\s*%',
+    dirWords: e.dirWords || CFG.dirWords || { UP: 'Up', DOWN: 'Down' },
+    stakes: e.stakes || CFG.stakes || {},
+    stakeLimits: e.stakeLimits || CFG.stakeLimits || {},
+    // Лимит одновременных ставок держит БИРЖА, поэтому он у каждой свой.
+    maxOpenBets: e.maxOpenBets ?? CFG.maxOpenBets ?? 5,
+  };
+  EX_CACHE.set(key, v);
+  return v;
+}
+function exReset() { EX_CACHE.clear(); }
+// Биржа, на которой сейчас идёт работа со страницей. Ставки исполняются
+// строго по одной, поэтому одной переменной достаточно.
+let EX = null;
+function curEx() { return EX || exCfg(defaultEx()); }
+// Все активы всех бирж - для нормализации сигнала и подсказок панели.
+function exOfAsset(asset) {
+  return exNames().filter(n => (exCfg(n).urls || {})[asset]);
+}
+
 // ── состояние ──
 const state = {
   dryRun: CFG.dryRun !== false,       // по умолчанию dry-run!
@@ -107,14 +167,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
 // Старый плоский stakeUSDT продолжает работать как запасной вариант.
-function stakeFor(asset) {
-  const t = CFG.stakes || {};
+function stakeFor(asset, ex) {
+  const t = exCfg(ex).stakes || {};
   return t[asset] != null ? t[asset] : (CFG.stakeUSDT ?? 5);
 }
 // Потолок ставки по активу: у поля ввода на бирже свой лимит
 // (на ETH видно "1～150 USDT"), и панель не должна давать выйти за него.
-function stakeMax(asset) {
-  const l = CFG.stakeLimits || {};
+function stakeMax(asset, ex) {
+  const l = exCfg(ex).stakeLimits || {};
   return l[asset] != null ? l[asset] : 150;
 }
 
@@ -131,12 +191,19 @@ function prunePlaced() {
   state.placed = state.placed.filter(p => now < slotUntil(p));
   return state.placed;
 }
-function openSlots() { return prunePlaced().length; }
+// Слоты считаем ПО БИРЖЕ: пятёрка одновременных ставок - ограничение
+// самой биржи, и открытые на MEXC позиции не занимают места на Toobit.
+function openSlots(ex) {
+  const all = prunePlaced();
+  return ex ? all.filter(p => (p.ex || defaultEx()) === ex).length : all.length;
+}
 // Лимит направления считается ПО АКТИВУ: «подряд идущие сигналы одной
 // стороны - обычно один заход» верно внутри одного инструмента, а ETH UP
 // и BTC UP это два разных захода, и делить лимит им незачем.
-function dirSlots(dir, asset) {
-  return prunePlaced().filter(p => p.dir === dir && (!asset || p.asset === asset)).length;
+function dirSlots(dir, asset, ex) {
+  return prunePlaced().filter(p => p.dir === dir
+    && (!asset || p.asset === asset)
+    && (!ex || (p.ex || defaultEx()) === ex)).length;
 }
 function dirLimit(dir) {
   const d = CFG.dirLimits || {};
@@ -229,11 +296,39 @@ function log(line) {
   console.log(msg);
   fs.appendFileSync(path.join(LOGS, 'executor.log'), msg + '\n');
 }
+const BETS_HEAD = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,note';
+const BETS_HEAD_OLD = 'time,asset,direction,timing,stake,payout_page,mode,status,note';
 function logBet(rec) {
   const f = path.join(LOGS, 'bets.csv');
-  if (!fs.existsSync(f)) fs.writeFileSync(f, 'time,asset,direction,timing,stake,payout_page,mode,status,note\n');
-  fs.appendFileSync(f, [new Date().toISOString(), rec.asset, rec.direction, rec.timing,
-    rec.stake, rec.payoutPage ?? '', rec.mode, rec.status, JSON.stringify(rec.note || '')].join(',') + '\n');
+  if (!fs.existsSync(f)) fs.writeFileSync(f, BETS_HEAD + '\n');
+  fs.appendFileSync(f, [new Date().toISOString(), rec.ex || defaultEx(), rec.asset, rec.direction,
+    rec.timing, rec.stake, rec.payoutPage ?? '', rec.mode, rec.status,
+    JSON.stringify(rec.note || '')].join(',') + '\n');
+}
+
+// Со второй биржей в журнале появился столбец exchange. Дописать его в
+// конец было нельзя: заметка обязана оставаться последней, в ней бывают
+// запятые. Поэтому старый файл переписываем один раз при старте,
+// проставляя всем прежним строкам биржу по умолчанию - иначе история
+// ставок читалась бы со сдвигом колонок.
+function migrateBetsCsv() {
+  const f = path.join(LOGS, 'bets.csv');
+  if (!fs.existsSync(f)) return;
+  const text = fs.readFileSync(f, 'utf8');
+  const lines = text.replace(/\n$/, '').split('\n');
+  if (lines[0] !== BETS_HEAD_OLD) return;
+  const def = defaultEx();
+  const out = [BETS_HEAD];
+  for (const l of lines.slice(1)) {
+    if (!l.trim()) continue;
+    const c = l.split(',');
+    // Заметка - всё, что после восьмой запятой (в ней бывают свои).
+    const note = c.length > 9 ? c.slice(8).join(',') : (c[8] ?? '');
+    out.push([c[0], def, ...c.slice(1, 8), note].join(','));
+  }
+  fs.copyFileSync(f, f.replace(/\.csv$/, '.pre-exchange.csv'));
+  fs.writeFileSync(f, out.join('\n') + '\n');
+  log(`журнал ставок переведён на формат с биржей: ${out.length - 1} строк, копия старого рядом`);
 }
 
 async function tgAlert(text) {
@@ -427,7 +522,7 @@ async function dumpPage(tag) {
 // плейсхолдер зависит от локали и лимитов аккаунта.
 function amountSelectors() {
   return [
-    CFG.selectors.amount,
+    curEx().selectors.amount,
     'input[placeholder*="USDT"]',
     'input[placeholder*="~"]',
     'input[inputmode="decimal"]',
@@ -468,7 +563,7 @@ async function openPositionsCount() {
   try {
     const body = await page.evaluate(() => document.body.innerText);
     // Метку экранируем: в интерфейсе она может содержать скобки и точки.
-    const label = (CFG.openPositionsLabel || 'Open Positions').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const label = curEx().openPositionsLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const m = body.match(new RegExp(label + '\\s*\\((\\d+)\\)', 'i'));
     return m ? parseInt(m[1], 10) : null;
   } catch (e) { return null; }
@@ -486,13 +581,40 @@ async function waitPositionsGrow(before, timeoutMs) {
   return null;
 }
 
-// Достаём payout со страницы: "Up Payout 80%" / "Down Payout 80%"
+// Достаём payout со страницы. На MEXC это строка "Up Payout 80%" - её
+// ловит шаблон payoutRe с подстановкой слова направления. Разметку
+// второй биржи заранее не знаем, поэтому есть запасной путь: процент,
+// написанный на самой кнопке направления или в ближайшем предке, где он
+// вообще появляется. Если там нашлось НЕСКОЛЬКО разных процентов,
+// возвращаем null: выбирать наугад между выплатой Up и выплатой Down
+// хуже, чем честно сказать «не прочитал» - на биржах с обязательной
+// проверкой это означает отказ от ставки, а не ставку вслепую.
 async function pagePayout(direction) {
+  const E = curEx();
+  const word = E.dirWords[direction] || (direction === 'UP' ? 'Up' : 'Down');
   try {
     const body = await page.evaluate(() => document.body.innerText);
-    const re = new RegExp((direction === 'UP' ? 'Up' : 'Down') + '\\s*Payout\\s*([0-9.]+)\\s*%', 'i');
-    const m = body.match(re);
-    return m ? parseFloat(m[1]) : null;
+    const m = body.match(new RegExp(String(E.payoutRe).replace('{DIR}', word), 'i'));
+    if (m && m[1]) return parseFloat(m[1]);
+  } catch (e) { /* пробуем запасной путь */ }
+  try {
+    const btn = page.locator('button, div[role=button]')
+      .filter({ hasText: new RegExp('^\\s*' + word + '\\b', 'i') }).first();
+    if (await btn.count() === 0) return null;
+    const txt = await btn.evaluate(el => {
+      for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) {
+        const t = e.innerText || '';
+        if (t.includes('%')) return t;
+      }
+      return '';
+    });
+    const vals = [...String(txt).matchAll(/([0-9]{1,3}(?:[.,][0-9]+)?)\s*%/g)]
+      .map(m => parseFloat(m[1].replace(',', '.')))
+      .filter(v => v >= 10 && v <= 500);
+    const uniq = [...new Set(vals)];
+    if (uniq.length === 1) return uniq[0];
+    if (uniq.length > 1) log(`payout у кнопки ${word} неоднозначен: ${uniq.join('%, ')}% - считаю непрочитанным`);
+    return null;
   } catch (e) { return null; }
 }
 
@@ -503,7 +625,7 @@ async function pagePayout(direction) {
 // null - определить не удалось (нет символа или их несколько).
 async function pageAsset() {
   const t = await page.title().catch(() => '');
-  const keys = Object.keys(CFG.urls || {}).sort((a, b) => b.length - a.length);
+  const keys = Object.keys(curEx().urls || {}).sort((a, b) => b.length - a.length);
   const hit = keys.filter(k => new RegExp(k + '\\s*[_/-]?\\s*USDT', 'i').test(t));
   return hit.length === 1 ? hit[0] : null;
 }
@@ -511,8 +633,11 @@ async function pageAsset() {
 // ── ставка ──
 async function placeBet(sig) {
   const t0 = Date.now();
-  const url = CFG.urls[sig.asset];
-  if (!url) throw new Error('нет URL для актива ' + sig.asset);
+  // С этой строки и до конца ставки все страничные помощники смотрят в
+  // конфиг ИМЕННО ЭТОЙ биржи: селекторы, тексты чипов, порог выплаты.
+  EX = exCfg(sig.ex);
+  const url = EX.urls[sig.asset];
+  if (!url) throw new Error(`нет URL для актива ${sig.asset} на бирже ${EX.title}`);
   await browser();
   // На передний план - тот же разговор про фоновое окно: невидимой
   // вкладке браузер отдаёт кадры по остаточному принципу.
@@ -570,7 +695,7 @@ async function placeBet(sig) {
   log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
 
   // залогинены ли мы: на странице не должно быть кнопки Log In
-  const loginBtn = page.locator(CFG.selectors.loginMarker).first();
+  const loginBtn = page.locator(EX.selectors.loginMarker).first();
   if (await loginBtn.count() > 0 && await loginBtn.isVisible().catch(() => false)) {
     await shot('not-logged-in');
     throw new Error('НЕ ЗАЛОГИНЕН - выполни: node executor.js login');
@@ -584,13 +709,13 @@ async function placeBet(sig) {
   // странице. Пока каждая ставка перезагружала страницу, чип сбрасывался
   // сам; после оптимизации «не перезагружать, если уже открыто» прежний
   // выбор стал сохраняться - и 10-минутные сигналы поехали на 30 минут.
-  const tfText = CFG.timeUnitText[String(sig.timing)] || '10m';
+  const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
   const tfRe = new RegExp('^\\s*' + tfText + '\\s*$');
 
   // Берём первый ВИДИМЫЙ чип, а не первый попавшийся: селектор широкий
   // и легко цепляет скрытую разметку вкладок.
   async function visibleChip(re) {
-    const all = page.locator(CFG.selectors.timeUnit).filter({ hasText: re });
+    const all = page.locator(EX.selectors.timeUnit).filter({ hasText: re });
     const n = Math.min(await all.count().catch(() => 0), 12);
     for (let i = 0; i < n; i++) {
       const c = all.nth(i);
@@ -612,7 +737,7 @@ async function placeBet(sig) {
   // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
   // понять; тогда проверять нечего, но и ломать исполнение нельзя.
   async function activeChipName() {
-    for (const t of Object.values(CFG.timeUnitText || { 10: '10m' })) {
+    for (const t of Object.values(EX.timeUnitText)) {
       const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
       if (c && await chipActive(c)) return t;
     }
@@ -650,7 +775,7 @@ async function placeBet(sig) {
   // проверки ставка падала бы в ошибку «кнопка не найдена» с дампом -
   // то есть штатная ситуация выглядела бы как поломка селекторов.
   const closed = await page.locator('button, div[role=button]')
-    .filter({ hasText: new RegExp(CFG.marketClosedText || 'Market Closed', 'i') })
+    .filter({ hasText: new RegExp(EX.marketClosedText, 'i') })
     .count().catch(() => 0);
   if (closed > 0) {
     log(`пропуск ${sig.asset}: рынок закрыт`);
@@ -658,14 +783,32 @@ async function placeBet(sig) {
     return { status: 'skip-market-closed' };
   }
 
-  // страховка: payout на странице (вебхук уже проверял, но payout плавает)
+  // ── выплата ──
+  // На MEXC это страховка: сигнал уже отобран по payout источником, а на
+  // странице он мог сползти. На Toobit это единственная проверка вообще -
+  // туда сигналы приходят без выплаты, и ставить, не прочитав её со
+  // страницы, значит ставить вслепую. Отсюда requirePagePayout: не
+  // прочитали - не ставим.
   const pv = await pagePayout(sig.direction);
-  if (pv != null && pv < (CFG.minPayout ?? 80)) {
+  const need = EX.minPayout;
+  const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
+  if (pv == null) {
+    if (EX.requirePagePayout) {
+      log(`пропуск ${sig.asset} ${sig.direction}: выплату на странице ${EX.title} прочитать не удалось, `
+        + `а она обязательна (нужно ${cmp} ${need}%) - смотри ДАМП ниже`);
+      await shot('payout-unknown');
+      await dumpPage('payout-unknown');
+      return { status: 'skip-payout-unknown' };
+    }
+    log('выплату на странице прочитать не удалось - иду дальше, порог проверял источник сигнала');
+  } else if (EX.minPayoutStrict ? pv <= need : pv < need) {
     // Раньше этот исход писался только в bets.csv, и в логе ставка
     // просто обрывалась после «панель готова» - выглядело как зависание.
-    log(`пропуск ${sig.asset} ${sig.direction}: payout на странице ${pv}% < ${CFG.minPayout ?? 80}%`);
+    log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`);
     await shot('payout-low');
     return { status: 'skip-payout', payoutPage: pv };
+  } else {
+    log(`выплата на странице ${pv}% (нужно ${cmp} ${need}%)`);
   }
 
   // Поле суммы уже найдено при ожидании панели
@@ -674,8 +817,8 @@ async function placeBet(sig) {
   await page.waitForTimeout(randInt(250, 700));
 
   // кнопка Up / Down
-  const btnSel = sig.direction === 'UP' ? CFG.selectors.up : CFG.selectors.down;
-  const dirWord = sig.direction === 'UP' ? 'Up' : 'Down';
+  const btnSel = sig.direction === 'UP' ? EX.selectors.up : EX.selectors.down;
+  const dirWord = EX.dirWords[sig.direction] || (sig.direction === 'UP' ? 'Up' : 'Down');
   // Сначала ТОЧНОЕ совпадение по тексту. По диагностике на странице
   // ровно одна кнопка "Up" и одна "Down", а :has-text() ищет подстроку
   // и поймал бы, например, "Upgrade", появись такая кнопка позже.
@@ -699,8 +842,8 @@ async function placeBet(sig) {
   await humanClick(btn);
   await page.waitForTimeout(randInt(500, 900));
   // возможное окно подтверждения
-  if (CFG.selectors.confirm) {
-    const c = page.locator(CFG.selectors.confirm).first();
+  if (EX.selectors.confirm) {
+    const c = page.locator(EX.selectors.confirm).first();
     if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
   }
 
@@ -821,21 +964,50 @@ async function pollSheet() {
 // Один набор правил на оба источника. Раньше проверки жили внутри
 // обработчика HTTP, и сигнал из таблицы прошёл бы мимо тихих часов,
 // лимитов и дедупа - то есть мимо всего, ради чего они существуют.
+// Биржа, названная в самом сигнале: поле exchange или префикс тикера
+// вида "TOOBIT:ETHUSDT". Пусто - значит не сказано.
+function namedExchange(sig) {
+  const names = exNames();
+  const raw = String(sig.exchange || sig.ex || '').toLowerCase().trim();
+  if (raw) {
+    const hit = names.find(n => n.toLowerCase() === raw)
+             || names.find(n => raw.includes(n.toLowerCase()));
+    if (hit) return hit;
+  }
+  const t = String(sig.ticker || '').toLowerCase();
+  return names.find(n => t.includes(n.toLowerCase())) || '';
+}
+function allAssets() {
+  const out = new Set();
+  for (const n of exNames()) for (const a of Object.keys(exCfg(n).urls || {})) out.add(a);
+  return [...out];
+}
+
 function normalizeSignal(sig) {
+  // Сначала биржа: если она названа, актив ищем только среди её активов.
+  let ex = namedExchange(sig);
   // Актив определяем по ключам urls, а не по зашитому списку: добавить
   // новый актив должно быть можно одной строкой в конфиге. Длинные
   // тикеры проверяем первыми, иначе короткий совпал бы как подстрока.
   if (!sig.asset) {
     const t = String(sig.ticker || '').toUpperCase();
-    sig.asset = Object.keys(CFG.urls || {})
-      .sort((a, b) => b.length - a.length)
+    const pool = ex ? Object.keys(exCfg(ex).urls || {}) : allAssets();
+    sig.asset = pool.sort((a, b) => b.length - a.length)
       .find(k => t.includes(k.toUpperCase())) || '';
   }
+  // Биржу не назвали: если актив есть ровно на одной - вопрос решён,
+  // иначе идём на биржу по умолчанию. Молча раскидывать один и тот же
+  // тикер по двум биржам нельзя - это разные деньги и разные лимиты.
+  if (!ex) {
+    const own = exOfAsset(sig.asset);
+    ex = own.length === 1 ? own[0] : defaultEx();
+  }
+  sig.ex = ex;
   sig.direction = String(sig.direction || '').toUpperCase();
   if (sig.direction === 'BUY') sig.direction = 'UP';
   if (sig.direction === 'SELL') sig.direction = 'DOWN';
   sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
-  return !!(CFG.urls || {})[sig.asset]
+  return !!(exCfg(ex).urls || {})[sig.asset]
       && (sig.direction === 'UP' || sig.direction === 'DOWN');
 }
 
@@ -844,7 +1016,7 @@ function acceptSignal(sig, src) {
   const mode = state.dryRun ? 'DRY' : 'LIVE';
   const skip = (reason, status, msg) => {
     if (msg) log(`пропуск (${src}): ${msg}`);
-    if (status) logBet({ ...sig, stake: stakeFor(sig.asset), mode, status });
+    if (status) logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode, status });
     return reason;
   };
 
@@ -858,15 +1030,17 @@ function acceptSignal(sig, src) {
   if (state.paused) {
     return skip('paused', null, 'исполнитель на паузе');
   }
-  const dirBusy = dirSlots(sig.direction, sig.asset)
-    + state.queue.filter(q => q.direction === sig.direction && q.asset === sig.asset).length;
+  const dirBusy = dirSlots(sig.direction, sig.asset, sig.ex)
+    + state.queue.filter(q => q.direction === sig.direction && q.asset === sig.asset && q.ex === sig.ex).length;
   if (dirBusy >= dirLimit(sig.direction)) {
     return skip('dir-limit', 'skip-dir-limit',
       `${sig.asset} ${sig.direction} уже ${dirBusy}/${dirLimit(sig.direction)} в окне`);
   }
-  const busySlots = openSlots() + state.queue.length;
-  if (busySlots >= (CFG.maxOpenBets ?? 5)) {
-    return skip('slots', 'skip-slots', `занято слотов ${busySlots}/${CFG.maxOpenBets ?? 5}`);
+  // Слоты - ограничение самой биржи, поэтому и очередь считаем по ней же.
+  const capacity = exCfg(sig.ex).maxOpenBets;
+  const busySlots = openSlots(sig.ex) + state.queue.filter(q => q.ex === sig.ex).length;
+  if (busySlots >= capacity) {
+    return skip('slots', 'skip-slots', `${exCfg(sig.ex).title}: занято слотов ${busySlots}/${capacity}`);
   }
 
   // новый день - сброс дневного счётчика
@@ -882,7 +1056,10 @@ function acceptSignal(sig, src) {
   // одной свече приходят с разным receivedAt - раньше ключ по bartime
   // считал их одним и молча выбрасывал второй и третий.
   const now = Date.now();
-  const key = `${sig.asset}|${sig.direction}|${sig.dedupKey || sig.receivedAt || sig.bartime || sig.sentAt}`;
+  // Биржа входит в ключ: ETH UP на MEXC и ETH UP на Toobit - две разные
+  // ставки разными деньгами, и вторая не повтор первой. Без этого при
+  // двух биржах второй сигнал молча пропадал бы как дубль.
+  const key = `${sig.ex}|${sig.asset}|${sig.direction}|${sig.dedupKey || sig.receivedAt || sig.bartime || sig.sentAt}`;
   state.recent = state.recent.filter(r => now - r.t < 120000);
   if (state.recent.some(r => r.key === key)) return 'duplicate';
   state.recent.push({ key, t: now });
@@ -892,7 +1069,7 @@ function acceptSignal(sig, src) {
   state.lastSignalAt = now;
   state.silenceAlerted = false;
   saveState();
-  log(`сигнал принят (${src}): ${sig.asset} ${sig.direction} ${sig.timing}м payout=${sig.payout}`);
+  log(`сигнал принят (${src}): ${exCfg(sig.ex).title} ${sig.asset} ${sig.direction} ${sig.timing}м payout=${sig.payout}`);
   return enqueueSignal(sig);
 }
 
@@ -919,10 +1096,10 @@ function burstCfg() {
 function betStake(sig) {
   // Сумма, названная явно (ручная ставка из панели), важнее настройки:
   // человек нажал её сам. Границы всё равно биржевые.
-  if (sig.stake) return Math.round(clamp(sig.stake, MANUAL_STAKE_MIN, stakeMax(sig.asset), stakeFor(sig.asset)));
-  const base = stakeFor(sig.asset);
+  if (sig.stake) return Math.round(clamp(sig.stake, MANUAL_STAKE_MIN, stakeMax(sig.asset, sig.ex), stakeFor(sig.asset, sig.ex)));
+  const base = stakeFor(sig.asset, sig.ex);
   const m = Math.max(1, Math.min(sig.mult || 1, burstCfg().max));
-  return Math.min(Math.round(base * m), stakeMax(sig.asset));
+  return Math.min(Math.round(base * m), stakeMax(sig.asset, sig.ex));
 }
 function enqueueSignal(sig) {
   const B = burstCfg();
@@ -932,12 +1109,14 @@ function enqueueSignal(sig) {
     setImmediate(pump);
     return 'queued';
   }
-  const k = sig.asset + '|' + sig.direction;
+  // Ключ пачки включает биржу: один и тот же ETH UP на MEXC и на Toobit -
+  // две разные ставки разными деньгами, складывать их в одну нельзя.
+  const k = sig.ex + '|' + sig.asset + '|' + sig.direction;
   const g = groups.get(k);
   if (g) {
     g.count++;
     log(`пачка ${k}: сигнал ${g.count} присоединён к текущей`);
-    logBet({ ...sig, stake: stakeFor(sig.asset), mode: state.dryRun ? 'DRY' : 'LIVE',
+    logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode: state.dryRun ? 'DRY' : 'LIVE',
              status: 'merged', note: `в пачку с ${new Date(g.sig.receivedAt).toISOString().slice(11, 19)}` });
     return 'merged';
   }
@@ -971,7 +1150,7 @@ async function pump() {
       log(`пропуск: сигнал устарел (${age.toFixed(0)}с) ${sig.asset} ${sig.direction}`);
       logBet({ ...sig, stake: betStake(sig), mode, status: 'skip-stale' });
     } else if (process.env.TEST_MODE === '1') {
-      logBet({ ...sig, stake: stakeFor(sig.asset), mode, status: 'test-mode' });
+      logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode, status: 'test-mode' });
     } else {
       const r = await placeBet(sig);
       logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
@@ -983,7 +1162,8 @@ async function pump() {
       // превышением биржевого лимита.
       const counts = ['placed', 'placed-unconfirmed', 'placed-unverified'];
       if (counts.includes(r.status) || r.status === 'dry-run') {
-        state.placed.push({ t: Date.now(), dir: sig.direction, asset: sig.asset, timing: sig.timing });
+        state.placed.push({ t: Date.now(), dir: sig.direction, asset: sig.asset,
+                            timing: sig.timing, ex: sig.ex });
       }
       if (counts.includes(r.status)) state.betsToday++;
       saveState();
@@ -991,7 +1171,7 @@ async function pump() {
     }
   } catch (e) {
     state.consecutiveErrors++;
-    log(`ОШИБКА ставки ${sig.asset} ${sig.direction}: ${e.message}`);
+    log(`ОШИБКА ставки ${exCfg(sig.ex).title} ${sig.asset} ${sig.direction}: ${e.message}`);
     logBet({ ...sig, stake: betStake(sig), mode, status: 'error', note: e.message });
     await tgAlert(`ошибка ставки ${sig.asset} ${sig.direction}: ${e.message}`);
     if (state.consecutiveErrors >= (CFG.maxConsecutiveErrors ?? 3) && !state.dryRun) {
@@ -1043,23 +1223,32 @@ async function idleAction() {
   const act = pool[randInt(0, pool.length - 1)];
   try {
     await browser();
-    if (!/mexc\.com/.test(page.url())) {
-      await page.goto(CFG.urls.ETH, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // Биржу для холостого захода выбираем ту, что уже открыта, иначе
+    // случайную: гонять окно между биржами каждые десять минут - это
+    // не «человечность», а метание.
+    const names = exNames();
+    const openOn = names.find(n => Object.values(exCfg(n).urls || {})
+      .some(u => page.url().startsWith(u)));
+    EX = exCfg(openOn || names[randInt(0, names.length - 1)]);
+    if (!openOn) {
+      const first = Object.values(EX.urls)[0];
+      if (!first) return;
+      await page.goto(first, { waitUntil: 'domcontentloaded', timeout: 15000 });
       await idleWait(randInt(1500, 3000));
     }
 
     if (act === 'switch-asset') {
       // Список берём из конфига: захардкоженные ETH/BTC делали вид, что
       // третьего актива не существует, и со SPCX уводили страницу на ETH.
-      const all = Object.keys(CFG.urls || {});
-      const cur = all.find(a => page.url().startsWith(CFG.urls[a]));
+      const all = Object.keys(EX.urls || {});
+      const cur = all.find(a => page.url().startsWith(EX.urls[a]));
       const rest = all.filter(a => a !== cur);
       const other = rest.length ? rest[randInt(0, rest.length - 1)] : all[0];
-      await page.goto(CFG.urls[other], { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.goto(EX.urls[other], { waitUntil: 'domcontentloaded', timeout: 15000 });
       await idleWait(randInt(2000, 6000));
 
     } else if (act === 'history') {
-      const tab = page.locator(CFG.selectors.timeUnit)
+      const tab = page.locator(EX.selectors.timeUnit)
         .filter({ hasText: /^\s*(Position History|Order History|History|Positions)\s*$/i }).first();
       if (await tab.isVisible().catch(() => false)) {
         await humanClick(tab);
@@ -1076,7 +1265,7 @@ async function idleAction() {
       // 30m и обратно на 10m. Безопасно: боевой код всё равно сам
       // выставляет нужный чип перед каждой ставкой.
       for (const t of ['30m', '10m']) {
-        const chip = page.locator(CFG.selectors.timeUnit)
+        const chip = page.locator(EX.selectors.timeUnit)
           .filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
         if (await chip.isVisible().catch(() => false)) await humanClick(chip);
         if (!await idleWait(randInt(1200, 4000))) break;
@@ -1133,13 +1322,18 @@ async function windowBySchedule() {
     state.busy = true;
     try {
       await browser();
-      // Актив выбираем случайно: одна и та же стартовая страница каждое
-      // утро - такая же сигнатура, как одинаковая точка клика.
-      const all = Object.keys(CFG.urls || {});
+      // Биржу и актив выбираем случайно: одна и та же стартовая
+      // страница каждое утро - такая же сигнатура, как одинаковая точка
+      // клика. Держать открытыми обе биржи смысла нет, вторую откроет
+      // сама ставка.
+      const names = exNames();
+      EX = exCfg(names[randInt(0, names.length - 1)]);
+      const all = Object.keys(EX.urls || {});
+      if (!all.length) return;
       const a = all[randInt(0, all.length - 1)];
-      await page.goto(CFG.urls[a], { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.goto(EX.urls[a], { waitUntil: 'domcontentloaded', timeout: 25000 });
       state.windowAt = Date.now();
-      log(`окно биржи открыто заранее (${a}): начались активные часы`);
+      log(`окно биржи открыто заранее (${EX.title} ${a}): начались активные часы`);
     } catch (e) {
       log('окно биржи не открылось по расписанию: ' + e.message);
       await closeBrowser();
@@ -1193,11 +1387,9 @@ function snapshot() {
     betsToday: state.betsToday,
     maxBetsPerDay: CFG.maxBetsPerDay ?? 40,
     slots: openSlots(),
-    maxOpenBets: CFG.maxOpenBets ?? 5,
+    maxOpenBets: exNames().reduce((n, e) => n + exCfg(e).maxOpenBets, 0),
     queue: state.queue.length,
     consecutiveErrors: state.consecutiveErrors,
-    stakes: { ETH: stakeFor('ETH'), BTC: stakeFor('BTC') },
-    minPayout: CFG.minPayout ?? 80,
     execTimings: CFG.execTimings || [10],
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
@@ -1208,14 +1400,32 @@ function snapshot() {
     busy: state.busy,
     // всё, что редактируется в панели, отдаём одним куском
     settings: {
-      assets: Object.keys(CFG.urls || {}),
-      stakes: Object.fromEntries(Object.keys(CFG.urls || {}).map(a => [a, stakeFor(a)])),
-      stakeLimits: Object.fromEntries(Object.keys(CFG.urls || {}).map(a => [a, stakeMax(a)])),
+      // Биржи: всё, что панели нужно знать про каждую, одним куском.
+      // assets/stakes/stakeLimits верхнего уровня оставлены как сводка
+      // по всем биржам сразу - по ним строятся общие подсказки.
+      exchanges: exNames().map(n => {
+        const e = exCfg(n);
+        const assets = Object.keys(e.urls || {});
+        return {
+          name: n, title: e.title, assets,
+          stakes: Object.fromEntries(assets.map(a => [a, stakeFor(a, n)])),
+          stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
+          minPayout: e.minPayout,
+          minPayoutStrict: e.minPayoutStrict,
+          requirePagePayout: e.requirePagePayout,
+          maxOpenBets: e.maxOpenBets,
+          slots: openSlots(n),
+        };
+      }),
+      defaultExchange: defaultEx(),
+      assets: allAssets(),
+      stakes: Object.fromEntries(allAssets().map(a => [a, stakeFor(a, exOfAsset(a)[0])])),
+      stakeLimits: Object.fromEntries(allAssets().map(a => [a, stakeMax(a, exOfAsset(a)[0])])),
       execTimings: CFG.execTimings || [10],
       dirLimits: { UP: dirLimit('UP'), DOWN: dirLimit('DOWN') },
-      maxOpenBets: CFG.maxOpenBets ?? 5,
+      maxOpenBets: exNames().reduce((n, e) => n + exCfg(e).maxOpenBets, 0),
       maxBetsPerDay: CFG.maxBetsPerDay ?? 40,
-      minPayout: CFG.minPayout ?? 80,
+      minPayout: exCfg(defaultEx()).minPayout,
       slotMarginMin: CFG.slotMarginMin ?? 1,
       humanize: CFG.humanize !== false,
       schedule: {
@@ -1261,13 +1471,36 @@ const clamp = (v, lo, hi, dflt) => {
 
 function applySettings(s) {
   const changed = [];
+  // Ставки приходят по биржам: { mexc: {ETH: 150}, toobit: {ETH: 20} }.
+  // Плоский вид { ETH: 150 } из старой панели тоже понимаем - он ложится
+  // на биржу по умолчанию.
   if (s.stakes) {
-    CFG.stakes = CFG.stakes || {};
-    for (const a of Object.keys(CFG.urls || {})) {
-      if (s.stakes[a] == null) continue;
-      const v = Math.round(clamp(s.stakes[a], 1, stakeMax(a), stakeFor(a)));
-      if (v !== stakeFor(a)) changed.push(`ставка ${a} ${stakeFor(a)}→${v}`);
-      CFG.stakes[a] = v;
+    const byEx = exNames().some(n => s.stakes[n] && typeof s.stakes[n] === 'object')
+      ? s.stakes : { [defaultEx()]: s.stakes };
+    for (const n of exNames()) {
+      const want = byEx[n];
+      if (!want) continue;
+      const e = CFG.exchanges[n];
+      const own = e.stakes ? e.stakes : (e.stakes = { ...(exCfg(n).stakes || {}) });
+      for (const a of Object.keys(exCfg(n).urls || {})) {
+        if (want[a] == null) continue;
+        const v = Math.round(clamp(want[a], 1, stakeMax(a, n), stakeFor(a, n)));
+        if (v !== stakeFor(a, n)) changed.push(`ставка ${exCfg(n).title} ${a} ${stakeFor(a, n)}→${v}`);
+        own[a] = v;
+      }
+      exReset();
+    }
+  }
+  // Порог выплаты - тоже по биржам: на MEXC он страховка поверх сигнала,
+  // на Toobit единственная проверка.
+  if (s.minPayouts) {
+    for (const n of exNames()) {
+      if (s.minPayouts[n] == null) continue;
+      const was = exCfg(n).minPayout;
+      const v = clamp(s.minPayouts[n], 50, 100, was);
+      if (v !== was) changed.push(`выплата ${exCfg(n).title} ${was}→${v}%`);
+      CFG.exchanges[n].minPayout = v;
+      exReset();
     }
   }
   if (s.dirLimits) {
@@ -1279,10 +1512,14 @@ function applySettings(s) {
       CFG.dirLimits[d] = v;
     }
   }
+  // Плоский minPayout из старой панели - это порог биржи по умолчанию.
   if (s.minPayout != null) {
-    const v = clamp(s.minPayout, 50, 100, CFG.minPayout ?? 80);
-    if (v !== (CFG.minPayout ?? 80)) changed.push(`payout ${CFG.minPayout ?? 80}→${v}`);
+    const n = defaultEx(), was = exCfg(n).minPayout;
+    const v = clamp(s.minPayout, 50, 100, was);
+    if (v !== was) changed.push(`выплата ${exCfg(n).title} ${was}→${v}%`);
     CFG.minPayout = v;
+    CFG.exchanges[n].minPayout = v;
+    exReset();
   }
   if (s.maxBetsPerDay != null) {
     const v = Math.round(clamp(s.maxBetsPerDay, 1, 500, CFG.maxBetsPerDay ?? 40));
@@ -1406,11 +1643,19 @@ const server = http.createServer((req, res) => {
       req.on('data', d => { b += d; if (b.length > 4096) req.destroy(); });
       req.on('end', () => {
         let m; try { m = JSON.parse(b); } catch (e) { return sendJson(400, { error: 'bad json' }); }
+        // Биржа: названа явно или та единственная, где есть такой актив.
+        // Молча подставлять первую попавшуюся нельзя - это чужие деньги.
+        const exWant = String(m.exchange || '').toLowerCase();
+        const ex = exNames().includes(exWant) ? exWant
+          : (exOfAsset(m.asset).length === 1 ? exOfAsset(m.asset)[0] : defaultEx());
+        if (exWant && !exNames().includes(exWant)) {
+          return sendJson(400, { error: 'неизвестная биржа: ' + m.exchange, known: exNames() });
+        }
         // Раньше неизвестный актив молча подменялся первым из списка -
         // то есть опечатка в запросе открывала ставку по чужой монете.
-        const known = Object.keys(CFG.urls || {});
+        const known = Object.keys(exCfg(ex).urls || {});
         if (!known.includes(m.asset)) {
-          return sendJson(400, { error: 'неизвестный актив: ' + m.asset, known });
+          return sendJson(400, { error: `актив ${m.asset} не торгуется на ${exCfg(ex).title}`, known });
         }
         const asset = m.asset;
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
@@ -1418,10 +1663,11 @@ const server = http.createServer((req, res) => {
         // Сумму присылает панель. Клампим здесь, а не только в панели:
         // запрос можно отправить и мимо неё, а верхняя граница - биржевая.
         const stake = m.stake == null ? null
-          : Math.round(clamp(m.stake, MANUAL_STAKE_MIN, stakeMax(asset), stakeFor(asset)));
-        state.queue.push({ asset, direction, timing, stake, receivedAt: Date.now(),
+          : Math.round(clamp(m.stake, MANUAL_STAKE_MIN, stakeMax(asset, ex), stakeFor(asset, ex)));
+        state.queue.push({ ex, asset, direction, timing, stake, receivedAt: Date.now(),
           label: 'manual', mult: 1, burstCount: 1 });
-        log(`панель: ручная ставка ${asset} ${direction} ${timing}м на ${stake ?? stakeFor(asset)} USDT`);
+        log(`панель: ручная ставка ${exCfg(ex).title} ${asset} ${direction} ${timing}м `
+          + `на ${stake ?? stakeFor(asset, ex)} USDT`);
         setImmediate(pump);
         sendJson(200, { ok: true });
       });
@@ -1506,24 +1752,35 @@ const server = http.createServer((req, res) => {
 
 // ── режим login ──
 async function loginMode() {
-  console.log('Открываю окно браузера. Войди в аккаунт MEXC, реши капчу,');
+  // node executor.js login [биржа] - профиль браузера общий, но войти
+  // надо в каждую биржу отдельно.
+  const E = exCfg((process.argv[3] || '').toLowerCase() || defaultEx());
+  console.log(`Открываю окно браузера. Войди в аккаунт ${E.title}, реши капчу,`);
   console.log('убедись что видишь страницу Event Futures, затем закрой окно.');
   const c = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(false));
   const p = c.pages()[0] || await c.newPage();
-  await p.goto(CFG.urls.BTC, { waitUntil: 'domcontentloaded' });
+  const first = Object.values(E.urls)[0];
+  if (!first) { console.error(`у биржи ${E.title} не задан ни один адрес в urls`); process.exit(1); }
+  await p.goto(first, { waitUntil: 'domcontentloaded' });
   await new Promise(resolve => c.on('close', resolve));
   console.log('Профиль сохранён. Теперь запускай: node executor.js');
 }
 
 // ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──
 async function diagMode() {
-  const asset = (process.argv[3] || 'ETH').toUpperCase() === 'BTC' ? 'BTC' : 'ETH';
-  console.log(`Открываю ${asset} и смотрю, что на странице. Ставка НЕ делается.`);
+  // node executor.js diag [актив] [биржа] - вторую биржу иначе не
+  // осмотреть, а именно её селекторы и надо подобрать.
+  EX = exCfg((process.argv[4] || '').toLowerCase() || defaultEx());
+  const assets = Object.keys(EX.urls || {});
+  const want = String(process.argv[3] || assets[0] || '').toUpperCase();
+  const asset = assets.includes(want) ? want : assets[0];
+  if (!asset) { console.error(`у биржи ${EX.title} не задан ни один адрес в urls`); process.exit(1); }
+  console.log(`Открываю ${EX.title} ${asset} и смотрю, что на странице. Ставка НЕ делается.`);
   await browser();
-  await page.goto(CFG.urls[asset], { waitUntil: 'domcontentloaded', timeout: 25000 });
+  await page.goto(EX.urls[asset], { waitUntil: 'domcontentloaded', timeout: 25000 });
   await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
 
-  const loginBtn = page.locator(CFG.selectors.loginMarker).first();
+  const loginBtn = page.locator(EX.selectors.loginMarker).first();
   const notLogged = await loginBtn.isVisible().catch(() => false);
   log(notLogged ? 'ВНИМАНИЕ: похоже, НЕ залогинен (видна кнопка Log In)' : 'логин на месте');
 
@@ -1531,18 +1788,20 @@ async function diagMode() {
   const ready = await waitForPanel();
   log(ready ? ('панель готова, поле суммы: ' + ready.sel)
             : 'панель НЕ отрисовалась за отведённое время');
-  await dumpPage('diag-' + asset);
+  await dumpPage(`diag-${EX.name}-${asset}`);
 
   // Проверяем чип таймфрейма тем же способом, что и боевой код
-  for (const tfText of Object.values(CFG.timeUnitText || { 10: '10m' })) {
-    const n = await page.locator(CFG.selectors.timeUnit)
+  for (const tfText of Object.values(EX.timeUnitText)) {
+    const n = await page.locator(EX.selectors.timeUnit)
       .filter({ hasText: new RegExp('^\\s*' + tfText + '\\s*$') }).count().catch(() => -1);
     log(`чип "${tfText}": найдено элементов ${n}`);
   }
   for (const dir of ['UP', 'DOWN']) {
-    log(`payout ${dir} по текущему селектору: ${await pagePayout(dir)}`);
+    const v = await pagePayout(dir);
+    log(`выплата ${dir} по текущему шаблону: ${v == null ? 'НЕ ПРОЧИТАНА' : v + '%'}`
+      + (EX.requirePagePayout && v == null ? ' - с requirePagePayout ставок по этой бирже не будет' : ''));
   }
-  const f = await shot('diag-' + asset);
+  const f = await shot(`diag-${EX.name}-${asset}`);
   log('скриншот: ' + f);
   console.log('\nГотово. Пришли последние строки logs/executor.log и этот скриншот.');
   await ctx.close();
@@ -1569,8 +1828,17 @@ if (process.argv[2] === 'login') {
     });
   }
   loadState();
+  migrateBetsCsv();
   server.listen(CFG.port ?? 8787, () => {
-    log(`MEXC Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'} | ставки: ETH ${stakeFor('ETH')} / BTC ${stakeFor('BTC')} USDT`);
+    log(`Executor слушает :${CFG.port ?? 8787} | режим: ${state.dryRun ? 'DRY-RUN (без реальных ставок)' : 'LIVE'}`);
+    for (const n of exNames()) {
+      const e = exCfg(n);
+      const assets = Object.keys(e.urls || {});
+      log(`  биржа ${e.title}${n === defaultEx() ? ' (по умолчанию)' : ''}: `
+        + `${assets.map(a => `${a} ${stakeFor(a, n)}`).join(' / ') || 'активов нет'} USDT `
+        + `| выплата ${e.minPayoutStrict ? '>' : '>='} ${e.minPayout}%`
+        + `${e.requirePagePayout ? ', обязательна со страницы' : ''} | слотов ${e.maxOpenBets}`);
+    }
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
     log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
     const tw = todayWindows();

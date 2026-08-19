@@ -1,31 +1,98 @@
 {
   "port": 8787,
   "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
-
   "dryRun": true,
-
-  "stakes": { "ETH": 150, "BTC": 250, "SPCX": 30 },
-  "stakeLimits": { "ETH": 150, "BTC": 250, "SPCX": 150 },
-
-  "minPayout": 80,
-  "maxOpenBets": 5,
-  "dirLimits": { "UP": 5, "DOWN": 5 },
+  "defaultExchange": "mexc",
+  "exchanges": {
+    "mexc": {
+      "title": "MEXC",
+      "enabled": true,
+      "maxOpenBets": 5,
+      "minPayout": 80,
+      "minPayoutStrict": false,
+      "requirePagePayout": false,
+      "stakes": {
+        "ETH": 150,
+        "BTC": 250,
+        "SPCX": 30
+      },
+      "stakeLimits": {
+        "ETH": 150,
+        "BTC": 250,
+        "SPCX": 150
+      },
+      "urls": {
+        "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
+        "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
+        "SPCX": "https://www.mexc.com/futures/event-futures/SPCX_USDT"
+      },
+      "timeUnitText": {
+        "10": "10m",
+        "30": "30m"
+      },
+      "marketClosedText": "Market Closed",
+      "openPositionsLabel": "Open Positions"
+    },
+    "toobit": {
+      "title": "Toobit",
+      "enabled": true,
+      "maxOpenBets": 5,
+      "minPayout": 75,
+      "minPayoutStrict": true,
+      "requirePagePayout": true,
+      "stakes": {
+        "ETH": 20,
+        "BTC": 20
+      },
+      "stakeLimits": {
+        "ETH": 150,
+        "BTC": 150
+      },
+      "urls": {
+        "ETH": "https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT",
+        "BTC": "https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT"
+      },
+      "timeUnitText": {
+        "10": "10m",
+        "30": "30m"
+      },
+      "marketClosedText": "Market Closed",
+      "openPositionsLabel": "Open Positions",
+      "payoutRe": "{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%",
+      "selectors": {
+        "loginMarker": "button:has-text(\"Log In\"), button:has-text(\"Sign In\")",
+        "timeUnit": "button, div[role=button], span",
+        "amount": "input[placeholder*=\"USDT\"], input[inputmode=\"decimal\"], input[type=\"number\"]",
+        "up": "button:has-text(\"Up\")",
+        "down": "button:has-text(\"Down\")",
+        "confirm": "button:has-text(\"Confirm\")"
+      }
+    }
+  },
+  "dirLimits": {
+    "UP": 5,
+    "DOWN": 5
+  },
   "slotMarginMin": 1,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
   "maxConsecutiveErrors": 3,
-
   "signalSilenceMin": 120,
-
   "source": "webhook",
   "sheet": {
     "id": "1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o",
     "tab": "MEXCsignal",
     "pollSec": 5
   },
-  "burst": { "enabled": true, "windowSec": 3, "maxMultiplier": 3 },
-  "execTimings": [10, 30],
-
+  "burst": {
+    "enabled": true,
+    "windowSec": 3,
+    "maxMultiplier": 3
+  },
+  "execTimings": [
+    10,
+    30
+  ],
   "humanize": true,
   "autoWindow": true,
   "schedule": {
@@ -45,27 +112,19 @@
     "enabled": true,
     "everyMinFrom": 7,
     "everyMinTo": 26,
-    "actions": ["switch-asset", "history", "scroll", "timeframe"]
+    "actions": [
+      "switch-asset",
+      "history",
+      "scroll",
+      "timeframe"
+    ]
   },
-
   "headless": false,
   "browserPath": "",
   "pageSettleMs": 2500,
   "panelTimeoutMs": 40000,
   "confirmTimeoutMs": 9000,
-  "openPositionsLabel": "Open Positions",
-
-  "urls": {
-    "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
-    "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
-    "SPCX": "https://www.mexc.com/futures/event-futures/SPCX_USDT"
-  },
-
-  "marketClosedText": "Market Closed",
   "assetSettleMs": 6000,
-
-  "timeUnitText": { "10": "10m", "30": "30m" },
-
   "selectors": {
     "loginMarker": "button:has-text(\"Log In\")",
     "timeUnit": "button, div[role=button], span",
@@ -74,7 +133,6 @@
     "down": "button:has-text(\"Down\")",
     "confirm": "button:has-text(\"Confirm\")"
   },
-
   "tgToken": "",
   "tgChatId": ""
 }

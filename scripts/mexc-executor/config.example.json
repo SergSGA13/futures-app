@@ -40,13 +40,16 @@
       "minPayout": 75,
       "minPayoutStrict": true,
       "requirePagePayout": true,
+      "execTimings": [
+        10
+      ],
       "stakes": {
         "ETH": 20,
         "BTC": 20
       },
       "stakeLimits": {
-        "ETH": 150,
-        "BTC": 150
+        "ETH": 50,
+        "BTC": 50
       },
       "urls": {
         "ETH": "https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT",

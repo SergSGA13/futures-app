@@ -91,6 +91,10 @@ function exCfg(name) {
     stakeLimits: e.stakeLimits || CFG.stakeLimits || {},
     // Лимит одновременных ставок держит БИРЖА, поэтому он у каждой свой.
     maxOpenBets: e.maxOpenBets ?? CFG.maxOpenBets ?? 5,
+    // Какие таймфреймы биржа вообще отрабатывает. На Toobit идут только
+    // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
+    // ошибке маршрутизации, должна отбиться, а не открыться.
+    execTimings: e.execTimings || CFG.execTimings || [10],
   };
   EX_CACHE.set(key, v);
   return v;
@@ -1020,9 +1024,10 @@ function acceptSignal(sig, src) {
     return reason;
   };
 
-  const execTimings = CFG.execTimings || [10];
+  const execTimings = exCfg(sig.ex).execTimings;
   if (execTimings.indexOf(sig.timing) < 0) {
-    return skip('timing', null, `тайминг ${sig.timing}м не в execTimings`);
+    return skip('timing', null,
+      `${exCfg(sig.ex).title}: тайминг ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
   }
   if (!inActiveHours()) {
     return skip('quiet-hours', 'skip-quiet', `тихие часы (сегодня ${todayWindows()})`);
@@ -1412,6 +1417,7 @@ function snapshot() {
           stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
+          execTimings: e.execTimings,
           requirePagePayout: e.requirePagePayout,
           maxOpenBets: e.maxOpenBets,
           slots: openSlots(n),

@@ -2,6 +2,16 @@
 // TradingView Signal Webhook → Telegram + Google Sheets  v3.9
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
+// v3.9.5: хук Toobit - сигналы PRO-ветки уходят исполнителю.
+//   - CONFIG.TOOBIT: свой URL, свой выключатель. Шлём ПРИНЯТЫЕ основной
+//     (PRO) веткой сигналы - те же, что идут в ТГ и партнёру с тегом
+//     "10m". Payload как у MEXC-хука, плюс поле "exchange":"toobit" -
+//     по нему исполнитель понимает, на какой бирже ставить.
+//   - Payout НЕ шлём: у Toobit его считает сам исполнитель по странице
+//     (порог строго больше 75%), потому что источник сигнала его не
+//     знает. Отсюда и разница: у MEXC payout проверяется здесь, у
+//     Toobit - на месте.
+//   - Сбой хука не влияет ни на Telegram, ни на записи, ни на партнёра.
 // v3.9.4: партнёрские потоки по тегам + ветка ALT10m с фильтрами.
 //   - Партнёр получает несколько потоков на ОДИН хук
 //     (PARTNER_WEBHOOK_URL), различает по полю "timing". У каждого
@@ -303,6 +313,18 @@ const CONFIG = {
     WEBHOOK_TIMEOUT: 5,
   },
 
+  // ─── Хук Toobit (v3.9.5): PRO-ветка → локальный исполнитель ───
+  // Шлётся то же, что уходит в ТГ и партнёру с тегом "10m", то есть
+  // ПРИНЯТЫЕ основной веткой сигналы. 30-минутки сюда не попадают: они
+  // эксклюзив MEXC (MEXC_ONLY_TIMINGS) и основную ветку не проходят.
+  // Payout не передаём - на Toobit его читает сам исполнитель со
+  // страницы, здесь он неизвестен. Пустой URL = выключено.
+  TOOBIT: {
+    ENABLED: true,
+    WEBHOOK_URL: "",          // адрес туннеля: https://<...>/signal?secret=<секрет>
+    WEBHOOK_TIMEOUT: 5,
+  },
+
   // ─── Надёжность записи ───
   WRITE_RETRIES: 3,
   WRITE_RETRY_SLEEP_MS: 350,
@@ -479,6 +501,34 @@ function sendMexcWebhook_(data, label, payoutVal) {
     muteHttpExceptions: true, deadline: CONFIG.MEXC.WEBHOOK_TIMEOUT,
   });
   return "http " + resp.getResponseCode();
+}
+
+// ─── Хук Toobit (v3.9.5): как sendMexcWebhook_, но для PRO-ветки ──
+// Вызывается только для ПРИНЯТЫХ основной веткой сигналов. Поле
+// exchange говорит исполнителю, на какой бирже ставить: без него ETH и
+// BTC ушли бы на биржу по умолчанию, они есть на обеих.
+// Возвращает заметку для лога ответа ("off" / "http 200").
+function sendToobitWebhook_(data) {
+  if (!CONFIG.TOOBIT.ENABLED || !CONFIG.TOOBIT.WEBHOOK_URL) return "off";
+  const payload = {
+    ticker:     data.ticker     || "",
+    direction:  data.direction  || "",
+    price:      data.price      || "",
+    volume:     data.volume     || "",
+    text:       data.text       || "",
+    bartime:    data.bartime    || "",
+    timing:     "10m",
+    exchange:   "toobit",
+    receivedAt: data.receivedAt || new Date().toISOString(),
+  };
+  const resp = UrlFetchApp.fetch(CONFIG.TOOBIT.WEBHOOK_URL, {
+    method: "post", contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true, deadline: CONFIG.TOOBIT.WEBHOOK_TIMEOUT,
+  });
+  const code = resp.getResponseCode();
+  console.log("Toobit:", code);
+  return "http " + code;
 }
 
 // Актуален ли payout по активу и таймингу: {known:bool, value:число %}.
@@ -677,7 +727,7 @@ function doPost(e) {
   // сигнал так же немедленно уходит в ALT-канал (если включён).
   // Лок короткий и только вокруг решения (чтение/запись стейта).
   let decision = { status: "skipped", message: "MEXC-only timing" };
-  let tgOK = true, partnerOK = true, altNote = "off", altMarker = "";
+  let tgOK = true, partnerOK = true, altNote = "off", altMarker = "", toobitNote = "off";
   const lock = LockService.getScriptLock();
   if (!mexcOnly) {
     if (!lock.tryLock(25000)) {
@@ -700,6 +750,10 @@ function doPost(e) {
       // 10m → партнёр (тег "10m"), как было
       try { partnerOK = postPartner_(data, "10m").indexOf("error") < 0; }
       catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
+      // ...и тот же сигнал - исполнителю на Toobit. Отдельным хуком, а
+      // не потоком партнёра: у исполнителя свой URL и свой секрет.
+      try { toobitNote = sendToobitWebhook_(data); }
+      catch (e2) { toobitNote = "error"; console.error("Toobit fail:", e2); }
     } else {
       // Ветка ALT10m: заблокированные основной веткой сигналы проходят
       // свой фильтр; прошедшие → ТГ-группа ALT10m + партнёр (тег ALT10m).
@@ -760,7 +814,8 @@ function doPost(e) {
       "MEXC-only (timing " + mexcTiming_(data) + ")" + mexcNote);
   }
   if (decision.status === "sent")
-    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK + ", partner:" + partnerOK + ")" + mexcNote);
+    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK
+      + ", partner:" + partnerOK + ", toobit:" + toobitNote + ")" + mexcNote);
   return buildResponse("blocked", decision.message + " (sheet:" + sheetOK + ", alt:" + altNote + ")" + mexcNote);
 }
 
@@ -1204,6 +1259,8 @@ function selfTest() {
   } else {
     console.log("MEXC: ветка DISABLED");
   }
+  console.log("Toobit-хук:", CONFIG.TOOBIT.ENABLED
+    ? (CONFIG.TOOBIT.WEBHOOK_URL || "URL НЕ ЗАДАН") : "DISABLED");
   const props = PropertiesService.getScriptProperties();
   console.log("Партнёрские потоки:",
     "мастер:", CONFIG.PARTNER_WEBHOOK_ENABLED,

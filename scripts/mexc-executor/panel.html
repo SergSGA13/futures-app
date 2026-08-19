@@ -952,10 +952,16 @@ async function refresh() {
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
   }
-  $('stakeHint').textContent = exs(s).map(e =>
-    `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
-    + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
-    + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')).join('. ') + '.';
+  // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
+  // таймфреймы. Последнее важно, потому что общий выключатель
+  // таймфреймов ниже биржу с собственным списком не трогает.
+  $('stakeHint').textContent = exs(s).map(e => {
+    const own = e.execTimings && String(e.execTimings) !== String(s.execTimings);
+    return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
+      + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
+      + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
+      + (own ? `, только ${e.execTimings.join('/')}м` : '');
+  }).join('. ') + '.';
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =

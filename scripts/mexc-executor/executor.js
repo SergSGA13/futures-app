@@ -430,6 +430,13 @@ function browserOpen() { return !!ctx; }
 // position/delay задаются самому locator.click, поэтому все проверки
 // (виден, включён, не перекрыт, доскроллить) остаются на месте -
 // в отличие от ручного page.mouse.click по координатам.
+// Текст кнопки направления бывает со значком: на Toobit это «↗ Higher»
+// и «↘ Lower». Точное сравнение по слову такую надпись не ловит,
+// поэтому в шаблонах разрешаем любые не-буквы вокруг слова.
+function wordRe(word) {
+  return new RegExp('^[^\\p{L}]*' + word + '[^\\p{L}]*$', 'iu');
+}
+
 // Где сейчас курсор. page.mouse своего положения не отдаёт, поэтому
 // ведём сами: без этого каждое движение начиналось бы из (0,0).
 let mousePos = null;
@@ -557,7 +564,9 @@ async function dumpPage(tag) {
           for (const el of document.querySelectorAll('*')) {
             if (!vis(el) || el.children.length > 2) continue;
             const t = (el.innerText || '').trim();
-            if (!words.test(t)) continue;
+            // Значок перед словом («↗ Higher») отбрасываем: иначе кнопка
+            // направления в списке не появится.
+            if (!words.test(t.replace(/[^\p{L}]/gu, ''))) continue;
             out.push({
               t, tag: el.tagName.toLowerCase(),
               cls: String(el.className || '').slice(0, 60),
@@ -700,7 +709,8 @@ async function pagePayout(direction) {
     // поднимаемся к ближайшему предку, где рядом появился процент.
     const txt = await page.evaluate(w => {
       const vis = el => !!(el.offsetWidth || el.offsetHeight);
-      const exact = new RegExp('^\\s*' + w + '\\s*$', 'i');
+      // Значки и пробелы вокруг слова игнорируем: «↗ Higher» это Higher.
+      const exact = new RegExp('^[^\\p{L}]*' + w + '[^\\p{L}]*$', 'iu');
       for (const el of document.querySelectorAll('*')) {
         if (!vis(el) || el.children.length > 2) continue;
         if (!exact.test((el.innerText || '').trim())) continue;
@@ -951,14 +961,13 @@ async function placeBet(sig) {
   // ровно одна кнопка "Up" и одна "Down", а :has-text() ищет подстроку
   // и поймал бы, например, "Upgrade", появись такая кнопка позже.
   // Если точного нет - откатываемся на селектор из конфига.
-  let btn = page.locator('button')
-    .filter({ hasText: new RegExp('^\\s*' + dirWord + '\\s*$') }).first();
+  let btn = page.locator('button').filter({ hasText: wordRe(dirWord) }).first();
   if (await btn.count() === 0) btn = page.locator(btnSel).first();
   // Третий заход: элемент с таким текстом, каким бы тегом он ни был. На
   // Toobit «кнопки» Up/Down - обычные div, и в списке кнопок страницы их
   // нет вовсе; getByText находит самый глубокий узел с точным текстом.
   if (await btn.count() === 0) {
-    btn = page.getByText(new RegExp('^\\s*' + dirWord + '\\s*$', 'i')).first();
+    btn = page.getByText(wordRe(dirWord)).first();
     if (await btn.count() > 0) log(`кнопка ${dirWord} найдена по тексту, а не по селектору`);
   }
   if (await btn.count() === 0) {
@@ -1976,51 +1985,74 @@ function migrateMode() {
   // Ключи, которые переезжают ВНУТРЬ биржи по умолчанию.
   const MOVE = ['stakes', 'stakeLimits', 'urls', 'timeUnitText',
                 'marketClosedText', 'openPositionsLabel', 'minPayout', 'maxOpenBets'];
-  const mexc = (had && raw.exchanges.mexc) ? { ...raw.exchanges.mexc } : {
-    title: 'MEXC', enabled: true,
-    maxOpenBets: raw.maxOpenBets ?? 5,
-    minPayout: raw.minPayout ?? 80,
-    minPayoutStrict: false,
-    requirePagePayout: false,
-    signalTimings: ['MEXC _10m', 'MEXC _30m', 'MEXC_10m', 'MEXC_30m'],
-    schedule: { hours: mexcHours },
-    stakes: raw.stakes || { ETH: 150, BTC: 250, SPCX: 30 },
-    stakeLimits: raw.stakeLimits || { ETH: 150, BTC: 250, SPCX: 150 },
-    urls: raw.urls || {},
-    timeUnitText: raw.timeUnitText || { 10: '10m', 30: '30m' },
-    marketClosedText: raw.marketClosedText || 'Market Closed',
-    openPositionsLabel: raw.openPositionsLabel || 'Open Positions',
+  // Описание бирж берём из config.example.json - он рядом и всегда
+  // свежий. Держать вторую копию прямо здесь уже пробовали: она разошлась
+  // с примером через два дня (там появились dirWords и payoutList, а
+  // здесь остался устаревший набор), и миграция выдавала конфиг хуже
+  // примера.
+  let sample = {};
+  try {
+    sample = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8')
+      .replace(/^\uFEFF/, '')).exchanges || {};
+  } catch (e) {
+    console.log('config.example.json рядом не найден - беру минимальные значения');
+  }
+  // Повторный запуск ДОПОЛНЯЕТ уже описанную биржу недостающими
+  // ключами из примера, не трогая твои значения. Без этого после
+  // обновления кода (в примере появились dirWords, payoutList и прочее)
+  // пришлось бы дописывать их в config.json руками.
+  const added = [], fixed = [];
+  // Значения, которые я сам когда-то положил в пример и которые оказались
+  // неверными. Заменяем ТОЛЬКО точное совпадение с ними: если ты правил
+  // ключ руками, значение останется твоим.
+  const STALE = {
+    toobit: {
+      // Искал процент ПОСЛЕ слова направления, а на Toobit подпись стоит
+      // над кнопкой - для Higher приезжала выплата Lower.
+      payoutRe: ['{DIR}[^%]{0,80}?([0-9.]+)\\s*%',
+                 '{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%'],
+      // «30m на Toobit нет» - это был промах селектора, а не отсутствие чипа.
+      timeUnitText: [JSON.stringify({ 10: '10m' })],
+    },
   };
-  const toobit = (had && raw.exchanges.toobit) ? { ...raw.exchanges.toobit } : {
-    title: 'Toobit', enabled: true,
-    maxOpenBets: 5,
-    // Сигналы на Toobit приходят без выплаты: порог проверяется только
-    // на странице, и не прочитали - значит не ставим.
-    minPayout: 75, minPayoutStrict: true, requirePagePayout: true,
-    signalTimings: ['10m'],
-    execTimings: [10],
+  const fill = (cur, def, who) => {
+    for (const k of Object.keys(def || {})) {
+      if (cur[k] === undefined) { cur[k] = def[k]; added.push(`${who}.${k}`); continue; }
+      const stale = (STALE[who] || {})[k];
+      if (!stale || def[k] === undefined) continue;
+      const asText = typeof cur[k] === 'object' ? JSON.stringify(cur[k]) : String(cur[k]);
+      if (stale.includes(asText) && asText !== (typeof def[k] === 'object' ? JSON.stringify(def[k]) : String(def[k]))) {
+        cur[k] = def[k];
+        fixed.push(`${who}.${k}`);
+      }
+    }
+    return cur;
+  };
+  const mexc = (had && raw.exchanges.mexc) ? fill({ ...raw.exchanges.mexc }, sample.mexc, 'mexc') : {
+    ...(sample.mexc || { title: 'MEXC', enabled: true }),
+    // Пользовательские значения важнее примера: это его настройки.
+    maxOpenBets: raw.maxOpenBets ?? (sample.mexc || {}).maxOpenBets ?? 5,
+    minPayout: raw.minPayout ?? (sample.mexc || {}).minPayout ?? 80,
+    stakes: raw.stakes || (sample.mexc || {}).stakes || {},
+    stakeLimits: raw.stakeLimits || (sample.mexc || {}).stakeLimits || {},
+    urls: raw.urls || (sample.mexc || {}).urls || {},
+    timeUnitText: raw.timeUnitText || (sample.mexc || {}).timeUnitText || { 10: '10m', 30: '30m' },
+    marketClosedText: raw.marketClosedText || (sample.mexc || {}).marketClosedText || 'Market Closed',
+    openPositionsLabel: raw.openPositionsLabel || (sample.mexc || {}).openPositionsLabel || 'Open Positions',
+    schedule: { hours: mexcHours },
+  };
+  const toobit = (had && raw.exchanges.toobit) ? fill({ ...raw.exchanges.toobit }, sample.toobit, 'toobit') : {
+    ...(sample.toobit || {
+      title: 'Toobit', enabled: true, minPayout: 75,
+      minPayoutStrict: true, requirePagePayout: true,
+      signalTimings: ['10m'], execTimings: [10],
+      stakes: { ETH: 20, BTC: 20 }, stakeLimits: { ETH: 50, BTC: 50 },
+      urls: {
+        ETH: 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT',
+        BTC: 'https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT',
+      },
+    }),
     schedule: { hours: toobitHours },
-    stakes: { ETH: 20, BTC: 20 },
-    stakeLimits: { ETH: 50, BTC: 50 },
-    // Адрес из живого осмотра: сайт сам приводит ?symbol=... к этому виду.
-    urls: {
-      ETH: 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT',
-      BTC: 'https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT',
-    },
-    timeUnitText: { 10: '10m' },        // 30m на странице Toobit нет
-    marketClosedText: 'Market Closed',
-    openPositionsLabel: 'Open Positions',
-    // Пусто: на Toobit подпись выплаты стоит НАД кнопкой, и поиск
-    // процента после слова направления брал бы значение соседнего блока.
-    payoutRe: '',
-    selectors: {
-      loginMarker: 'button:has-text("Log In"), button:has-text("Sign In")',
-      timeUnit: 'button, div[role=button], span',
-      amount: 'input[placeholder*="USDT"], input[inputmode="decimal"], input[type="number"]',
-      up: 'button:has-text("Up")',
-      down: 'button:has-text("Down")',
-      confirm: 'button:has-text("Confirm")',
-    },
   };
   // Порядок ключей сохраняем: конфиг читают глазами.
   for (const [k, v] of Object.entries(raw)) {
@@ -2039,7 +2071,11 @@ function migrateMode() {
   const bak = CFG_PATH.replace(/\.json$/, '.pre-exchanges.json');
   fs.copyFileSync(CFG_PATH, bak);
   fs.writeFileSync(CFG_PATH, JSON.stringify(out, null, 2) + '\n');
-  console.log('config.json переписан в формат с биржами.');
+  console.log(had ? 'config.json дополнен недостающими ключами.'
+                  : 'config.json переписан в формат с биржами.');
+  if (added.length) console.log('добавлено: ' + added.join(', '));
+  if (fixed.length) console.log('исправлено устаревшее: ' + fixed.join(', '));
+  if (had && !added.length && !fixed.length) console.log('менять было нечего - всё уже на месте.');
   console.log('копия старого: ' + bak);
   console.log('биржи: ' + Object.keys(out.exchanges).join(', ') + ' | по умолчанию: ' + out.defaultExchange);
   console.log(useOld

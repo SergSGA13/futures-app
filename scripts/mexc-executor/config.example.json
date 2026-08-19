@@ -109,6 +109,10 @@
           "UP",
           "DOWN"
         ]
+      },
+      "dirWords": {
+        "UP": "Higher",
+        "DOWN": "Lower"
       }
     }
   },

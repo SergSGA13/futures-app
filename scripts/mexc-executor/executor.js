@@ -2064,7 +2064,32 @@ async function loginMode() {
   if (!first) { console.error(`у биржи ${E.title} не задан ни один адрес в urls`); process.exit(1); }
   await p.goto(first, { waitUntil: 'domcontentloaded' });
   await new Promise(resolve => c.on('close', resolve));
-  console.log('Профиль сохранён. Теперь запускай: node executor.js');
+
+  // Раньше здесь просто печаталось «профиль сохранён» - независимо от
+  // того, вошёл ты или закрыл окно, ничего не сделав. Узнать правду
+  // получалось только на diag через несколько шагов. Проверяем сразу:
+  // открываем ту же страницу заново и смотрим, осталась ли кнопка входа.
+  console.log('\nПроверяю, сохранился ли вход...');
+  let still = null;
+  try {
+    const c2 = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(true));
+    const p2 = c2.pages()[0] || await c2.newPage();
+    await p2.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await p2.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    still = await p2.locator(E.selectors.loginMarker).first().isVisible().catch(() => false);
+    await c2.close();
+  } catch (e) {
+    console.log('проверить не удалось: ' + e.message);
+  }
+  if (still === false) {
+    console.log(`Вход в ${E.title} на месте. Дальше: node executor.js diag <актив> ${E.name}`);
+  } else if (still === true) {
+    console.log(`!! ВХОД НЕ СОХРАНИЛСЯ: на странице ${E.title} снова видна кнопка входа.`);
+    console.log('   Проверь, что входил именно в открывшемся окне (не в своём обычном браузере),');
+    console.log('   что дошёл до конца - почта, 2FA, капча - и что перед закрытием окна');
+    console.log('   на странице был виден баланс аккаунта, а не кнопка Log in.');
+    process.exitCode = 1;
+  }
 }
 
 // ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──

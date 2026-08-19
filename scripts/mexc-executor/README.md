@@ -132,18 +132,74 @@ diag видит кнопку Log In, он сам об этом предупре�
 
 **5. Запустить исполнителя и туннель** - как обычно (см. «Запуск»).
 
-**6. Включить хук Toobit в Apps Script.** В `scripts/tv_webhook_v3.9.gs`
-впиши адрес туннеля:
+**6. Включить хук Toobit в Apps Script.** Копия скрипта в репозитории
+может отставать от твоей боевой - правь ТУ, что стоит в Apps Script.
+Нужны три вставки.
+
+*Первая* - в `CONFIG`, рядом с блоком `MEXC` (адрес тот же самый, что у
+MEXC-хука: это один и тот же исполнитель, биржу он различает по метке
+потока):
+
 ```js
-TOOBIT: {
-  ENABLED: true,
-  WEBHOOK_URL: "https://<адрес-туннеля>/signal?secret=<секрет>",
-  WEBHOOK_TIMEOUT: 5,
-},
+  TOOBIT: {
+    ENABLED: true,
+    WEBHOOK_URL: "https://<адрес-туннеля>/signal?secret=<секрет>",
+    WEBHOOK_TIMEOUT: 5,
+  },
 ```
-и **передеплой**: Deploy → Manage deployments → Edit → Version: New
-version. Без нового деплоя правка не применится. Проверить: `selfTest()`
-печатает строку `Toobit-хук:` с адресом.
+
+*Вторая* - функция, рядом с `sendMexcWebhook_`:
+
+```js
+// PRO-ветка → исполнитель (Toobit). Тело - как у партнёра, с меткой
+// потока "10m": по ней исполнитель понимает, что ставить надо на Toobit.
+// Payout не шлём: на Toobit его читает сам исполнитель со страницы.
+function sendToobitWebhook_(data) {
+  if (!CONFIG.TOOBIT.ENABLED || !CONFIG.TOOBIT.WEBHOOK_URL) return "off";
+  const payload = {
+    ticker:     data.ticker     || "",
+    direction:  data.direction  || "",
+    price:      data.price      || "",
+    volume:     data.volume     || "",
+    text:       data.text       || "",
+    bartime:    data.bartime    || "",
+    timing:     "10m",
+    receivedAt: data.receivedAt || stampIso_(),
+  };
+  const resp = UrlFetchApp.fetch(CONFIG.TOOBIT.WEBHOOK_URL, {
+    method: "post", contentType: "application/json",
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true, deadline: CONFIG.TOOBIT.WEBHOOK_TIMEOUT,
+  });
+  const code = resp.getResponseCode();
+  console.log("Toobit:", code);
+  return "http " + code;
+}
+```
+
+*Третья* - вызов в `doPost`, сразу после отправки партнёру в ветке
+принятого сигнала:
+
+```js
+    if (decision.status === "sent") {
+      try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
+      try { partnerOK = postPartner_(data, "10m").indexOf("error") < 0; }
+      catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
+      // ← добавить эти две строки
+      try { toobitNote = sendToobitWebhook_(data); }
+      catch (e2) { toobitNote = "error"; console.error("Toobit fail:", e2); }
+    } else {
+```
+
+и объявить переменную в той же функции, где уже объявлены `tgOK`
+и `partnerOK`:
+
+```js
+  let tgOK = true, partnerOK = true, altNote = "off", altMarker = "", toobitNote = "off";
+```
+
+После правок **передеплой**: Deploy → Manage deployments → Edit →
+Version: New version. Без нового деплоя изменения не применятся.
 
 **7. Обновить панель в браузере.** Панель отдаётся с `Cache-Control:
 no-store`, поэтому обычного F5 достаточно. Если всё же видишь старую

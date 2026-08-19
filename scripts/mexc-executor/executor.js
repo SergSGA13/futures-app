@@ -294,9 +294,61 @@ function browserOpen() { return !!ctx; }
 // position/delay задаются самому locator.click, поэтому все проверки
 // (виден, включён, не перекрыт, доскроллить) остаются на месте -
 // в отличие от ручного page.mouse.click по координатам.
+// Где сейчас курсор. page.mouse своего положения не отдаёт, поэтому
+// ведём сами: без этого каждое движение начиналось бы из (0,0).
+let mousePos = null;
+
+// Подвод курсора к точке по дуге. Прямая из точки в точку - такой же
+// машинный след, как и мгновенный «телепорт» в кнопку: у человека
+// траектория выгнута, скорость неравномерная (разгон и торможение), а
+// рука подрагивает. Квадратичная кривая Безье с контрольной точкой
+// сбоку от прямой даёт ровно это, и стоит десяток move-событий.
+async function mouseGlide(pg, x, y) {
+  const from = mousePos || { x: x + randInt(-320, 320), y: y + randInt(-220, 220) };
+  const dist = Math.hypot(x - from.x, y - from.y) || 1;
+  const steps = Math.max(6, Math.min(26, Math.round(dist / 24) + randInt(2, 6)));
+  // Нормаль к прямой: вдоль неё отводим контрольную точку. Чем длиннее
+  // путь, тем заметнее дуга - как у настоящего движения рукой.
+  const nx = -(y - from.y) / dist, ny = (x - from.x) / dist;
+  const bend = (Math.random() < 0.5 ? -1 : 1) * Math.min(90, dist * (0.08 + Math.random() * 0.15));
+  const cx = (from.x + x) / 2 + nx * bend, cy = (from.y + y) / 2 + ny * bend;
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // ease-in-out
+    const px = (1 - e) ** 2 * from.x + 2 * (1 - e) * e * cx + e * e * x;
+    const py = (1 - e) ** 2 * from.y + 2 * (1 - e) * e * cy + e * e * y;
+    await pg.mouse.move(px + (Math.random() - 0.5) * 1.6, py + (Math.random() - 0.5) * 1.6);
+    if (i % 3 === 0) await sleep(randInt(4, 18));
+  }
+  await pg.mouse.move(x, y);
+  mousePos = { x, y };
+}
+
+// Подход к элементу: иногда покрутить колесо (человек не попадает в
+// кнопку с первого взгляда, он сначала осматривает страницу), затем
+// довести элемент до вида и подъехать курсором. Всё необязательное -
+// сбой здесь не должен мешать ставке, поэтому ошибки глотаем.
+async function approach(loc) {
+  const pg = loc.page();
+  try {
+    if (Math.random() < 0.35) {
+      await pg.mouse.wheel(0, randInt(-190, 190));
+      await sleep(randInt(140, 420));
+    }
+    await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+    const bb = await loc.boundingBox();
+    if (!bb) return;
+    await mouseGlide(pg,
+      bb.x + bb.width * (0.25 + Math.random() * 0.5),
+      bb.y + bb.height * (0.25 + Math.random() * 0.5));
+    await sleep(randInt(60, 220));
+  } catch (e) { /* подвод - украшение, а не условие ставки */ }
+}
+
 async function humanClick(loc, timeout = 5000) {
   if (CFG.humanize === false) return loc.click({ timeout });
   await sleep(randInt(120, 480));
+  await approach(loc);
   // Размеры берём именно padding-box (clientWidth/Height): position в
   // Playwright отсчитывается от его левого верхнего угла, а
   // boundingBox() отдаёт border-box - он больше на толщину рамки, и

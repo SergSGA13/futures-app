@@ -43,7 +43,10 @@
     animation:gridDrift 24s linear infinite;
   }
   @keyframes gridDrift { to { background-position:0 44px, 44px 0, 0 0; } }
-  .wrap { max-width:1180px; margin:0 auto; position:relative; z-index:1; }
+  /* Шире прежних 1180px: в ряду теперь и сетка часов (её ширина
+     фиксирована - 24 колонки), и журнал из восьми колонок. На 1180
+     журналу оставалось около 600px, и он ехал горизонтально. */
+  .wrap { max-width:1440px; margin:0 auto; position:relative; z-index:1; }
 
   h1 {
     font-size:17px; letter-spacing:2px; text-transform:uppercase; font-weight:800;
@@ -83,22 +86,25 @@
   .sect-toggle::after { content:' ▾'; color:var(--cyan); }
   .sect-toggle.open::after { content:' ▴'; }
   .hidden { display:none; }
-  /* Вкладки. Ведут себя как заголовки карточки, поэтому и выглядят как
-     h2: тот же кегль и разрядка, активная подчёркнута лучом. */
-  .tabs { display:flex; gap:2px; align-items:center; margin-bottom:10px;
-          border-bottom:1px solid rgba(34,232,255,.16); }
-  .tabs button {
-    background:none; border:none; border-radius:0; color:var(--muted);
-    padding:5px 13px 9px; font-size:11px; letter-spacing:1.1px; position:relative;
-  }
-  .tabs button:hover { background:none; box-shadow:none; color:#CFF6FF; }
-  .tabs button.on { color:#CFF6FF; text-shadow:0 0 12px rgba(34,232,255,.4); }
-  .tabs button.on::after {
-    content:''; position:absolute; left:9px; right:9px; bottom:-1px; height:2px;
-    border-radius:2px; box-shadow:var(--glow);
-    background:linear-gradient(90deg,var(--cyan),var(--violet));
-  }
-  .tabs .saved { margin-left:auto; padding-right:4px; }
+  /* Расписание слева, журнал справа. Левой колонке даём ровно ширину
+     сетки 7x24 - она фиксированная и от ширины окна не зависит; всё
+     остальное забирает журнал. min-width:0 обязателен: элемент grid по
+     умолчанию не сжимается уже содержимого, и таблица распирала бы
+     страницу вместо прокрутки внутри себя. */
+  .duo { display:grid; grid-template-columns:minmax(0,580px) minmax(0,1fr);
+         gap:10px; align-items:stretch; margin-bottom:10px; }
+  /* Обе карточки ряда одной высоты (stretch), а внутри правой тянется
+     таблица: иначе под коротким журналом зияла бы дыра до низа
+     расписания. min-height:0 нужен, чтобы прокрутка осталась внутри
+     таблицы, а не распирала карточку. */
+  .duo > .card { margin:0; min-width:0; display:flex; flex-direction:column; }
+  /* flex:1 растягивает таблицу на свободную высоту, но потолок в 420px
+     из общего правила остаётся: со 150 строками карточка иначе уехала бы
+     на несколько экранов вниз. */
+  .duo .tablewrap { flex:1; min-height:0; }
+  /* Ниже 1240px пара уже не помещается по-честному: складываем в стопку,
+     расписание сверху. */
+  @media (max-width: 1240px) { .duo { grid-template-columns:1fr; } }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -404,17 +410,39 @@
     </div>
   </div>
 
-  <!-- Журнал и часы работы в одной карточке, но вкладками, а не рядом.
-       Бок о бок журнал терял треть ширины и ехал горизонтально; во
-       вкладках он получает всю ширину, а панель остаётся короткой -
-       смотрят в них всё равно по очереди. -->
-  <div class="card">
-  <div class="tabs" id="tabs">
-    <button data-t="log" class="on">Журнал ставок</button>
-    <button data-t="sched">Часы работы</button>
-    <span class="saved" id="savedSched">сохранено</span>
+  <!-- Часы работы слева, журнал справа - оба на виду. Раньше эта пара
+       не помещалась, потому что страница была шириной 1180px и журналу
+       из восьми колонок доставалось около 600. Теперь под расписание
+       отведена ровно ширина сетки 7x24, остальное - журналу, а сама
+       страница стала шире. -->
+  <div class="duo">
+  <div class="card sched-card">
+  <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
+  <div class="row" style="margin-bottom:10px">
+    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+    <span><span class="hint">разброс краёв, мин</span>
+    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
   </div>
-  <div id="tabLog">
+  <label class="chk" style="margin-bottom:8px">
+    <input type="checkbox" id="autoWindow"> Открывать окно биржи на активные часы</label>
+  <div class="sched"><table id="schedGrid"></table></div>
+  <div class="note">Клик по клетке переключает час, протяжка мышью красит
+  несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
+  час. Разброс краёв сдвигает начало и конец каждого блока на случайные
+  минуты, чтобы старт не приходился ровно на :00 изо дня в день.
+  Окно биржи с галочкой выше открывается само к началу активных часов и
+  закрывается в тихие: холодный старт съедает секунды, а первая ставка
+  после ночи должна успеть в свою свечу.</div>
+  <div class="btns" style="margin-top:10px">
+    <button id="btnSaveSched">Сохранить</button>
+    <button id="btnAll">Все часы</button>
+    <button id="btnWorkday">08:00-23:00</button>
+    <button id="btnNone">Снять всё</button>
+  </div>
+  </div>
+
+  <div class="card">
+  <h2>Журнал ставок</h2>
   <div class="btns" style="margin-bottom:9px" id="logFilter">
   <button data-f="all" class="on">Все</button>
   <button data-f="bets">Только ставки</button>
@@ -432,30 +460,6 @@
   <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
   </div>
-  </div>
-
-  <div id="tabSched" class="hidden">
-    <div class="row" style="margin-bottom:10px">
-    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-    <span><span class="hint">разброс краёв, мин</span>
-    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
-    </div>
-    <label class="chk" style="margin-bottom:8px">
-      <input type="checkbox" id="autoWindow"> Открывать окно биржи на активные часы</label>
-    <div class="sched"><table id="schedGrid"></table></div>
-    <div class="note">Клик по клетке переключает час, протяжка мышью красит
-    несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-    час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-    минуты, чтобы старт не приходился ровно на :00 изо дня в день.
-    Окно биржи с галочкой выше открывается само к началу активных часов и
-    закрывается в тихие: холодный старт съедает секунды, а первая ставка
-    после ночи должна успеть в свою свечу.</div>
-    <div class="btns" style="margin-top:10px">
-    <button id="btnSaveSched">Сохранить</button>
-    <button id="btnAll">Все часы</button>
-    <button id="btnWorkday">08:00-23:00</button>
-    <button id="btnNone">Снять всё</button>
-    </div>
   </div>
   </div>
 
@@ -551,21 +555,6 @@ document.getElementById('logFilter').addEventListener('click', e => {
 });
 document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
 
-// ── вкладки журнала и часов ──
-// Выбор держим в localStorage: панель перечитывает состояние каждые 5
-// секунд, но вкладку выбирают один раз и надолго.
-(function () {
-  const apply = t => {
-    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-    $('tabLog').classList.toggle('hidden', t !== 'log');
-    $('tabSched').classList.toggle('hidden', t !== 'sched');
-    localStorage.setItem('mx_tab', t);
-  };
-  document.getElementById('tabs').addEventListener('click', e => {
-    if (e.target.dataset.t) apply(e.target.dataset.t);
-  });
-  apply(localStorage.getItem('mx_tab') === 'sched' ? 'sched' : 'log');
-})();
 
 // ── свёрнутые настройки ──
 // Состояние держим в localStorage: панель обновляется каждые 5 секунд, и

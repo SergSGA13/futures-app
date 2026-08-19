@@ -231,12 +231,19 @@ const DAY_NAMES = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
 // Пустое/битое расписание = работаем всегда. Молча чинить длину строк
 // важнее, чем падать: конфиг правится руками.
-function scheduleGrid() {
+//
+// Сетка у каждой биржи своя: смысл в том, чтобы пока работает одна,
+// вторая молчала, и они менялись сменами. Общий выключатель один -
+// schedule.enabled; у биржи без своей сетки берётся общая.
+function gridOf(rows) {
+  if (!Array.isArray(rows) || rows.length !== 7) return null;
+  return rows.map(r => String(r || '').padEnd(24, '0').slice(0, 24));
+}
+function scheduleGrid(ex) {
   const S = CFG.schedule || {};
   if (!S.enabled) return null;
-  const rows = Array.isArray(S.hours) ? S.hours : [];
-  if (rows.length !== 7) return null;
-  return rows.map(r => String(r || '').padEnd(24, '0').slice(0, 24));
+  const own = ex ? gridOf(((CFG.exchanges[ex] || {}).schedule || {}).hours) : null;
+  return own || gridOf(S.hours);
 }
 function activeAt(grid, day, hour) {
   return grid[((day % 7) + 7) % 7][((hour % 24) + 24) % 24] === '1';
@@ -253,8 +260,8 @@ function edgeJitter(tag, spanMin) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % (Math.min(spanMin, 59) + 1);
 }
-function inActiveHours(when) {
-  const grid = scheduleGrid();
+function inActiveHours(when, ex) {
+  const grid = scheduleGrid(ex);
   if (!grid) return true;                    // расписание выключено
   const n = when || new Date();
   const day = n.getDay(), hour = n.getHours(), min = n.getMinutes();
@@ -270,9 +277,19 @@ function inActiveHours(when) {
   if (!nextActive && min >= 60 - edgeJitter(`e${day}-${hour}`, jit)) return false;
   return true;
 }
+// Работает ли ХОТЬ ОДНА биржа прямо сейчас. По этому вопросу решаются
+// общие дела: держать ли окно браузера, ходить ли холостыми действиями,
+// считать ли молчание сигналов подозрительным.
+function anyActive(when) {
+  return exNames().some(n => inActiveHours(when, n));
+}
+// Биржи, активные прямо сейчас.
+function activeExchanges(when) {
+  return exNames().filter(n => inActiveHours(when, n));
+}
 // Человекочитаемое расписание на сегодня - для панели и лога.
-function todayWindows() {
-  const grid = scheduleGrid();
+function todayWindows(ex) {
+  const grid = scheduleGrid(ex);
   if (!grid) return null;
   const day = new Date().getDay();
   const out = [];
@@ -1060,8 +1077,9 @@ function acceptSignal(sig, src) {
     return skip('timing', null,
       `${exCfg(sig.ex).title}: тайминг ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
   }
-  if (!inActiveHours()) {
-    return skip('quiet-hours', 'skip-quiet', `тихие часы (сегодня ${todayWindows()})`);
+  if (!inActiveHours(null, sig.ex)) {
+    return skip('quiet-hours', 'skip-quiet',
+      `${exCfg(sig.ex).title}: тихие часы (сегодня ${todayWindows(sig.ex)})`);
   }
   if (state.paused) {
     return skip('paused', null, 'исполнитель на паузе');
@@ -1246,7 +1264,7 @@ async function idleAction() {
   if (I.enabled === false) return;
   // не лезем под руку: идёт ставка / что-то в очереди / пауза / ночь
   if (state.busy || state.queue.length || state.paused) return;
-  if (!inActiveHours()) return;
+  if (!anyActive()) return;
   if (process.env.TEST_MODE === '1') return;
 
   // Набор действий выбирается в панели: не всякий вариант уместен
@@ -1262,7 +1280,10 @@ async function idleAction() {
     // Биржу для холостого захода выбираем ту, что уже открыта, иначе
     // случайную: гонять окно между биржами каждые десять минут - это
     // не «человечность», а метание.
-    const names = exNames();
+    // Ходим только по биржам, которые сейчас в смене: активность на
+    // спящей бирже - ровно тот след, которого мы избегаем.
+    const names = activeExchanges();
+    if (!names.length) return;
     const openOn = names.find(n => Object.values(exCfg(n).urls || {})
       .some(u => page.url().startsWith(u)));
     EX = exCfg(openOn || names[randInt(0, names.length - 1)]);
@@ -1330,7 +1351,7 @@ function silenceMinutes() {
 }
 function checkSilence() {
   const lim = CFG.signalSilenceMin ?? 0;
-  if (!lim || state.silenceAlerted || !inActiveHours()) return;
+  if (!lim || state.silenceAlerted || !anyActive()) return;
   if (silenceMinutes() < lim) return;
   state.silenceAlerted = true;
   const what = state.lastSignalAt ? 'последний сигнал' : 'с запуска';
@@ -1350,26 +1371,34 @@ async function windowBySchedule() {
   if (process.env.TEST_MODE === '1') return;
   // Под руку не лезем: идёт ставка, что-то в очереди - не наше время.
   if (state.busy || state.queue.length) return;
-  const active = inActiveHours();
+  const active = activeExchanges();
+  // Окно открыто на бирже, которая уже сдала смену? Это и есть
+  // пересменка: страницу надо перевести на ту, что заступила.
+  const openOn = browserOpen() && exNames().find(n => Object.values(exCfg(n).urls || {})
+    .some(u => page.url().startsWith(u)));
+  const shift = openOn && !active.includes(openOn) && active.length;
 
-  if (active && !browserOpen()) {
+  if (active.length && (!browserOpen() || shift)) {
     // На паузе окно не открываем: пауза - это «не трогай биржу».
     if (state.paused) return;
+    // Открытое руками не перетаскиваем на другую биржу: человек смотрит.
+    if (shift && state.windowManual) return;
     state.busy = true;
     try {
       await browser();
-      // Биржу и актив выбираем случайно: одна и та же стартовая
-      // страница каждое утро - такая же сигнатура, как одинаковая точка
-      // клика. Держать открытыми обе биржи смысла нет, вторую откроет
-      // сама ставка.
-      const names = exNames();
-      EX = exCfg(names[randInt(0, names.length - 1)]);
+      // Биржу и актив выбираем случайно среди работающих сейчас: одна и
+      // та же стартовая страница каждое утро - такая же сигнатура, как
+      // одинаковая точка клика. Держать открытыми обе биржи смысла нет,
+      // вторую откроет сама ставка.
+      EX = exCfg(active[randInt(0, active.length - 1)]);
       const all = Object.keys(EX.urls || {});
       if (!all.length) return;
       const a = all[randInt(0, all.length - 1)];
       await page.goto(EX.urls[a], { waitUntil: 'domcontentloaded', timeout: 25000 });
       state.windowAt = Date.now();
-      log(`окно биржи открыто заранее (${EX.title} ${a}): начались активные часы`);
+      log(shift
+        ? `пересменка: ${exCfg(openOn).title} закончила, окно переведено на ${EX.title} ${a}`
+        : `окно биржи открыто заранее (${EX.title} ${a}): начались активные часы`);
     } catch (e) {
       log('окно биржи не открылось по расписанию: ' + e.message);
       await closeBrowser();
@@ -1377,7 +1406,7 @@ async function windowBySchedule() {
     return;
   }
 
-  if (!active && browserOpen()) {
+  if (!active.length && browserOpen()) {
     // Открытое руками не закрываем: человек смотрит на него сам.
     if (state.windowManual) return;
     await closeBrowser();
@@ -1430,7 +1459,7 @@ function snapshot() {
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
     lastIdle: state.lastIdle,
-    activeNow: inActiveHours(),
+    activeNow: anyActive(),
     todayWindows: todayWindows(),
     browserOpen: browserOpen(),
     busy: state.busy,
@@ -1449,6 +1478,13 @@ function snapshot() {
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           execTimings: e.execTimings,
+          // Часы у каждой биржи свои: пока работает одна, вторая молчит.
+          // Сетки нет - показываем общую, по ней биржа и живёт.
+          hours: (((CFG.exchanges[n] || {}).schedule || {}).hours
+                  || (CFG.schedule || {}).hours || Array(7).fill('1'.repeat(24))),
+          ownHours: !!gridOf(((CFG.exchanges[n] || {}).schedule || {}).hours),
+          activeNow: inActiveHours(null, n),
+          todayWindows: todayWindows(n),
           requirePagePayout: e.requirePagePayout,
           maxOpenBets: e.maxOpenBets,
           slots: openSlots(n),
@@ -1603,6 +1639,19 @@ function applySettings(s) {
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;
     changed.push('человечный клик ' + (CFG.humanize ? 'вкл' : 'выкл'));
+  }
+  // Часы по биржам: { mexc: {hours:[...]}, toobit: {hours:[...]} }.
+  if (s.schedules) {
+    for (const n of exNames()) {
+      const w = s.schedules[n];
+      if (!w || !Array.isArray(w.hours) || w.hours.length !== 7) continue;
+      const rows = w.hours.map(r => String(r || '').replace(/[^01]/g, '0').padEnd(24, '0').slice(0, 24));
+      const was = JSON.stringify(((CFG.exchanges[n] || {}).schedule || {}).hours || []);
+      CFG.exchanges[n].schedule = { ...(CFG.exchanges[n].schedule || {}), hours: rows };
+      if (was !== JSON.stringify(rows)) changed.push(`часы ${exCfg(n).title}`);
+      exReset();
+    }
+    setImmediate(() => windowBySchedule().catch(() => {}));
   }
   if (s.schedule) {
     CFG.schedule = CFG.schedule || {};
@@ -1875,13 +1924,15 @@ if (process.argv[2] === 'login') {
         + `${assets.map(a => `${a} ${stakeFor(a, n)}`).join(' / ') || 'активов нет'} USDT `
         + `| выплата ${e.minPayoutStrict ? '>' : '>='} ${e.minPayout}%`
         + `${e.requirePagePayout ? ', обязательна со страницы' : ''} | слотов ${e.maxOpenBets}`);
+      const tw = todayWindows(n);
+      log(`    часы сегодня: ${tw || 'круглосуточно'}`
+        + ` | сейчас ${inActiveHours(null, n) ? 'в смене' : 'молчит'}`);
     }
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
     log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
-    const tw = todayWindows();
-    log(`расписание сегодня: ${tw ? tw + ' (местное время)' : 'круглосуточно'}`
-      + ` | человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
-      + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`);
+    log(`человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
+      + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`
+      + ` | окно по расписанию: ${CFG.autoWindow === false ? 'выкл' : 'вкл'}`);
     scheduleIdle();
     if ((CFG.source || 'webhook') === 'sheet') {
       const every = Math.max(2, (CFG.sheet || {}).pollSec ?? 5) * 1000;

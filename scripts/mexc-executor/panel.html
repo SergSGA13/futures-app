@@ -326,6 +326,8 @@
 
   /* недельная сетка часов */
   .sched { overflow-x:auto; padding-bottom:4px; }
+  .sched .ex-h { margin-top:12px; }
+  .sched .ex-h:first-child { margin-top:0; }
   .sched table { border-collapse:separate; border-spacing:2px; width:auto; }
   .sched th { padding:0 3px; font-size:9.5px; text-align:center; border:none;
               color:var(--muted); font-family:var(--mono); letter-spacing:0; }
@@ -435,18 +437,20 @@
   </div>
   <label class="chk" style="margin-bottom:8px">
     <input type="checkbox" id="autoWindow"> Открывать окно биржи на активные часы</label>
-  <div class="sched"><table id="schedGrid"></table></div>
-  <div class="note">Клик по клетке переключает час, протяжка мышью красит
-  несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-  час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-  минуты, чтобы старт не приходился ровно на :00 изо дня в день.
-  Окно биржи с галочкой выше открывается само к началу активных часов и
-  закрывается в тихие: холодный старт съедает секунды, а первая ставка
-  после ночи должна успеть в свою свечу.</div>
+  <div class="sched" id="schedGrid"></div>
+  <div class="note">У каждой биржи своя сетка: пока одна в смене, вторая
+  молчит, сигналы на неё отклоняются как «тихие часы». Клик по клетке
+  переключает час, протяжка мышью красит несколько. Клик по названию дня -
+  весь день. Фиолетовая рамка - текущий час. Разброс краёв сдвигает начало
+  и конец каждого блока на случайные минуты, чтобы старт не приходился
+  ровно на :00 изо дня в день. Окно биржи с галочкой выше открывается само
+  к началу смены и закрывается, когда не работает ни одна: холодный старт
+  съедает секунды, а первая ставка после перерыва должна успеть в свою
+  свечу. На пересменке окно переезжает на заступившую биржу.</div>
   <div class="btns" style="margin-top:10px">
     <button id="btnSaveSched">Сохранить</button>
+    <button id="btnSplit" title="Разделить сутки поровну между биржами">Смена 12/12</button>
     <button id="btnAll">Все часы</button>
-    <button id="btnWorkday">08:00-23:00</button>
     <button id="btnNone">Снять всё</button>
   </div>
   </div>
@@ -679,44 +683,55 @@ function flash(id) {
 // ── недельная сетка ──
 // Держим её в своей переменной: обновление состояния каждые 5 секунд не должно
 // затирать клетки, которые пользователь красит прямо сейчас.
-let sched = Array(7).fill('0'.repeat(24));
+// Ключ - имя биржи, значение - семь строк по 24 символа.
+let schedBy = {};
 let schedDirty = false;          // есть несохранённые правки
 let painting = null;             // '1'/'0' - что красим протяжкой
+let schedExs = [];               // биржи в порядке отрисовки (имя + заголовок)
 const DAYS = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 const ORDER = [1,2,3,4,5,6,0];   // показываем с понедельника
 
-function setCell(day, hour, val) {
-  const r = sched[day].split('');
+function setCell(ex, day, hour, val) {
+  const r = schedBy[ex][day].split('');
   r[hour] = val;
-  sched[day] = r.join('');
+  schedBy[ex][day] = r.join('');
   schedDirty = true;
 }
 
+// Одна таблица на биржу. Заголовок с именем биржи нужен и при одной -
+// иначе после появления второй сетки непонятно, чья верхняя.
 function buildGrid() {
-  const t = $('schedGrid');
   const now = new Date();
-  let html = '<tr><th></th>';
-  for (let h = 0; h < 24; h++) html += `<th>${h}</th>`;
-  html += '</tr>';
-  for (const d of ORDER) {
-    html += `<tr><td class="dayname" data-day="${d}" style="cursor:pointer">${DAYS[d]}</td>`;
-    for (let h = 0; h < 24; h++) {
-      const on = sched[d][h] === '1' ? ' on' : '';
-      const cur = (d === now.getDay() && h === now.getHours()) ? ' now' : '';
-      html += `<td><div class="cell${on}${cur}" data-day="${d}" data-hour="${h}"></div></td>`;
-    }
+  $('schedGrid').innerHTML = schedExs.map(e => {
+    const rows = schedBy[e.name] || Array(7).fill('1'.repeat(24));
+    let html = `<div class="ex-h">${e.title}`
+      + (e.todayWindows ? ` <span class="hint" style="text-transform:none">${e.todayWindows}</span>` : '')
+      + '</div><table data-ex="' + e.name + '"><tr><th></th>';
+    for (let h = 0; h < 24; h++) html += `<th>${h}</th>`;
     html += '</tr>';
-  }
-  t.innerHTML = html;
+    for (const d of ORDER) {
+      html += `<tr><td class="dayname" data-day="${d}" style="cursor:pointer">${DAYS[d]}</td>`;
+      for (let h = 0; h < 24; h++) {
+        const on = rows[d][h] === '1' ? ' on' : '';
+        const cur = (d === now.getDay() && h === now.getHours()) ? ' now' : '';
+        html += `<td><div class="cell${on}${cur}" data-day="${d}" data-hour="${h}"></div></td>`;
+      }
+      html += '</tr>';
+    }
+    return html + '</table>';
+  }).join('');
 }
+const cellEx = el => (el.closest('table') || {}).dataset?.ex;
 
 $('schedGrid').addEventListener('mousedown', e => {
   const day = e.target.dataset.day;
   if (day == null) return;
+  const ex = cellEx(e.target);
+  if (!ex) return;
   if (e.target.classList.contains('dayname')) {       // клик по дню - весь день
     const d = +day;
-    const allOn = sched[d] === '1'.repeat(24);
-    sched[d] = (allOn ? '0' : '1').repeat(24);
+    const allOn = schedBy[ex][d] === '1'.repeat(24);
+    schedBy[ex][d] = (allOn ? '0' : '1').repeat(24);
     schedDirty = true;
     buildGrid();
     return;
@@ -724,25 +739,45 @@ $('schedGrid').addEventListener('mousedown', e => {
   if (!e.target.classList.contains('cell')) return;
   e.preventDefault();
   const h = +e.target.dataset.hour;
-  painting = sched[+day][h] === '1' ? '0' : '1';
-  setCell(+day, h, painting);
+  painting = schedBy[ex][+day][h] === '1' ? '0' : '1';
+  setCell(ex, +day, h, painting);
   buildGrid();
 });
 $('schedGrid').addEventListener('mouseover', e => {
   if (painting == null || !e.target.classList.contains('cell')) return;
-  setCell(+e.target.dataset.day, +e.target.dataset.hour, painting);
+  const ex = cellEx(e.target);
+  if (!ex) return;
+  setCell(ex, +e.target.dataset.day, +e.target.dataset.hour, painting);
   e.target.classList.toggle('on', painting === '1');
 });
 document.addEventListener('mouseup', () => { painting = null; });
 
 function fillGrid(pattern) {
-  sched = Array(7).fill(pattern);
+  for (const e of schedExs) schedBy[e.name] = Array(7).fill(pattern);
   schedDirty = true;
   buildGrid();
 }
 $('btnAll').onclick = () => fillGrid('1'.repeat(24));
 $('btnNone').onclick = () => fillGrid('0'.repeat(24));
-$('btnWorkday').onclick = () => fillGrid('0'.repeat(8) + '1'.repeat(15) + '0');
+// Сутки поровну между биржами: при двух это 12/12 со сменой в 08:00 и
+// 20:00. Смысл в том, чтобы одновременно работала ровно одна - тогда и
+// окно браузера одно, и след ровнее.
+$('btnSplit').onclick = () => {
+  const n = schedExs.length;
+  if (!n) return;
+  const per = Math.floor(24 / n);
+  schedExs.forEach((e, i) => {
+    const from = (8 + i * per) % 24;              // первая смена с 08:00
+    let row = '';
+    for (let h = 0; h < 24; h++) {
+      const rel = (h - from + 24) % 24;
+      row += (rel < per || (i === n - 1 && rel < 24 - per * (n - 1))) ? '1' : '0';
+    }
+    schedBy[e.name] = Array(7).fill(row);
+  });
+  schedDirty = true;
+  buildGrid();
+};
 
 // ── холостые действия ──
 const ACT_NAMES = {
@@ -936,9 +971,14 @@ async function refresh() {
     ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
   $('btnOpen').disabled = st.browserOpen || st.busy;
   $('btnClose').disabled = !st.browserOpen || st.busy;
-  $('win').textContent = st.todayWindows || 'круглосуточно';
-  $('activeNow').innerHTML = st.activeNow
-    ? '<span class="pill ok">активен</span>' : '<span class="pill warn">тихие часы</span>';
+  // Кто сейчас в смене. Общий ответ «активен» после разделения часов
+  // перестал что-либо значить: работать может одна биржа из двух.
+  const act = exs(s).filter(e => e.activeNow);
+  $('activeNow').innerHTML = act.length
+    ? act.map(e => `<span class="pill ok">${e.title}</span>`).join(' ')
+    : '<span class="pill warn">никто</span>';
+  $('win').textContent = act.length ? (act[0].todayWindows || 'круглосуточно') : 'смена не идёт';
+  $('win').title = exs(s).map(e => `${e.title}: ${e.todayWindows || 'круглосуточно'}`).join('\n');
 
   buildAssetControls(st);
   syncManualStake(s, false);
@@ -980,7 +1020,11 @@ async function refresh() {
   setChk('schedOn', s.schedule.enabled);
   setChk('autoWindow', s.autoWindow);
   setVal('jitter', s.schedule.jitterMin);
-  if (!schedDirty) { sched = s.schedule.hours.slice(); buildGrid(); }
+  if (!schedDirty) {
+    schedExs = exs(s).map(e => ({ name: e.name, title: e.title, todayWindows: e.todayWindows }));
+    for (const e of exs(s)) schedBy[e.name] = (e.hours || s.schedule.hours).slice();
+    buildGrid();
+  }
 
   $('sub').textContent = `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено `
     + new Date().toLocaleTimeString('ru-RU') + (schedDirty ? ' · есть несохранённые правки расписания' : '');
@@ -1133,14 +1177,19 @@ $('btnSaveBurst').onclick = async () => {
   flash('savedBurst'); afterSave('burst');
 };
 $('btnSaveSched').onclick = async () => {
+  const schedules = {};
+  for (const e of schedExs) schedules[e.name] = { hours: schedBy[e.name] };
   await post('settings', {
-    schedule: { enabled: $('schedOn').checked, hours: sched, jitterMin: +$('jitter').value },
+    // Общий выключатель и разброс краёв - на все биржи; сетки - у каждой
+    // своя, поэтому уходят отдельным полем.
+    schedule: { enabled: $('schedOn').checked, jitterMin: +$('jitter').value },
+    schedules,
     autoWindow: $('autoWindow').checked,
   });
   schedDirty = false; flash('savedSched'); afterSave('sched');
 };
 
-buildGrid();
+// До первого ответа сервера бирж мы не знаем - сетку рисует refresh().
 refresh();
 setInterval(refresh, 5000);
 </script>

@@ -1,216 +1,160 @@
 // ============================================================
-// TradingView Signal Webhook → Telegram + Google Sheets  v3.9
+// TradingView Signal Webhook → Telegram + Google Sheets  v3.9.13
 // ОДИН скрипт на ОБА актива (ETH + BTC), запись в ОДНУ вкладку.
 // ============================================================
-// v3.9.5: хук Toobit - сигналы PRO-ветки уходят исполнителю.
-//   - CONFIG.TOOBIT: свой URL, свой выключатель. Шлём ПРИНЯТЫЕ основной
-//     (PRO) веткой сигналы - те же, что идут в ТГ и партнёру с тегом
-//     "10m". Payload побайтово тот же, что у партнёра, включая
-//     "timing":"10m" - по этой метке исполнитель и понимает, что
-//     ставить надо на Toobit: ветка MEXC шлёт "MEXC _10m"/"MEXC _30m",
-//     ветка ALT - "ALT10m", и потоки не путаются.
-//   - Payout НЕ шлём: у Toobit его считает сам исполнитель по странице
-//     (порог строго больше 75%), потому что источник сигнала его не
-//     знает. Отсюда и разница: у MEXC payout проверяется здесь, у
-//     Toobit - на месте.
-//   - Сбой хука не влияет ни на Telegram, ни на записи, ни на партнёра.
+// v3.9.13: ХУК TOOBIT - PRO-ветка уходит локальному исполнителю.
+//   - CONFIG.TOOBIT: свой выключатель, адрес общий с MEXC-хуком.
+//     Шлём ПРИНЯТЫЕ основной (PRO) веткой сигналы - те же, что идут
+//     в основную ТГ-группу и партнёру с тегом "10m". Тело - в
+//     точности партнёрское, с меткой потока "timing":"10m": по ней
+//     исполнитель понимает, что ставить надо на Toobit. Ветка MEXC
+//     шлёт свои метки ("MEXC _10m"/"MEXC _30m"), ветка ALT - свою,
+//     поэтому потоки не путаются и отдельного поля с биржей не надо.
+//   - Payout НЕ шлём: у Toobit его читает сам исполнитель со
+//     страницы (порог строго больше 75%), здесь он неизвестен.
+//   - Адрес исполнителя вынесен в константу EXECUTOR_HOOK: туннель
+//     меняет адрес при каждом перезапуске, и править его в двух
+//     местах - лишний повод забыть одно из них.
+//   - Сбой хука не влияет ни на Telegram, ни на записи в листы, ни
+//     на партнёрскую доставку: в ответе просто будет toobit:error.
+//   - ОТКАТ: CONFIG.TOOBIT.ENABLED = false.
+//
+// v3.9.12: ТОРГОВАЯ СЕССИЯ ПО АКТИВУ (белый список часов).
+//   SPCX - токенизированная акция, торгуется только в часы работы
+//   фондовой биржи. Добавлен отдельный гейт CONFIG.ASSET_SESSION:
+//   для перечисленных активов сигнал пропускается ТОЛЬКО внутри
+//   окна сессии, вне его - блок с причиной "SES: ..." и записью в
+//   BLOCKEDsignal (как у временного гейта).
+//   Для SPCX: 09:30-16:00 America/New_York, Пн-Пт. Часы считаются
+//   СРАЗУ в биржевом поясе - DST США/ЕС не расходятся.
+//   Механика отличается от TIME_BLOCK: TIME_BLOCK - чёрный список
+//   (когда НЕ пускать), ASSET_SESSION - белый список (когда пускать),
+//   и он привязан к активу. Активы без записи в ASSET_SESSION
+//   (ETH, BTC) не ограничиваются вообще.
+//   Гейт стоит в doPost ДО всех веток и работает независимо от
+//   TIME_BLOCK.GLOBAL, поэтому его не обойдёт ни одна ветка
+//   (основная, MEXC, MEXC_ALT, ALT10m, Premium).
+//   Приём идёт до самого закрытия (TO=16:00) - 30-минутная ставка,
+//   открытая под конец, может отработать после звонка; если это
+//   нежелательно, сдвинь TO раньше (напр. "15:30").
+//   ОТКАТ: CONFIG.ASSET_SESSION.SPCX.ENABLED = false.
+//
+// v3.9.11: ПОЧИНЕНО ОПРЕДЕЛЕНИЕ АКТИВА (баг SPCX → ETH).
+//   По всему скрипту актив определялся бинарно строкой
+//     (data.ticker||"").indexOf("BTC") >= 0 ? "BTC" : "ETH"
+//   Любой тикер без "BTC" молча становился ETH. После добавления
+//   SPCX (SYMBOLS.SPCX) сигнал SPCX DOWN на 30 минут уходил в
+//   группу как "30 MIN | ETH DOWN" - шапка mexcDeliver_ берёт
+//   актив из этой же переменной.
+//   Теперь актив определяет ОДНА функция assetOf_(data): BTC / ETH /
+//   SPCX по подстроке тикера, фолбэк ETH. Все шесть прежних
+//   инлайн-детекторов заменены на её вызов.
+//   Плюс payout-циклы refreshPayoutIfStale_ и fetchEventPayouts_
+//   расширены на SPCX - иначе payout SPCX оставался неизвестным и
+//   проходил только за счёт FAIL_OPEN (фильтр MIN_PAYOUT для SPCX
+//   фактически не работал).
+//   Лимиты SPCX намеренно НЕ заведены: срабатывает фолбэк на
+//   LIMITS.ETH. isBtcDown_ и setMexcPayoutManual не менялись.
+//   ОТКАТ: вернуть в assetOf_ только BTC/ETH-ветки не требуется -
+//   функция обратно совместима; для полного отката заменить вызовы
+//   assetOf_(data) прежней тернарной строкой.
+//
+// v3.9.10: особые правила для BTC DOWN + починен формат ReceivedAt.
+//
+//   1) ИСПРАВЛЕНА ОШИБКА В stampIso_. В развёрнутой копии условие
+//      проверяло "utc", а возвращало формат со смещением, из-за
+//      чего при настройке RECEIVED_AT_FORMAT = "utc" и в листы, и
+//      партнёру уходило "2026-08-05T07:30:07.526+02:00" вместо
+//      "...Z". Ветки переписаны так, что перепутать их нельзя:
+//      ветка со словом "utc" сразу возвращает toISOString().
+//      Уже записанные строки чинит normalizeReceivedAtUtc(true).
+//
+//   2) BTC DOWN ОСВОБОЖДЁН ОТ ОКОН ВРЕМЕНИ, КРОМЕ ЧАСА 14.
+//      BTC DOWN - самая устойчивая пара за год: WR 59.78%,
+//      Wilson LB 56.9%, и единственная, где ни один из 4 отрезков
+//      не ушёл ниже брейк-ивена (61.9/59.7/58.9/59.4).
+//      Но ВНУТРИ окон он плох: WR 50.46%, -2 500 за год, ниже
+//      брейк-ивена во ВСЕХ 4 отрезках. Разбор по окнам показал,
+//      что вся потеря сидит в часе 14 (WR 42.47%, -2 150), а три
+//      остальных окна почти нейтральны (54.48%, -350).
+//      Поэтому окно 14:00-14:59 помечено strict:true и продолжает
+//      резать BTC DOWN, а из остальных он выпущен.
+//      Реплей на свежих данных (2 месяца, посекундная точность):
+//        как было                        PnL +23 975 | BTC DOWN 65.5%, +5 125
+//        только новый лимит              PnL +24 575 | BTC DOWN 65.5%, +5 850
+//        освободить из ВСЕХ окон         PnL +24 000 | BTC DOWN 63.0%, +5 275
+//        освободить, кроме часа 14       PnL +24 975 | BTC DOWN 65.1%, +6 250
+//      Освободить и час 14: убрать strict у окна 14:00-14:59.
+//
+//   3) СВОЙ ЛИМИТ ДЛЯ BTC DOWN вместо F4/F5: не больше
+//      MAX_CONCURRENT (=2) ставок одновременно в отработке, окно
+//      равно реальной экспирации (10 мин). Раньше действовало
+//      общее правило BTC - 1 сигнал за 4 минуты.
+//      Общий кап F8 (5 ставок) проверяется РАНЬШЕ и остаётся
+//      главным ограничителем: суммарно по всем активам и
+//      направлениям больше 5 не откроется.
+//      Проверено реплеем: максимум одновременных BTC DOWN = 2,
+//      максимум одновременных всего = 5.
+//      Поток BTC DOWN: 3.7 -> 4.7 сигнала в день.
+//
+//   Правила BTC DOWN действуют в основной ветке и в ветке MEXC
+//   (обе идут через decideSignal_). Ветку Premium не затрагивают:
+//   у неё своё расписание, с окнами почти не пересекающееся.
+// ============================================================
+// v3.9.9: ОДИН МОМЕНТ ВРЕМЕНИ НА ВЕСЬ СИГНАЛ + колонка ReceivedAt
+//   вернулась в листы. (см. историю в предыдущих версиях)
+// v3.9.8: ГЛОБАЛЬНЫЙ ВРЕМЕННОЙ ГЕЙТ (CONFIG.TIME_BLOCK.GLOBAL).
+// v3.9.7: итоги анализа ГОДОВЫХ данных + ветка PREMIUM.
+// v3.9.6: правки по итогам реплея 2 611 сигналов.
+// v3.9.5: мягкий fallback MEXC_ALT (см. CONFIG.MEXC_ALT).
 // v3.9.4: партнёрские потоки по тегам + ветка ALT10m с фильтрами.
-//   - Партнёр получает несколько потоков на ОДИН хук
-//     (PARTNER_WEBHOOK_URL), различает по полю "timing". У каждого
-//     свой переключатель CONFIG.PARTNER_STREAMS: "10m" (PRO, вкл),
-//     "ALT10m" (выкл), "MEXC_10m"/"MEXC_30m" (выкл). Мастер -
-//     PARTNER_WEBHOOK_ENABLED. Помощник postPartner_(data, tag).
-//   - Ветка ALT10m (CONFIG.ALT10M): берёт заблокированные основной
-//     веткой сигналы, прогоняет через СВОИ мягкие лимиты (окно 2 мин,
-//     ETH 3 / BTC 2, одинаковых цен ≤2). Прошедшие → ТГ-группа ALT10m
-//     и партнёр (тег "ALT10m"). Каждый прошедший помечается "ALT10m"
-//     в новой колонке листа BLOCKEDsignal. Заменяет прежний ALT_FEED
-//     (тот слал сырой поток без фильтров).
-//   - MEXC → партнёр (теги MEXC_10m/MEXC_30m) добавлен, но по
-//     умолчанию выключен; отдельный MEXC-хук (исполнитель) не тронут.
-// v3.9.3: скорость доставки + ALT-ветка + F6 выключен.
-//   - ПОРЯДОК ОБРАБОТКИ переставлен: PRO-группа и партнёрский хук
-//     получают сигнал СРАЗУ после фильтров основной ветки, не
-//     дожидаясь payout MEXC, ветки MEXC и записей в листы. Записи в
-//     Google Sheets ушли в самый конец - их задержка больше не
-//     влияет на доставку. Выигрыш ~1.5-5 секунд на сигнал.
-//     Логика фильтров/лимитов НЕ менялась (стейты веток независимы,
-//     каждое решение - под своим коротким локом).
-//   - ALT-ветка (CONFIG.ALT_FEED): сигналы, заблокированные фильтрами
-//     основной ветки (то, что пишется в BLOCKEDsignal), уходят в
-//     отдельный ТГ-канал своим ботом (Script Properties
-//     ALT_TELEGRAM_BOT_TOKEN + ALT_TELEGRAM_CHAT_ID) - масштабирование
-//     на вторую аудиторию подписчиков.
-//   - F6 (авто-карантин DEV_BADLIST) выключен: BADLIST.ENABLED=false.
-// v3.9.2: MEXC-хук - принятые веткой MEXC сигналы уходят POST-ом
-//   на CONFIG.MEXC.WEBHOOK_URL (устроен в точности как партнёрский
-//   вебхук: тот же payload + timing "MEXC _10m"/"MEXC _30m" + payout).
-//   Получатель сам решает, что исполнять (например только _10m).
-//   По умолчанию выключено; сбой хука не влияет на поток.
-//   Готовый получатель-автотрейдер: scripts/mexc-executor (опция).
+// v3.9.3: скорость доставки - PRO-группа и партнёрский хук.
+// v3.9.2: MEXC-хук (CONFIG.MEXC.WEBHOOK_URL).
 // v3.9.1: метки timing в вебхуках и листах MEXC.
-//   - Партнёрский вебхук: в payload добавлено timing = "10m"
-//     (партнёру уходят только 10-минутки; в лист ALLsignal timing
-//     НЕ пишется - лист не меняется).
-//   - MEXCsignal/MEXCblocked: timing = "MEXC _10m" / "MEXC _30m"
-//     (колонка "Timing", первая свободная после Payout).
-//   30-минутки помечаются в JSON алерта TradingView как
-//   "timing":"MEXC _30m" - они идут ТОЛЬКО в MEXC (mexcOnly),
-//   в ALLsignal/партнёру не попадают. 10-минуткам поле не нужно
-//   (нет "30" в timing → трактуется как 10м).
-// v3.9: ОТДЕЛЬНАЯ ВЕТКА для трейдеров MEXC (CONFIG.MEXC).
-//   Каждый сигнал проходит ДВА независимых решения:
-//   - основная ветка: как раньше (свой стейт signal_state_v2,
-//     свои вкладки, своя ТГ-группа, партнёрский вебхук);
-//   - ветка MEXC: СВОЙ стейт лимитов (signal_state_mexc_v1),
-//     свои вкладки MEXCsignal/MEXCblocked, СВОЯ ТГ-группа
-//     (Script Property MEXC_TELEGRAM_CHAT_ID) + новый фильтр
-//     FM: блок при payout MEXC < MIN_PAYOUT (80%).
-//   Стейты НЕ пересекаются: если в основную группу прошло
-//   3 сигнала, а на MEXC из-за payout прошёл 1 - лимиты MEXC
-//   считаются по СВОИМ принятым, и после возврата payout к 80%
-//   ветка MEXC принимает сигналы независимо от основной.
-//   Payout тянется с внутреннего endpoint Event Futures MEXC
-//   (event_contract/detail, найден через DevTools 18.07.2026):
-//   один JSON на все контракты, ставки по направлениям (upPayRate/
-//   downPayRate) и таймфреймам (MINUTE 10/30, HOUR, DAY). Свежесть
-//   на решении - дожим в getMexcPayout_ (30 с), между сигналами -
-//   минутный триггер mexcPayoutMonitor() (алерты/история). Запасной
-//   путь - ручной ввод setMexcPayoutManual(); при отсутствии/
-//   устаревании данных действует FAIL_OPEN (по умолчанию true -
-//   сигналы идут, фильтр FM тихо пропускается).
-//   Монитор шлёт алерты в группу MEXC на переходах payout через
-//   порог: "⛔ упал ниже 80%" / "✅ вернулся к 80%".
-//   EV-справка: WIN +0.8×ставка / LOSE -ставка. Безубыток
-//   WR = 1/(1+payout): 80% → 55.6%, 75% → 57.1%, 70% → 58.8%.
-//   При WR ~60% почти вся кромка съедается уже на 70-75%.
-// v3.8: новая схема лимитов по итогам реплея 7 917 сигналов
-//   (Signals_Log, 359 дней) через симулятор фильтров:
-//   - окно пер-актив лимитов сокращено 11 → 5 минут
-//     (кластеры сигналов плотные: половина идёт с гэпом <2 мин;
-//     короткое окно режет хвост пачки, но быстро пускает
-//     следующий независимый заход);
-//   - лимиты: ETH 3 → 2, BTC 2 → 1 сигнал в окне;
-//   - НОВЫЙ фильтр F8: глобальный кап - суммарно не больше
-//     5 принятых сигналов (ETH+BTC вместе) за скользящие
-//     11 минут. Отражает биржевой лимит 5 ставок в моменте:
-//     без него окно 5 мин может пропустить до 7 позиций.
-//   На бэктесте (последние 120 дней): PNL на уровне старой
-//   схемы, EV/сигнал +9.3 → +11.1, сумма убытков -16%,
-//   худший месяц -5875 → -2900.
-// v3.7: фильтр F7 переведён на ПРОИЗВОЛЬНЫЕ минутные окна
-//   (CONFIG.WEEKDAY_BLOCK.WINDOWS: список {from:"HH:MM", to:"HH:MM"}),
-//   вместо целых часов HOUR_FROM/HOUR_TO. Границы включительны.
-// v3.6: фильтр F7 - блокировка сигналов Пн-Чт 14:00-16:59 (Варшава);
-//   удалён устаревший блэклист F0 (его роль полностью закрывает
-//   авто-карантин DEV_BADLIST - список обновляется сам каждое утро,
-//   а не редактируется руками в коде).
+// v3.9: отдельная ветка MEXC + фильтр FM по payout.
+// v3.8: окно пер-актив лимитов 11 → 5 мин, фильтр F8.
+// v3.7: фильтр F7 переведён на произвольные минутные окна.
+// v3.6: фильтр F7 (блокировка по дням недели и часам).
 // v3.5: авто-карантин по DEV_BADLIST (фильтр F6).
-//   Вкладку DEV_BADLIST строит GitHub Actions каждое утро (~05:00
-//   Варшавы): активные конфигурации, у которых WR за последние
-//   4 дня упал ниже безубытка 55.6% (= отрицательный EV).
-//   Сигналы таких конфигураций НЕ идут в Telegram и партнёру,
-//   а пишутся в BLOCKEDsignal с причиной "F6: авто-карантин".
-//   Статистика по ним продолжает копиться (результаты BLOCKED
-//   учитываются в анализе) - если конфигурация реабилитируется,
-//   она выпадает из DEV_BADLIST и карантин снимается САМ.
-//   Список кэшируется на BADLIST.CACHE_TTL_SEC (час) через
-//   CacheService - чтение вкладки НЕ происходит на каждый сигнал
-//   и НЕ попадает в критическую секцию под локом.
-//   Сбой чтения списка = fail-open (карантин пропускается,
-//   основной поток не страдает).
-// v3.4: добавлен partner webhook (sendPartnerWebhook).
-//   Шлём только сигналы, прошедшие фильтры (ALLsignal).
-//   secret и Settings партнёру НЕ передаются.
-//   Ошибка на стороне партнёра не влияет на основной поток.
-// ============================================================
-// ЗАЧЕМ возврат к одному скрипту:
-//   Потеря сигналов после 16.06 была НЕ из-за одной вкладки, а
-//   из-за ДВУХ скриптов. LockService.getScriptLock() сериализует
-//   вызовы только ВНУТРИ своего проекта; два проекта писали в один
-//   диапазон без общего лока → их appendRow гонялись и затирали
-//   друг друга (терялся менее частотный поток — BTC, ~32%).
-//   Один скрипт = один лок = все записи в очередь = потерь нет.
-//   Именно так всё и работало ДО разделения.
-//
-//   При этом ETH и BTC сохраняют РАЗДЕЛЬНЫЕ лимиты (как у двух
-//   скриптов): см. CONFIG.LIMITS. Лимиты окна/цены теперь считаются
-//   ПО КАЖДОМУ активу отдельно. Конфликт направлений и дедуп уже
-//   были по активу.
-//
-//   Запись в одну вкладку ALLsignal / BLOCKEDsignal — другие сервисы,
-//   которые тянут данные оттуда, продолжают работать без изменений.
-//
-//   Надёжность из v3.2 сохранена: appendRowSafe_ (ретрай + flush),
-//   резервная вкладка FAILED, честный флаг записи в ответе.
-// ============================================================
-// МИГРАЦИЯ v3.9.3 → v3.9.4: заменить код. Включение потоков:
-//   - ALT10m: Script Properties ALT_TELEGRAM_CHAT_ID (+ опц.
-//     ALT_TELEGRAM_BOT_TOKEN), затем CONFIG.ALT10M.ENABLED = true.
-//     Партнёру ALT10m: CONFIG.PARTNER_STREAMS["ALT10m"] = true.
-//     В листе BLOCKEDsignal появится колонка ALT10m (для старого
-//     листа допиши заголовок "ALT10m" в первую свободную колонку J).
-//   - MEXC партнёру: CONFIG.PARTNER_STREAMS["MEXC_10m"/"MEXC_30m"]=true.
-//   Вернуть карантин F6: CONFIG.BADLIST.ENABLED = true.
-// МИГРАЦИЯ v3.8 → v3.9:
-//   1) Заменить код проекта этим файлом.
-//   2) Script Properties: добавить MEXC_TELEGRAM_CHAT_ID
-//      (chat_id новой ТГ-группы MEXC; бот должен быть в группе).
-//   3) Триггеры (часы слева) → Add Trigger → mexcPayoutMonitor,
-//      time-driven, каждые 1-5 минут.
-//   4) Источник payout уже настроен (PAYOUT_URL, таймфреймы из
-//      TIMINGS: 10 и 30 минут). Проверить: запустить mexcPayoutProbe()
-//      - в логе должны быть числа по обоим таймфреймам.
-//      Если HTTP 403 - endpoint закрыт для серверов Google, тогда
-//      вручную setMexcPayoutManual(80, 80) при изменении payout.
-//   5) 30-минутные алерты TradingView: добавить в JSON алерта поле
-//      "timing":"MEXC _30m" - сигнал получит шапку 🕒 30 MIN, проверку
-//      payout 30-минутного контракта и метку "MEXC _30m" в листе.
-//      Без поля (или "10m") = 10-минутка.
-//      30-минутка - ЭКСКЛЮЗИВ MEXC (MEXC_ONLY_TIMINGS): такие
-//      сигналы идут ТОЛЬКО в группу MEXC, основная ветка (TG,
-//      ALLsignal, партнёр, её лимиты) их не видит вовсе.
-//      ALLsignal и партнёру уходит метка "10m" (только 10-минутки).
-//   6) selfTest() один раз - строка "MEXC:" в логе.
-//   Отключить ветку MEXC без удаления кода: CONFIG.MEXC.ENABLED=false.
-// МИГРАЦИЯ v3.7 → v3.8: просто заменить код (Script Properties и
-//   состояние signal_state_v2 совместимы). Откат к старой схеме:
-//   WINDOW_MINUTES: 11, LIMITS ETH {3,2} / BTC {2,1},
-//   GLOBAL_CAP.ENABLED = false.
-// МИГРАЦИЯ v3.6 → v3.7: просто заменить код. Окна фильтра F7
-//   правятся в CONFIG.WEEKDAY_BLOCK.WINDOWS (время "HH:MM", Варшава).
-// МИГРАЦИЯ v3.5 → v3.6: просто заменить код. Выключатель нового
-//   фильтра: CONFIG.WEEKDAY_BLOCK.ENABLED = false.
-// МИГРАЦИЯ v3.4 → v3.5:
-//   1) Заменить код проекта этим файлом (Script Properties не меняются).
-//   2) Запустить selfTest() один раз - убедиться, что DEV_BADLIST
-//      читается (строка "badlist:" в логе).
-//   3) Всё. Отключить карантин без удаления кода:
-//      CONFIG.BADLIST.ENABLED = false.
+// v3.4: добавлен partner webhook.
 // ============================================================
 // Script Properties:
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SPREADSHEET_ID, WEBHOOK_SECRET
+//   MEXC_TELEGRAM_CHAT_ID, ALT_TELEGRAM_CHAT_ID, ALT_TELEGRAM_BOT_TOKEN
 // Алерт TradingView: "secret":"<строка>", "bartime":"{{timenow}}"
 // ============================================================
+
+// Короткие имена дней в том виде, в каком их отдаёт
+// Utilities.formatDate(..., "EEE") для локали скрипта.
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+const WEEKEND  = ["Sat", "Sun"];
+const ALLDAYS  = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// ─── АДРЕС ЛОКАЛЬНОГО ИСПОЛНИТЕЛЯ (v3.9.13) ──────────────────
+// Один и тот же для обеих бирж: исполнитель различает их по метке
+// потока в поле "timing". Туннель cloudflared меняет адрес при
+// каждом перезапуске - меняй ЗДЕСЬ одну строку, а не в двух местах.
+const EXECUTOR_HOOK = "https://communities-thumbzilla-than-treated.trycloudflare.com/signal?secret=qmbhtz1op6jg8ei7ky4sv5wc9fr0dnlxa3u2";
 
 const CONFIG = {
   SHEET_NAME:         "ALLsignal",       // одна вкладка на оба актива
   BLOCKED_SHEET_NAME: "BLOCKEDsignal",
   FAILED_SHEET_NAME:  "FAILEDsignal",    // резерв для несостоявшихся записей
 
-  WINDOW_MINUTES: 5,      // v3.8: было 11 - окно пер-актив лимитов
+  WINDOW_MINUTES: 1,      // окно пер-актив лимитов F4/F5
   CONFLICT_MINUTES: 10,
 
-  // ─── РАЗДЕЛЬНЫЕ лимиты по активам (v3.8: ETH 3→2, BTC 2→1) ───
+  // ─── РАЗДЕЛЬНЫЕ лимиты по активам ───
+  // v3.9.6: ETH ослаблен 2/2 → 6/4, BTC не тронут.
+  //   MAX_SIGNALS_PER_WINDOW - фильтр F4 (сигналов в окне)
+  //   MAX_SAME_PRICE         - фильтр F5 (сигналов с той же ценой)
+  // ВАЖНО: поднимать F4, не подняв F5, нельзя.
   LIMITS: {
-    ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 2 },
-    BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 1 },
+    ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 3 },
+    BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 2 },
   },
 
-  // ─── F8: глобальный кап (v3.8) - суммарно по ОБОИМ активам ───
-  // Не больше MAX_OPEN принятых сигналов за скользящие WINDOW_MINUTES.
-  // Отражает биржевой лимит 5 ставок в моменте: пер-актив окна по
-  // 5 минут без него могут выпустить до 7 позиций за 11 минут.
+  // ─── F8: глобальный кап - суммарно по ОБОИМ активам ───
   GLOBAL_CAP: {
     ENABLED: true,
     MAX_OPEN: 5,
@@ -226,145 +170,179 @@ const CONFIG = {
   ENABLE_DEDUP:          false,  // FD: СНЯТ
   DEDUP_SECONDS: 90,
 
-  // ─── F7: блокировка по дням недели и минутным окнам (Варшава) ───
-  // Границы включительны (from..to). Окно может быть любой длины и
-  // пересекать полночь (from > to, напр. "23:30"-"00:30").
-  WEEKDAY_BLOCK: {
+  // ─── F7: блокировка по времени (Варшава) ───
+  TIME_BLOCK: {
     ENABLED: true,
-    DAYS: ["Mon", "Tue", "Wed", "Thu"],  // Пн-Чт включительно
+    GLOBAL: true,
+    DAYS: ["Mon", "Tue", "Wed", "Thu", "Fri"],
     WINDOWS: [
-      { from: "14:20", to: "14:59" },
-      { from: "15:20", to: "15:59" },
+      // единственный час, устойчиво убыточный в обеих половинах периода
+      { from: "07:00", to: "07:59", days: WEEKDAYS, strict: true },
+      // новый: 41.4% за месяц, ниже безубытка и в июле, и в августе
+      { from: "13:00", to: "13:59", days: ALLDAYS, strict: true },
+      // УБРАНЫ: 14:00-14:59 (в августе 76%), 15:20-15:59 (63.7%), 16:00-16:59 (60.6%)
     ],
   },
 
-  // ─── F6: авто-карантин по DEV_BADLIST ───
-  // ВЫКЛЮЧЕН по просьбе владельца (21.07.2026). Вкладку DEV_BADLIST
-  // GitHub Actions продолжает строить каждое утро - аналитика в
-  // приложении живёт, карантин сигналов не применяется. Бонус к
-  // скорости: loadBadlist_ при ENABLED=false возвращается мгновенно.
-  BADLIST: {
-    ENABLED: false,                // true - включить карантин обратно
-    SHEET_NAME: "DEV_BADLIST",     // вкладку строит GitHub Actions ежедневно
-    CACHE_KEY: "dev_badlist_v1",
-    CACHE_TTL_SEC: 3600,           // перечитывать вкладку не чаще раза в час
+  // ─── Торговые сессии по активу (v3.9.12) ───
+  // Белый список часов: сигнал по активу пропускается ТОЛЬКО внутри
+  // окна сессии. Активы, которых здесь НЕТ (ETH, BTC), не
+  // ограничиваются вовсе. Часы и дни считаются в поясе TZ актива
+  // (для акций - биржевой пояс, чтобы DST США/ЕС не расходились).
+  //   FROM/TO   - границы включительно, "HH:MM"; окно через полночь
+  //               (FROM > TO) поддерживается.
+  //   DAYS      - дни недели В ПОЯСЕ TZ (Mon..Sun).
+  // Гейт стоит в doPost до всех веток - см. assetSessionReason_.
+  ASSET_SESSION: {
+    // SPCX - токенизированная акция: только основная сессия биржи США
+    SPCX: {
+      ENABLED: true,
+      TZ:   "America/New_York",
+      DAYS: ["Mon", "Tue", "Wed", "Thu", "Fri"],
+      FROM: "09:30",
+      TO:   "16:00",   // приём до самого закрытия
+    },
   },
 
-  // ─── Ветка MEXC (v3.9): независимое решение + payout-фильтр ───
+  // ─── F6: авто-карантин по DEV_BADLIST ───
+  BADLIST: {
+    ENABLED: false,
+    SHEET_NAME: "DEV_BADLIST",
+    CACHE_KEY: "dev_badlist_v1",
+    CACHE_TTL_SEC: 3600,
+  },
+
+  // ─── Ветка MEXC: независимое решение + payout-фильтр ───
   MEXC: {
     ENABLED: true,
-    STATE_KEY: "signal_state_mexc_v1", // СВОЙ стейт лимитов (не общий!)
+    STATE_KEY: "signal_state_mexc_v1",
     SHEET_NAME:         "MEXCsignal",
     BLOCKED_SHEET_NAME: "MEXCblocked",
-    PAYOUT_SHEET_NAME:  "MEXC_PAYOUT", // история payout (пишет монитор)
-    CHAT_ID_PROP: "MEXC_TELEGRAM_CHAT_ID", // Script Property: chat_id группы MEXC
+    PAYOUT_SHEET_NAME:  "MEXC_PAYOUT",
+    CHAT_ID_PROP: "MEXC_TELEGRAM_CHAT_ID",
 
-    // FM: минимальный payout (%). Ниже - сигнал в MEXCblocked.
-    // Безубыток WR = 1/(1+payout): 80%→55.6%, 75%→57.1%, 70%→58.8%.
     MIN_PAYOUT: 80,
-    PAYOUT_STALE_MIN: 15,  // данные старше 15 мин считаем неизвестными
-    FAIL_OPEN: true,       // payout неизвестен: true - пропускать, false - блокировать
+    PAYOUT_STALE_MIN: 15,
+    FAIL_OPEN: true,
 
-    PAYOUT_PROP: "mexc_payout_v1",       // Script Property со значениями
-    CACHE_KEY: "mexc_payout_cache_v1",   // CacheService (быстрый путь)
+    PAYOUT_PROP: "mexc_payout_v1",
+    CACHE_KEY: "mexc_payout_cache_v1",
     CACHE_TTL_SEC: 25,
 
-    // Свежесть на РЕШЕНИИ: payout может меняться каждые ~30 секунд,
-    // поэтому он тянется из PAYOUT_URL прямо в doPost (Фаза 0, вне
-    // лока), если сохранённому значению больше PAYOUT_FRESH_SEC.
-    // Time-триггер mexcPayoutMonitor при этом нужен только для
-    // алертов/истории в паузах между сигналами (раз в 1-5 мин;
-    // чаще Apps Script не умеет, а sleep-трюки съедают квоту).
     PAYOUT_FRESH_SEC: 30,
-    PAYOUT_FETCH_TIMEOUT: 5,             // секунд на запрос к MEXC
+    PAYOUT_FETCH_TIMEOUT: 5,
 
-    // Источник payout: endpoint деталей Event Futures (найден через
-    // DevTools 18.07.2026). Отдаёт ВСЕ контракты одним JSON; у каждого
-    // символа ставки по таймфреймам:
-    //   "MINUTE":[{"val":10,"upPayRate":0.8,"downPayRate":0.8},
-    //             {"val":30,"upPayRate":0.85,...}], "HOUR":[...], ...
-    // Пустая строка = ручной режим (setMexcPayoutManual).
     PAYOUT_URL: "https://www.mexc.com/api/platform/futures/api/v1/event_contract/detail",
-    SYMBOLS: { ETH: "ETH_USDT", BTC: "BTC_USDT" },
-    // Таймфреймы отработки: payout хранится и проверяется ПО КАЖДОМУ
-    // (у MEXC 10m и 30m - разные ставки). Тайминг сигнала задаётся в
-    // алерте TradingView полем "timing": 30-минутки помечаются
-    // "timing":"MEXC _30m"; 10-минуткам поле не нужно (по умолчанию 10).
+    SYMBOLS: { ETH: "ETH_USDT", BTC: "BTC_USDT", SPCX: "SPCX_USDT" },
     TIME_UNIT: "MINUTE",
     TIMINGS: [10, 30],
     DEFAULT_TIMING: 10,
     // Шапка сообщения в группу MEXC: "<эмодзи> <тайминг> MIN | ACTIVE UP/DOWN"
-    TIMING_EMOJI: { 10: "⚡️", 30: "🕒" },
-    // Тайминги-эксклюзивы MEXC: сигналы с таким timing идут ТОЛЬКО в
-    // ветку MEXC. Основная ветка их не видит вовсе: ни Telegram, ни
-    // ALLsignal, ни партнёрский вебхук, ни счётчики её лимитов.
+    TIMING_EMOJI: { 10: "⚡️", 30: "🕒🕒🕒" },
+    ASSET_EMOJI: { BTC: "", ETH: "", SPCX: "" },
+    DIR_EMOJI: { UP: "🟢", DOWN: "🔴" },
+    BTC_FRAME: "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬",
     MEXC_ONLY_TIMINGS: [30],
 
-    // Алерты "⛔ payout упал / ✅ вернулся" в группу MEXC: выключены по
-    // просьбе владельца (18.07.2026) - группа только для сигналов.
-    // История в MEXC_PAYOUT и сам фильтр FM работают независимо от этого.
     ALERTS_ENABLED: false,
 
-    // ─── MEXC-хук (v3.9.2): доставка сигналов MEXC внешнему получателю ───
-    // Устроен В ТОЧНОСТИ как партнёрский вебхук: один URL, тот же
-    // payload + timing ("MEXC _10m"/"MEXC _30m") и текущий payout.
-    // Получатель сам решает, что исполнять (например только _10m).
-    // Сбой хука не влияет на Telegram и записи. Пустой URL = выключено.
-    WEBHOOK_URL: "",
-    WEBHOOK_ENABLED: false,
+    WEBHOOK_URL: EXECUTOR_HOOK,
+    WEBHOOK_ENABLED: true,
     WEBHOOK_TIMEOUT: 5,
   },
 
-  // ─── Хук Toobit (v3.9.5): PRO-ветка → локальный исполнитель ───
-  // Шлётся то же, что уходит в ТГ и партнёру с тегом "10m", то есть
-  // ПРИНЯТЫЕ основной веткой сигналы, и тем же телом. Куда ставить,
-  // исполнитель решает по метке "timing":"10m" - у ветки MEXC свои
-  // метки ("MEXC _10m"/"MEXC _30m"), у ALT своя.
+  // ─── Хук Toobit (v3.9.13): PRO-ветка → локальный исполнитель ───
+  // Шлётся то же, что уходит в основную ТГ-группу и партнёру с тегом
+  // "10m", то есть ПРИНЯТЫЕ основной веткой сигналы, и тем же телом.
+  // Куда ставить, исполнитель решает по метке "timing":"10m" - у ветки
+  // MEXC свои метки ("MEXC _10m"/"MEXC _30m"), у ALT своя.
   // 30-минутки сюда не попадают: они эксклюзив MEXC
   // (MEXC_ONLY_TIMINGS) и основную ветку не проходят.
   // Payout не передаём - на Toobit его читает сам исполнитель со
   // страницы, здесь он неизвестен. Пустой URL = выключено.
   TOOBIT: {
     ENABLED: true,
-    WEBHOOK_URL: "",          // адрес туннеля: https://<...>/signal?secret=<секрет>
+    WEBHOOK_URL: EXECUTOR_HOOK,
     WEBHOOK_TIMEOUT: 5,
   },
+
+  // ─── MEXC: мягкий fallback-фильтр ───────────────────────────
+  MEXC_ALT: {
+    ENABLED: true,
+    STATE_KEY: "signal_state_mexc_alt_v1",
+    WINDOW_MINUTES: 2,
+    APPLY_TIME_BLOCK: true,
+    LIMITS: {
+      ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 3 },
+      BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 2 },
+    },
+  },
+
+  // ─── ВЕТКА PREMIUM (v3.9.7) ─────────────────────────────────
+  PREMIUM: {
+    ENABLED: true,
+    STATE_KEY: "signal_state_premium_v1",
+    CHAT_ID_PROP: "PREMIUM_TELEGRAM_CHAT_ID",
+    BOT_TOKEN_PROP: "PREMIUM_TELEGRAM_BOT_TOKEN",
+
+    ALL_DAY_DAYS:   WEEKEND,
+    EVENING_DAYS:   ["Mon", "Tue", "Wed"],
+    EVENING_HOURS:  [17, 18, 20, 21],
+
+    APPLY_TIME_BLOCK: true,
+
+    WINDOW_MINUTES: 1,
+    CONFLICT_MINUTES: 10,
+    ENABLE_CONFLICT: true,
+    LIMITS: {
+      ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 3 },
+      BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 2 },
+    },
+    GLOBAL_CAP: { ENABLED: true, MAX_OPEN: 5, WINDOW_MINUTES: 11 },
+
+    PARTNER_TAG: "Premium",
+    HEADER: "",
+  },
+
+  // ─── BTC DOWN: особые правила (v3.9.10) ─────────────────────
+  BTC_DOWN: {
+    ENABLED: false,
+    EXEMPT_FROM_TIME_BLOCK: false,
+    MAX_CONCURRENT: 2,
+    EXPIRY_MINUTES: 10,
+  },
+
+  // ─── Формат ReceivedAt (v3.9.9) ─────────────────────────────
+  RECEIVED_AT_FORMAT: "utc",
 
   // ─── Надёжность записи ───
   WRITE_RETRIES: 3,
   WRITE_RETRY_SLEEP_MS: 350,
 
-  // ─── Partner webhook (v3.9.4: один хук, разные теги) ───
-  // Партнёр получает разные потоки на ОДИН URL и различает их по полю
-  // "timing". У каждого потока свой переключатель в PARTNER_STREAMS.
+  // ─── Partner webhook: один хук, разные теги ───
   PARTNER_WEBHOOK_URL: "https://signalapiwebhook1312.win/webhook/signal/74f9addb559e663d75047ed9d250edf6e526510cd47440be",
-  PARTNER_WEBHOOK_ENABLED: true,  // мастер-выключатель всей отправки партнёру
-  PARTNER_WEBHOOK_TIMEOUT: 10,    // секунд
+  PARTNER_WEBHOOK_ENABLED: true,
+  PARTNER_WEBHOOK_TIMEOUT: 10,
   PARTNER_STREAMS: {
-    "10m":      true,    // PRO (основная ветка) - как было
-    "ALT10m":   false,   // из BLOCKEDsignal (свои фильтры - CONFIG.ALT10M)
-    "MEXC_10m": false,   // MEXC 10-мин - пока НЕ слать партнёру
-    "MEXC_30m": false,   // MEXC 30-мин - пока НЕ слать партнёру
+    "10m":      true,
+    "ALT10m":   true,
+    "MEXC_10m": true,
+    "MEXC_30m": true,
+    "Premium":  false,
   },
 
-  // ─── Ветка ALT10m (v3.9.4): фильтрованный поток из BLOCKEDsignal ───
-  // Работает с сигналами, ЗАБЛОКИРОВАННЫМИ основной веткой. Свои, более
-  // мягкие лимиты (окно 2 мин, ETH 3 / BTC 2, одинаковых цен ≤2).
-  // Прошедшие фильтр → в Telegram-группу ALT10m (Script Properties
-  // ALT_TELEGRAM_CHAT_ID + ALT_TELEGRAM_BOT_TOKEN; пусто в токене =
-  // основной бот) и партнёру с тегом "ALT10m" (если PARTNER_STREAMS).
-  // Каждый прошедший помечается словом "ALT10m" в отдельной колонке
-  // листа BLOCKEDsignal. 30-минутки MEXC сюда не попадают.
+  // ─── Ветка ALT10m: фильтрованный поток из BLOCKEDsignal ───
   ALT10M: {
-    ENABLED: false,                       // мастер-переключатель ветки
+    ENABLED: true,
     STATE_KEY: "signal_state_alt10m_v1",
-    WINDOW_MINUTES: 2,                    // окно/интервал лимитов
+    WINDOW_MINUTES: 2,
+    APPLY_TIME_BLOCK: true,
     LIMITS: {
-      ETH: { MAX_SIGNALS_PER_WINDOW: 3, MAX_SAME_PRICE: 2 },
-      BTC: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 2 },
+      ETH: { MAX_SIGNALS_PER_WINDOW: 2, MAX_SAME_PRICE: 4 },
+      BTC: { MAX_SIGNALS_PER_WINDOW: 1, MAX_SAME_PRICE: 2 },
     },
-    BOT_TOKEN_PROP: "ALT_TELEGRAM_BOT_TOKEN",  // пусто = основной бот
-    CHAT_ID_PROP: "ALT_TELEGRAM_CHAT_ID",      // пусто = не слать в ТГ
+    BOT_TOKEN_PROP: "ALT_TELEGRAM_BOT_TOKEN",
+    CHAT_ID_PROP: "ALT_TELEGRAM_CHAT_ID",
   },
 
 };
@@ -375,11 +353,96 @@ function getProp_(key) {
   return v;
 }
 
+// ─── ОПРЕДЕЛЕНИЕ АКТИВА (v3.9.11) ────────────────────────────
+// Единая точка распознавания актива по тикеру. Раньше это делала
+// бинарная тернарная строка (indexOf("BTC") ? BTC : ETH), из-за
+// которой любой тикер без "BTC" (в т.ч. SPCX) молча становился ETH.
+// Фолбэк по-прежнему ETH, чтобы поведение для старых тикеров
+// не менялось.
+function assetOf_(data) {
+  const t = String((data && data.ticker) || "").toUpperCase();
+  if (t.indexOf("BTC")  >= 0) return "BTC";
+  if (t.indexOf("ETH")  >= 0) return "ETH";
+  if (t.indexOf("SPCX") >= 0) return "SPCX";
+  return "ETH";   // фолбэк для неизвестного тикера
+}
+
+// ─── ВРЕМЯ (v3.9.9) ──────────────────────────────────────────
+function stampIso_(d) {
+  const dt = d || new Date();
+  if (CONFIG.RECEIVED_AT_FORMAT === "utc") {
+    return dt.toISOString();                    // 2026-08-05T07:30:07.526Z
+  }
+  const base = Utilities.formatDate(dt, "Europe/Warsaw", "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const off = Utilities.formatDate(dt, "Europe/Warsaw", "Z");      // "+0200"
+  return base + off.slice(0, 3) + ":" + off.slice(3);              // "+02:00"
+}
+
+function rowTime_(data) {
+  return (data && data._rowTime) ? data._rowTime : new Date();
+}
+
+// ─── ОКНА ВРЕМЕНИ (F7) ───────────────────────────────────────
+function isBtcDown_(data) {
+  if (!data) return false;
+  const asset = assetOf_(data);
+  if (asset !== "BTC") return false;
+  const d = String(data.direction || "").toUpperCase();
+  return d === "DOWN" || d === "SELL";
+}
+
+function timeBlockReason_(now, data) {
+  const wb = CONFIG.TIME_BLOCK;
+  if (!wb || !wb.ENABLED) return null;
+  const bd = CONFIG.BTC_DOWN;
+  const exemptBtcDown = !!(bd && bd.ENABLED && bd.EXEMPT_FROM_TIME_BLOCK &&
+                           isBtcDown_(data));
+  const dow = Utilities.formatDate(now, "Europe/Warsaw", "EEE");   // Mon..Sun
+  const h = parseInt(Utilities.formatDate(now, "Europe/Warsaw", "H"), 10);
+  const m = parseInt(Utilities.formatDate(now, "Europe/Warsaw", "m"), 10);
+  const nowMin = h * 60 + m;
+  const toMin = (hhmm) => { const p = String(hhmm).split(":"); return (+p[0]) * 60 + (+p[1]); };
+  for (const win of (wb.WINDOWS || [])) {
+    if (exemptBtcDown && !win.strict) continue;
+    const days = win.days || wb.DAYS || [];
+    if (days.indexOf(dow) < 0) continue;
+    const a = toMin(win.from), b = toMin(win.to);
+    const inWin = (a <= b) ? (nowMin >= a && nowMin <= b) : (nowMin >= a || nowMin <= b);
+    if (inWin)
+      return "F7: " + dow + " " + pad_(h) + ":" + pad_(m) +
+             " (окно " + win.from + "-" + win.to + ")";
+  }
+  return null;
+}
+
+// ─── ТОРГОВАЯ СЕССИЯ АКТИВА (F-SES, v3.9.12) ─────────────────
+// Белый список часов, привязанный к активу. Возвращает строку-
+// причину, если сигнал ВНЕ сессии (нужно блокировать), иначе null.
+// Активы без записи в CONFIG.ASSET_SESSION не ограничиваются.
+// Время и дни считаются в поясе актива (cfg.TZ), а не в Варшаве, -
+// иначе окно "плавало" бы из-за разницы DST США/ЕС.
+function assetSessionReason_(now, data) {
+  const asset = assetOf_(data);
+  const cfg = CONFIG.ASSET_SESSION && CONFIG.ASSET_SESSION[asset];
+  if (!cfg || !cfg.ENABLED) return null;      // актив без ограничения
+  const tz = cfg.TZ || "America/New_York";
+  const dow = Utilities.formatDate(now, tz, "EEE");         // Mon..Sun в поясе биржи
+  const days = cfg.DAYS || WEEKDAYS;
+  if (days.indexOf(dow) < 0)
+    return "SES: " + asset + " вне торговых дней (" + dow + " " + tz + ")";
+  const h = parseInt(Utilities.formatDate(now, tz, "H"), 10);
+  const m = parseInt(Utilities.formatDate(now, tz, "m"), 10);
+  const nowMin = h * 60 + m;
+  const toMin = (hhmm) => { const p = String(hhmm).split(":"); return (+p[0]) * 60 + (+p[1]); };
+  const a = toMin(cfg.FROM), b = toMin(cfg.TO);
+  const inSession = (a <= b) ? (nowMin >= a && nowMin <= b) : (nowMin >= a || nowMin <= b);
+  if (!inSession)
+    return "SES: " + asset + " вне сессии " + cfg.FROM + "-" + cfg.TO + " " + tz +
+           " (сейчас " + pad_(h) + ":" + pad_(m) + ")";
+  return null;
+}
+
 // ─── DEV_BADLIST: загрузка списка карантина ──────────────────
-// Вызывается ДО лока. Обычный путь - мгновенный (CacheService);
-// чтение вкладки происходит максимум раз в CACHE_TTL_SEC.
-// Любой сбой = пустой список (fail-open): карантин тихо пропускается,
-// сигналы идут как обычно - основной поток важнее фильтра.
 function loadBadlist_() {
   if (!CONFIG.BADLIST.ENABLED) return [];
   try {
@@ -404,25 +467,12 @@ function loadBadlist_() {
   }
 }
 
-// Сброс кэша списка (запустить руками, если нужно применить свежий
-// DEV_BADLIST немедленно, не дожидаясь истечения часа).
 function resetBadlistCache() {
   CacheService.getScriptCache().remove(CONFIG.BADLIST.CACHE_KEY);
   console.log("Badlist cache reset OK");
 }
 
-// ─── MEXC PAYOUT (v3.9) ──────────────────────────────────────
-// Значения хранятся в Script Property PAYOUT_PROP в виде
-// {ETH:{p:80,t:169...,src:"monitor"}, BTC:{...}} (t - millis записи).
-// Быстрый путь - CacheService; fail-open как у бэдлиста: любой
-// сбой чтения = {} (payout неизвестен, дальше решает FAIL_OPEN).
-//
-// Payout плавает каждые ~30 секунд, поэтому здесь же - ДОЖИМ до
-// свежести: если по активу задан URL и сохранённое значение старше
-// PAYOUT_FRESH_SEC (или ручное - его монитор обновляет всегда,
-// когда есть URL), тянем свежее прямо сейчас. Вызов идёт из
-// Фазы 0 doPost (ВНЕ лока), так что сеть не попадает в критическую
-// секцию. Сбой запроса = остаёмся на сохранённом значении.
+// ─── MEXC PAYOUT ─────────────────────────────────────────────
 function getMexcPayout_() {
   try {
     const cache = CacheService.getScriptCache();
@@ -442,15 +492,11 @@ function getMexcPayout_() {
   }
 }
 
-// Дожим свежести: если хоть одному активу больше PAYOUT_FRESH_SEC,
-// один запрос к PAYOUT_URL обновляет ОБА (endpoint отдаёт все
-// контракты разом). Возвращает обновлённый объект или null.
-// savePayout_ по пути пишет историю и шлёт алерты.
 function refreshPayoutIfStale_(val) {
   if (!CONFIG.MEXC.PAYOUT_URL) return null;
   const nowMs = Date.now();
   let stale = false;
-  for (const asset of ["ETH", "BTC"]) {
+  for (const asset of ["ETH", "BTC", "SPCX"]) {
     for (const tf of CONFIG.MEXC.TIMINGS) {
       const rec = val && val[asset + "@" + tf];
       if (!rec || nowMs - (rec.t || 0) > CONFIG.MEXC.PAYOUT_FRESH_SEC * 1000) { stale = true; break; }
@@ -460,7 +506,6 @@ function refreshPayoutIfStale_(val) {
   if (!stale) return null;
   let got = null;
   try { got = fetchEventPayouts_(); }
-  // (один запрос даёт все активы и таймфреймы разом)
   catch (err) { console.error("payout refresh failed:", err); return null; }
   if (!got || !Object.keys(got).length) return null;
   savePayout_(got, "monitor");
@@ -470,23 +515,13 @@ function refreshPayoutIfStale_(val) {
   } catch (err) { return null; }
 }
 
-// Тайминг отработки сигнала (минуты, 10 или 30): из поля "timing"
-// алерта TradingView. Принимает любую форму, содержащую число:
-// "MEXC _30m", "30", 30, "30 min" → 30; всё остальное (в т.ч.
-// "10m", "MEXC _10m", отсутствие поля) → 10.
 function mexcTiming_(data) {
   const s = String((data && (data.timing || data.mexc_tf)) || "");
   return /30/.test(s) ? 30 : 10;
 }
 
-// Метка тайминга для листа MEXC: "MEXC _10m" / "MEXC _30m"
-// (пробел и подчёркивание - как в JSON-алертах TradingView).
 function mexcTimingLabel_(tf) { return "MEXC _" + tf + "m"; }
 
-// ─── MEXC-хук (v3.9.2): как sendPartnerWebhook, но для ветки MEXC ──
-// Вызывается только для ПРИНЯТЫХ веткой MEXC сигналов. Тот же формат
-// payload, что у партнёра, плюс timing-метка и текущий payout.
-// Возвращает заметку для лога ответа ("off" / "http 200").
 function sendMexcWebhook_(data, label, payoutVal) {
   if (!CONFIG.MEXC.WEBHOOK_ENABLED || !CONFIG.MEXC.WEBHOOK_URL) return "off";
   const payload = {
@@ -496,9 +531,9 @@ function sendMexcWebhook_(data, label, payoutVal) {
     volume:     data.volume     || "",
     text:       data.text       || "",
     bartime:    data.bartime    || "",
-    timing:     label,                  // "MEXC _10m" / "MEXC _30m"
-    payout:     payoutVal,              // число % или null (неизвестен)
-    receivedAt: data.receivedAt || new Date().toISOString(),   // время прихода, до мс (UTC)
+    timing:     label,
+    payout:     payoutVal,
+    receivedAt: data.receivedAt || stampIso_(),
   };
   const resp = UrlFetchApp.fetch(CONFIG.MEXC.WEBHOOK_URL, {
     method: "post", contentType: "application/json",
@@ -508,11 +543,13 @@ function sendMexcWebhook_(data, label, payoutVal) {
   return "http " + resp.getResponseCode();
 }
 
-// ─── Хук Toobit (v3.9.5): как sendMexcWebhook_, но для PRO-ветки ──
+// ─── Хук Toobit (v3.9.13): как sendMexcWebhook_, но для PRO-ветки ──
 // Вызывается только для ПРИНЯТЫХ основной веткой сигналов. Тело - в
 // точности партнёрское, с меткой потока "10m": по ней исполнитель
 // понимает, что это PRO-ветка и ставить надо на Toobit. Отдельного
-// поля с биржей не нужно - ветка MEXC шлёт свои метки.
+// поля с биржей не нужно - у ветки MEXC свои метки.
+// Payout не шлём: на Toobit его читает сам исполнитель со страницы,
+// здесь он неизвестен.
 // Возвращает заметку для лога ответа ("off" / "http 200").
 function sendToobitWebhook_(data) {
   if (!CONFIG.TOOBIT.ENABLED || !CONFIG.TOOBIT.WEBHOOK_URL) return "off";
@@ -524,7 +561,7 @@ function sendToobitWebhook_(data) {
     text:       data.text       || "",
     bartime:    data.bartime    || "",
     timing:     "10m",                     // метка потока: PRO
-    receivedAt: data.receivedAt || new Date().toISOString(),
+    receivedAt: data.receivedAt || stampIso_(),
   };
   const resp = UrlFetchApp.fetch(CONFIG.TOOBIT.WEBHOOK_URL, {
     method: "post", contentType: "application/json",
@@ -536,17 +573,11 @@ function sendToobitWebhook_(data) {
   return "http " + code;
 }
 
-// Актуален ли payout по активу и таймингу: {known:bool, value:число %}.
-// dir ("UP"/"DOWN") выбирает ставку направления - у MEXC upPayRate и
-// downPayRate могут различаться; без dir берётся худшая из двух.
-// known=false и когда данных нет, и когда они старше PAYOUT_STALE_MIN.
-// Ручной ввод (src="manual") НЕ протухает: значение действует,
-// пока его не сменят - иначе пришлось бы перевводить каждые 15 мин.
 function mexcPayoutFor_(payout, asset, nowMs, dir, timing) {
   const key = asset + "@" + (timing || CONFIG.MEXC.DEFAULT_TIMING);
-  const rec = payout && (payout[key] || payout[asset]);  // payout[asset] - старый формат
+  const rec = payout && (payout[key] || payout[asset]);
   if (!rec) return { known: false, value: null };
-  const up = typeof rec.up === "number" ? rec.up : rec.p;   // rec.p - старый формат
+  const up = typeof rec.up === "number" ? rec.up : rec.p;
   const down = typeof rec.down === "number" ? rec.down : rec.p;
   if (typeof up !== "number" && typeof down !== "number") return { known: false, value: null };
   const value = dir === "UP" ? up : (dir === "DOWN" ? down : Math.min(up, down));
@@ -556,11 +587,6 @@ function mexcPayoutFor_(payout, asset, nowMs, dir, timing) {
   return { known: typeof value === "number", value: value };
 }
 
-// Ручной ввод payout (%, число за актив; null/undefined - не менять).
-// Пример: setMexcPayoutManual(80, 76) - на ВСЕ таймфреймы;
-// setMexcPayoutManual(85, 85, 30) - только на 30-минутки.
-// Ставит одинаковое значение на оба направления. Работает и без
-// PAYOUT_URL - тогда это единственный источник данных для FM.
 function setMexcPayoutManual(ethPayout, btcPayout, timingOpt) {
   const timings = timingOpt ? [timingOpt] : CONFIG.MEXC.TIMINGS;
   const vals = {};
@@ -571,14 +597,12 @@ function setMexcPayoutManual(ethPayout, btcPayout, timingOpt) {
   savePayout_(vals, "manual");
 }
 
-// Общая запись payout: props + кэш + история + алерты на переходах.
-// newVals: {"ETH@10": число | {up,down}, "BTC@30": ...}.
 function savePayout_(newVals, source) {
   const props = PropertiesService.getScriptProperties();
   let cur = {};
   try { cur = JSON.parse(props.getProperty(CONFIG.MEXC.PAYOUT_PROP) || "{}"); } catch (e) {}
   const nowMs = Date.now();
-  const norm1 = (v) => v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10; // 0.8 → 80
+  const norm1 = (v) => v <= 1 ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10;
   const changed = [];
   for (const key in newVals) {
     let v = newVals[key];
@@ -588,7 +612,7 @@ function savePayout_(newVals, source) {
     const up = norm1(v.up), down = norm1(v.down);
     const prevRec = cur[key] || {};
     const prevMin = typeof prevRec.up === "number"
-      ? Math.min(prevRec.up, prevRec.down) : prevRec.p;   // p - старый формат
+      ? Math.min(prevRec.up, prevRec.down) : prevRec.p;
     cur[key] = { up: up, down: down, t: nowMs, src: source || "" };
     if (prevRec.up !== up || prevRec.down !== down)
       changed.push({ asset: key.replace("@", " ") + "м", prev: prevMin, next: Math.min(up, down), up: up, down: down });
@@ -597,7 +621,6 @@ function savePayout_(newVals, source) {
   try { CacheService.getScriptCache().put(CONFIG.MEXC.CACHE_KEY, JSON.stringify(cur), CONFIG.MEXC.CACHE_TTL_SEC); } catch (e) {}
 
   if (!changed.length) return;
-  // история (только при изменении значения - не раз в минуту)
   try {
     const ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
     const sh = getOrCreateSheet_(ss, CONFIG.MEXC.PAYOUT_SHEET_NAME, HDR_PAYOUT);
@@ -605,7 +628,6 @@ function savePayout_(newVals, source) {
       sh.appendRow([new Date(), c.asset, c.up === c.down ? c.up : (c.up + "/" + c.down), source || ""]);
     SpreadsheetApp.flush();
   } catch (err) { console.error("payout history write failed:", err); }
-  // алерты в группу MEXC на переходах через порог (по худшему направлению)
   if (CONFIG.MEXC.ALERTS_ENABLED) {
     const min = CONFIG.MEXC.MIN_PAYOUT;
     for (const c of changed) {
@@ -624,10 +646,6 @@ function savePayout_(newVals, source) {
   }
 }
 
-// Монитор payout: повесить time-триггер на 1 минуту (или 5).
-// Его роль - алерты и история в паузах между сигналами; свежесть
-// на самих решениях обеспечивает дожим в getMexcPayout_ (Фаза 0).
-// Если PAYOUT_URL пуст - тихо выходит (ручной режим).
 function mexcPayoutMonitor() {
   if (!CONFIG.MEXC.ENABLED) return;
   if (!CONFIG.MEXC.PAYOUT_URL) { console.log("mexcPayoutMonitor: PAYOUT_URL пуст - ручной режим"); return; }
@@ -637,12 +655,6 @@ function mexcPayoutMonitor() {
   refreshPayoutIfStale_(val);
 }
 
-// Один запрос к event_contract/detail →
-//   {"ETH@10":{up,down}, "ETH@30":{...}, "BTC@10":..., "BTC@30":...}.
-// Структуру ответа не завязываем на точную обёртку: ищем в дереве
-// узел с symbol=="ETH_USDT", в нём - массив TIME_UNIT ("MINUTE"),
-// в массиве - элементы с val из TIMINGS. Так парсер переживёт
-// перестановки полей в ответе MEXC.
 function fetchEventPayouts_() {
   const resp = UrlFetchApp.fetch(CONFIG.MEXC.PAYOUT_URL, {
     muteHttpExceptions: true,
@@ -656,7 +668,7 @@ function fetchEventPayouts_() {
   try { root = JSON.parse(body); }
   catch (err) { console.error("payout parse failed (не JSON):", body.slice(0, 200)); return null; }
   const out = {};
-  for (const asset of ["ETH", "BTC"]) {
+  for (const asset of ["ETH", "BTC", "SPCX"]) {
     const contract = findNodeWithSymbol_(root, CONFIG.MEXC.SYMBOLS[asset]);
     if (!contract) { console.error("payout: символ " + CONFIG.MEXC.SYMBOLS[asset] + " не найден в ответе"); continue; }
     const arr = findUnitArray_(contract, CONFIG.MEXC.TIME_UNIT);
@@ -671,7 +683,6 @@ function fetchEventPayouts_() {
   return out;
 }
 
-// DFS: первый узел дерева, у которого node.symbol === symbol.
 function findNodeWithSymbol_(node, symbol) {
   if (node == null || typeof node !== "object") return null;
   if (node.symbol === symbol) return node;
@@ -682,7 +693,6 @@ function findNodeWithSymbol_(node, symbol) {
   return null;
 }
 
-// DFS: первый массив под ключом unit ("MINUTE"/"HOUR"/"DAY") в поддереве.
 function findUnitArray_(node, unit) {
   if (node == null || typeof node !== "object") return null;
   if (Array.isArray(node[unit])) return node[unit];
@@ -693,9 +703,6 @@ function findUnitArray_(node, unit) {
   return null;
 }
 
-// Диагностика источника: запустить руками, смотрит сырой ответ.
-// Если в логе HTTP 403/лом - endpoint закрыт для серверов, остаёмся
-// на ручном вводе или мосте из браузера.
 function mexcPayoutProbe() {
   const got = fetchEventPayouts_();
   console.log("mexcPayoutProbe:", JSON.stringify(got));
@@ -703,9 +710,8 @@ function mexcPayoutProbe() {
 
 // ─── WEBHOOK HANDLER ─────────────────────────────────────────
 function doPost(e) {
-  // Время ПОСТУПЛЕНИЯ сигнала (UTC, до миллисекунд) - фиксируем в самом
-  // начале, до парсинга/лока/IO, чтобы отражало реальный момент прихода.
-  const receivedAt = new Date().toISOString();   // "2026-07-21T05:30:07.123Z"
+  const nowTs = new Date();
+  const receivedAt = stampIso_(nowTs);
   let data;
   try {
     data = JSON.parse(e.postData.contents);
@@ -717,20 +723,58 @@ function doPost(e) {
     return buildResponse("error", "unauthorized");
   }
   delete data.secret;
-  data.receivedAt = receivedAt;   // доступно в партнёрском и MEXC хуках
+  data.receivedAt = receivedAt;
+  data._rowTime = nowTs;
 
-  // ── Фаза 0: карантинный список (при BADLIST.ENABLED=false - мгновенно) ──
+  // ══ ГЛОБАЛЬНЫЙ ВРЕМЕННОЙ ГЕЙТ (v3.9.8) ══════════════════════
+  if (CONFIG.TIME_BLOCK.GLOBAL) {
+    const gateNow = data.bartime ? new Date(data.bartime) : new Date();
+    const gate = timeBlockReason_(gateNow, data);
+    if (gate) {
+      data.price  = (parseFloat(data.price)  || 0).toFixed(2);
+      data.volume = (parseFloat(data.volume) || 0).toFixed(2);
+      let gOK = false;
+      try {
+        const gss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
+        gOK = logBlocked_(gss, data, gate, "");
+      } catch (eg) {
+        console.error("гейт: запись в BLOCKEDsignal не удалась:", eg);
+        console.error("LOST PAYLOAD [гейт]:", JSON.stringify(data));
+      }
+      return buildResponse("blocked", gate + " [все ветки] (sheet:" + gOK + ")");
+    }
+  }
+
+  // ══ ГЕЙТ ТОРГОВОЙ СЕССИИ АКТИВА (v3.9.12) ═══════════════════
+  // SPCX (и любой актив из CONFIG.ASSET_SESSION) пропускается ТОЛЬКО
+  // в часы своей биржи. Работает независимо от TIME_BLOCK.GLOBAL и
+  // стоит до всех веток - обойти не может ни одна. Вне сессии -
+  // блок с причиной "SES: ..." и записью в BLOCKEDsignal.
+  {
+    const sesNow = data.bartime ? new Date(data.bartime) : new Date();
+    const ses = assetSessionReason_(sesNow, data);
+    if (ses) {
+      data.price  = (parseFloat(data.price)  || 0).toFixed(2);
+      data.volume = (parseFloat(data.volume) || 0).toFixed(2);
+      let sOK = false;
+      try {
+        const sss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
+        sOK = logBlocked_(sss, data, ses, "");
+      } catch (es) {
+        console.error("сессия: запись в BLOCKEDsignal не удалась:", es);
+        console.error("LOST PAYLOAD [сессия]:", JSON.stringify(data));
+      }
+      return buildResponse("blocked", ses + " [все ветки] (sheet:" + sOK + ")");
+    }
+  }
+
+  // ── Фаза 0: карантинный список ──
   const badlist = loadBadlist_();
   const mexcOn = CONFIG.MEXC.ENABLED;
-  // Сигналы с таймингом-эксклюзивом (30 мин) минуют основную ветку
   const mexcOnly = mexcOn &&
     CONFIG.MEXC.MEXC_ONLY_TIMINGS.indexOf(mexcTiming_(data)) >= 0;
 
-  // ══ ОСНОВНАЯ ВЕТКА (v3.9.3): решение → НЕМЕДЛЕННАЯ доставка ══
-  // PRO-группа и партнёр получают сигнал сразу после фильтров, НЕ
-  // дожидаясь payout MEXC, ветки MEXC и записей в листы. Заблокированный
-  // сигнал так же немедленно уходит в ALT-канал (если включён).
-  // Лок короткий и только вокруг решения (чтение/запись стейта).
+  // ══ ОСНОВНАЯ ВЕТКА: решение → НЕМЕДЛЕННАЯ доставка ══
   let decision = { status: "skipped", message: "MEXC-only timing" };
   let tgOK = true, partnerOK = true, altNote = "off", altMarker = "", toobitNote = "off";
   const lock = LockService.getScriptLock();
@@ -752,24 +796,26 @@ function doPost(e) {
 
     if (decision.status === "sent") {
       try { sendTelegram(data); } catch (e2) { tgOK = false; console.error("TG fail:", e2); }
-      // 10m → партнёр (тег "10m"), как было
       try { partnerOK = postPartner_(data, "10m").indexOf("error") < 0; }
       catch (e2) { partnerOK = false; console.error("Partner fail:", e2); }
-      // ...и тот же сигнал - исполнителю на Toobit. Отдельным хуком, а
-      // не потоком партнёра: у исполнителя свой URL и свой секрет.
+      // ...и тот же сигнал - исполнителю на Toobit (v3.9.13). Отдельным
+      // хуком, а не потоком партнёра: у исполнителя свой адрес и секрет.
       try { toobitNote = sendToobitWebhook_(data); }
       catch (e2) { toobitNote = "error"; console.error("Toobit fail:", e2); }
     } else {
-      // Ветка ALT10m: заблокированные основной веткой сигналы проходят
-      // свой фильтр; прошедшие → ТГ-группа ALT10m + партнёр (тег ALT10m).
-      // altMarker пишется в колонку ALT10m листа BLOCKEDsignal.
       try { const r = handleAlt10m_(data); altNote = r.note; altMarker = r.marker; }
       catch (e3) { altNote = "error"; console.error("ALT10m fail:", e3); }
     }
   }
 
-  // ══ ВЕТКА MEXC: payout (сеть, только если устарел) → решение → доставка ══
-  // Свой стейт и свой короткий лок; основная ветка уже доставлена.
+  // ══ ВЕТКА PREMIUM (v3.9.7) ══
+  let premNote = "off";
+  if (CONFIG.PREMIUM.ENABLED && !mexcOnly) {
+    try { premNote = handlePremium_(data); }
+    catch (eP) { premNote = "error"; console.error("Premium fail:", eP); }
+  }
+
+  // ══ ВЕТКА MEXC: payout → решение → доставка ══
   let decisionMexc = null, mexcDelivery = null;
   if (mexcOn) {
     const mexcPayout = getMexcPayout_();
@@ -777,6 +823,19 @@ function doPost(e) {
       try {
         decisionMexc = decideSignal_(data, badlist,
           { stateKey: CONFIG.MEXC.STATE_KEY, payout: mexcPayout });
+
+        if (decisionMexc.status === "blocked" &&
+            CONFIG.MEXC_ALT.ENABLED &&
+            decisionMexc.message.indexOf("FM:") !== 0) {
+          const altDecision = decideMexcAlt_(data);
+          if (altDecision.status === "sent") {
+            decisionMexc = {
+              status: "sent",
+              message: altDecision.message + " (fallback, основной MEXC: " + decisionMexc.message + ")",
+              viaAlt: true,
+            };
+          }
+        }
       } catch (errM) {
         console.error("decideSignal MEXC error:", errM);
         decisionMexc = null;
@@ -789,7 +848,6 @@ function doPost(e) {
   }
 
   // ══ Логирование в листы: ПОСЛЕ всех доставок ══
-  // Сбой листов больше не задерживает и не блокирует сигналы.
   let ss = null;
   try {
     ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
@@ -812,21 +870,18 @@ function doPost(e) {
     }
   }
 
-  // Эксклюзив MEXC: ответ только по ветке MEXC
   if (mexcOnly) {
     if (!decisionMexc) return buildResponse("error", "MEXC-only сигнал, но ветка MEXC не решила" + mexcNote);
     return buildResponse(decisionMexc.status,
       "MEXC-only (timing " + mexcTiming_(data) + ")" + mexcNote);
   }
+  const premTail = " | PREM " + premNote;
   if (decision.status === "sent")
-    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK
-      + ", partner:" + partnerOK + ", toobit:" + toobitNote + ")" + mexcNote);
-  return buildResponse("blocked", decision.message + " (sheet:" + sheetOK + ", alt:" + altNote + ")" + mexcNote);
+    return buildResponse("sent", decision.message + " (tg:" + tgOK + ", sheet:" + sheetOK + ", partner:" + partnerOK + ", toobit:" + toobitNote + ")" + mexcNote + premTail);
+  return buildResponse("blocked", decision.message + " (sheet:" + sheetOK + ", alt:" + altNote + ")" + mexcNote + premTail);
 }
 
-// ─── Партнёрский хук: один URL, тег в поле "timing" (v3.9.4) ──
-// Возвращает заметку для лога: "off" / "off:<tag>" / "http NNN".
-// Гейт: мастер PARTNER_WEBHOOK_ENABLED + PARTNER_STREAMS[tag].
+// ─── Партнёрский хук: один URL, тег в поле "timing" ──────────
 function postPartner_(data, tag) {
   if (!CONFIG.PARTNER_WEBHOOK_ENABLED) return "off";
   if (!CONFIG.PARTNER_STREAMS[tag]) return "off:" + tag;
@@ -837,8 +892,8 @@ function postPartner_(data, tag) {
     volume:     data.volume     || "",
     text:       data.text       || "",
     bartime:    data.bartime    || "",
-    timing:     tag,                       // "10m"/"ALT10m"/"MEXC_10m"/"MEXC_30m"
-    receivedAt: data.receivedAt || new Date().toISOString(),
+    timing:     tag,
+    receivedAt: data.receivedAt || stampIso_(),
   };
   const resp = UrlFetchApp.fetch(CONFIG.PARTNER_WEBHOOK_URL, {
     method: "post", contentType: "application/json",
@@ -850,12 +905,9 @@ function postPartner_(data, tag) {
   return "http " + code;
 }
 
-// ─── Ветка ALT10m: решение + доставка (v3.9.4) ───────────────
-// Возвращает { note, marker }: note - для лога, marker - "ALT10m"
-// или "" (что писать в колонку ALT10m листа BLOCKEDsignal).
+// ─── Ветка ALT10m: решение + доставка ────────────────────────
 function handleAlt10m_(data) {
   if (!CONFIG.ALT10M.ENABLED) return { note: "off", marker: "" };
-  // решение под своим локом (свой стейт, без сетевого IO)
   const lock = LockService.getScriptLock();
   let d = null;
   if (lock.tryLock(25000)) {
@@ -868,7 +920,6 @@ function handleAlt10m_(data) {
   }
   if (!d || d.status !== "sent") return { note: (d ? d.message : "err"), marker: "" };
 
-  // прошёл фильтр ALT10m → доставка
   let tg = "-", partner = "-";
   const props = PropertiesService.getScriptProperties();
   const chatId = props.getProperty(CONFIG.ALT10M.CHAT_ID_PROP);
@@ -882,11 +933,15 @@ function handleAlt10m_(data) {
   return { note: "sent (tg:" + tg + ", partner:" + partner + ")", marker: "ALT10m" };
 }
 
-// Лёгкое решение ветки ALT10m: только окно + лимит одинаковой цены,
-// по своим лимитам (CONFIG.ALT10M). Без time-фильтров/карантина/капа.
 function decideAlt_(data) {
   const cfg = CONFIG.ALT10M;
   const now = data.bartime ? new Date(data.bartime) : new Date();
+
+  if (cfg.APPLY_TIME_BLOCK) {
+    const tb = timeBlockReason_(now, data);
+    if (tb) return { status: "blocked", message: "ALT-" + tb };
+  }
+
   const props = PropertiesService.getScriptProperties();
   const raw = props.getProperty(cfg.STATE_KEY);
   let state = raw ? JSON.parse(raw) : { sent: [] };
@@ -894,7 +949,7 @@ function decideAlt_(data) {
   const windowMs = cfg.WINDOW_MINUTES * 60 * 1000;
   state.sent = state.sent.filter(s => now.getTime() - s.t < windowMs);
 
-  const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
+  const asset = assetOf_(data);
   const dirUp = String(data.direction || "").toUpperCase();
   const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" : ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
   const price = (parseFloat(data.price) || 0).toFixed(2);
@@ -914,36 +969,173 @@ function decideAlt_(data) {
   return { status: "sent", message: "ALT10m " + asset + " " + dir };
 }
 
-// ─── MEXC: доставка (v3.9.3, БЕЗ листов - они пишутся позже) ──
-// Телеграм в группу MEXC + MEXC-хук. Возвращает объект с метками для
-// последующего логирования (mexcLogSheet_).
+// ─── ВЕТКА PREMIUM (v3.9.7) ──────────────────────────────────
+function premiumScheduleReason_(now) {
+  const cfg = CONFIG.PREMIUM;
+  const dow = Utilities.formatDate(now, "Europe/Warsaw", "EEE");
+  if ((cfg.ALL_DAY_DAYS || []).indexOf(dow) >= 0) return null;
+  if ((cfg.EVENING_DAYS || []).indexOf(dow) >= 0) {
+    const h = parseInt(Utilities.formatDate(now, "Europe/Warsaw", "H"), 10);
+    if ((cfg.EVENING_HOURS || []).indexOf(h) >= 0) return null;
+    return "PREM-расписание: " + dow + " " + pad_(h) + "h (нужны часы " +
+           cfg.EVENING_HOURS.join(",") + ")";
+  }
+  return "PREM-расписание: " + dow + " не участвует";
+}
+
+function decidePremium_(data) {
+  const cfg = CONFIG.PREMIUM;
+  const now = data.bartime ? new Date(data.bartime) : new Date();
+
+  if (!CONFIG.TIME_BLOCK.GLOBAL && cfg.APPLY_TIME_BLOCK) {
+    const tb = timeBlockReason_(now, data);
+    if (tb) return { status: "blocked", message: "PREM-" + tb };
+  }
+
+  const sched = premiumScheduleReason_(now);
+  if (sched) return { status: "blocked", message: sched };
+
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(cfg.STATE_KEY);
+  let state = raw ? JSON.parse(raw) : { sent: [] };
+  if (!state.sent) state.sent = [];
+
+  const nowMs = now.getTime();
+  const windowMs = cfg.WINDOW_MINUTES * 60 * 1000;
+  const confMs = cfg.CONFLICT_MINUTES * 60 * 1000;
+  const capMs = cfg.GLOBAL_CAP.WINDOW_MINUTES * 60 * 1000;
+  const keepMs = Math.max(windowMs, confMs, cfg.GLOBAL_CAP.ENABLED ? capMs : 0);
+  state.sent = state.sent.filter(s => nowMs - s.t < keepMs);
+
+  const asset = assetOf_(data);
+  const dirUp = String(data.direction || "").toUpperCase();
+  const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" :
+              ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
+  const price = (parseFloat(data.price) || 0).toFixed(2);
+  const lim = cfg.LIMITS[asset] || cfg.LIMITS.ETH;
+  const save = () => props.setProperty(cfg.STATE_KEY, JSON.stringify(state));
+  const blocked = (msg) => { save(); return { status: "blocked", message: msg }; };
+
+  const sameAsset = state.sent.filter(s => s.asset === asset);
+  if (cfg.ENABLE_CONFLICT &&
+      sameAsset.some(s => s.dir !== dir && nowMs - s.t < confMs))
+    return blocked("PREM-конфликт " + asset + " за " + cfg.CONFLICT_MINUTES + " мин");
+  if (cfg.GLOBAL_CAP.ENABLED) {
+    const inCap = state.sent.filter(s => nowMs - s.t < capMs).length;
+    if (inCap >= cfg.GLOBAL_CAP.MAX_OPEN)
+      return blocked("PREM-кап " + inCap + "/" + cfg.GLOBAL_CAP.MAX_OPEN +
+                     " за " + cfg.GLOBAL_CAP.WINDOW_MINUTES + " мин");
+  }
+  const sw = sameAsset.filter(s => nowMs - s.t < windowMs);
+  if (sw.length >= lim.MAX_SIGNALS_PER_WINDOW)
+    return blocked("PREM-окно " + asset + " (" + sw.length + "/" +
+                   lim.MAX_SIGNALS_PER_WINDOW + ")");
+  const samePrice = sw.filter(s => s.price === price).length;
+  if (samePrice >= lim.MAX_SAME_PRICE)
+    return blocked("PREM-цена " + asset + " " + price + " (" + samePrice + "/" +
+                   lim.MAX_SAME_PRICE + ")");
+
+  state.sent.push({ t: nowMs, price: price, dir: dir, asset: asset });
+  save();
+  return { status: "sent", message: "Premium " + asset + " " + dir +
+                                     " #" + (sw.length + 1) };
+}
+
+function handlePremium_(data) {
+  const cfg = CONFIG.PREMIUM;
+  if (!cfg.ENABLED) return "off";
+  const lock = LockService.getScriptLock();
+  let d = null;
+  if (lock.tryLock(25000)) {
+    try { d = decidePremium_(data); }
+    catch (err) { console.error("decidePremium error:", err); d = null; }
+    lock.releaseLock();
+  } else {
+    console.error("Premium lock timeout - пропуск");
+    return "lock-timeout";
+  }
+  if (!d) return "err";
+  if (d.status !== "sent") return d.message;
+
+  let tg = "-", partner = "-";
+  const props = PropertiesService.getScriptProperties();
+  const chatId = props.getProperty(cfg.CHAT_ID_PROP);
+  if (chatId) {
+    const token = props.getProperty(cfg.BOT_TOKEN_PROP);
+    const text = (cfg.HEADER ? cfg.HEADER + "\n" : "") +
+                 (data.text || "Signal received");
+    try { sendTelegram({ text: text }, chatId, token || null); tg = "ok"; }
+    catch (e) { tg = "err"; console.error("Premium TG fail:", e); }
+  } else { tg = "no-chat"; }
+  try { partner = postPartner_(data, cfg.PARTNER_TAG); }
+  catch (e) { partner = "err"; console.error("Premium partner fail:", e); }
+  return "sent (tg:" + tg + ", partner:" + partner + ")";
+}
+
+// ─── MEXC: мягкий fallback-фильтр ────────────────────────────
+function decideMexcAlt_(data) {
+  const cfg = CONFIG.MEXC_ALT;
+  const now = data.bartime ? new Date(data.bartime) : new Date();
+
+  if (cfg.APPLY_TIME_BLOCK) {
+    const tb = timeBlockReason_(now, data);
+    if (tb) return { status: "blocked", message: "MEXC_ALT-" + tb };
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(cfg.STATE_KEY);
+  let state = raw ? JSON.parse(raw) : { sent: [] };
+  if (!state.sent) state.sent = [];
+  const windowMs = cfg.WINDOW_MINUTES * 60 * 1000;
+  state.sent = state.sent.filter(s => now.getTime() - s.t < windowMs);
+
+  const asset = assetOf_(data);
+  const dirUp = String(data.direction || "").toUpperCase();
+  const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" : ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
+  const price = (parseFloat(data.price) || 0).toFixed(2);
+  const lim = cfg.LIMITS[asset] || cfg.LIMITS.ETH;
+  const sameAsset = state.sent.filter(s => s.asset === asset);
+  const save = () => props.setProperty(cfg.STATE_KEY, JSON.stringify(state));
+
+  if (sameAsset.length >= lim.MAX_SIGNALS_PER_WINDOW) {
+    save(); return { status: "blocked", message: "MEXC_ALT-окно " + asset + " (" + sameAsset.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")" };
+  }
+  const samePrice = sameAsset.filter(s => s.price === price).length;
+  if (samePrice >= lim.MAX_SAME_PRICE) {
+    save(); return { status: "blocked", message: "MEXC_ALT-цена " + asset + " (" + samePrice + "/" + lim.MAX_SAME_PRICE + ")" };
+  }
+  state.sent.push({ t: now.getTime(), price: price, dir: dir, asset: asset });
+  save();
+  return { status: "sent", message: "MEXC_ALT " + asset + " " + dir };
+}
+
+// ─── MEXC: доставка (БЕЗ листов - они пишутся позже) ─────────
 function mexcDeliver_(data, decisionMexc, payout) {
-  // то же время, что и в decideSignal_ - payout в строке лога
-  // соответствует значению, по которому принималось решение
   const nowMs = (data.bartime ? new Date(data.bartime) : new Date()).getTime();
-  const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
+  const asset = assetOf_(data);
   const dirUp = String(data.direction || "").toUpperCase();
   const dir = (dirUp === "UP" || dirUp === "BUY") ? "UP" :
               ((dirUp === "DOWN" || dirUp === "SELL") ? "DOWN" : "?");
   const timing = mexcTiming_(data);
-  const tLabel = mexcTimingLabel_(timing);   // "MEXC _10m" / "MEXC _30m"
+  const tLabel = mexcTimingLabel_(timing);
   const pv = mexcPayoutFor_(payout, asset, nowMs, dir, timing);
   const out = { tLabel: tLabel, pvCell: (pv.known ? pv.value : ""), tgOK: true, hookNote: "off", partnerNote: "off" };
   if (decisionMexc.status !== "sent") return out;
 
-  // Короткий формат для группы MEXC: шапка (тайминг + актив +
-  // направление) и цена - без полного текста сигнала.
-  // 10м и 30м различаются эмодзи (TIMING_EMOJI).
   const arrow = dir === "UP" ? "📈" : (dir === "DOWN" ? "📉" : "");
+  const dirDot = CONFIG.MEXC.DIR_EMOJI[dir] || "";
+  const assetDot = CONFIG.MEXC.ASSET_EMOJI[asset] || "";
   const emoji = CONFIG.MEXC.TIMING_EMOJI[timing] || "⏱";
-  const header = emoji + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + arrow;
-  const mexcText = header + "\n💰 Price: " + (data.price || "-");
+  const altTag = decisionMexc.viaAlt ? " ⚫" : "";
+  const header = emoji + assetDot + " <b>" + timing + " MIN | " + asset + " " + dir + "</b> " + dirDot + arrow + altTag;
+  let mexcText = header + "\n💰 Price: " + (data.price || "-");
+  if (asset === "BTC" && CONFIG.MEXC.BTC_FRAME) {
+    mexcText = CONFIG.MEXC.BTC_FRAME + "\n" + mexcText + "\n" + CONFIG.MEXC.BTC_FRAME;
+  }
   try { sendTelegram({ text: mexcText }, getProp_(CONFIG.MEXC.CHAT_ID_PROP)); }
   catch (e2) { out.tgOK = false; console.error("MEXC TG fail:", e2); }
-  // MEXC-хук (отдельный получатель/исполнитель); сбой не мешает потоку
   try { out.hookNote = sendMexcWebhook_(data, tLabel, pv.known ? pv.value : null); }
   catch (eX) { out.hookNote = "error"; console.error("MEXC hook fail:", eX); }
-  // Партнёрский хук с тегом MEXC_10m / MEXC_30m (по умолчанию выключен)
   try { out.partnerNote = postPartner_(data, "MEXC_" + timing + "m"); }
   catch (eP) { out.partnerNote = "error"; console.error("MEXC partner fail:", eP); }
   return out;
@@ -954,28 +1146,26 @@ function mexcLogSheet_(ss, data, decisionMexc, d) {
   if (decisionMexc.status === "sent") {
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
     const okW = appendRowSafe_(sheet, [
-      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      rowTime_(data), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      data.direction1 || "", data.direction2 || "", d.pvCell, d.tLabel
+      data.direction1 || "", data.direction2 || "", d.pvCell, d.tLabel,
+      decisionMexc.viaAlt ? "ALT" : "",
+      data.receivedAt || ""
     ]);
     return "sent: " + decisionMexc.message + " (tg:" + d.tgOK + ", sheet:" + okW + ", hook:" + d.hookNote + ", partner:" + d.partnerNote + ")";
   } else {
     const sheet = getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
     const okB = appendRowSafe_(sheet, [
-      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      rowTime_(data), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      decisionMexc.message, d.pvCell, d.tLabel
+      decisionMexc.message, d.pvCell, d.tLabel,
+      data.receivedAt || ""
     ]);
     return "blocked: " + decisionMexc.message + " (sheet:" + okB + ")";
   }
 }
 
 // ─── РЕШЕНИЕ (под локом, без сетевого IO) ───────────────────
-// branch (v3.9, необязателен) - параметры ветки:
-//   { stateKey: "signal_state_mexc_v1", payout: {ETH:{p,t},BTC:{p,t}} }
-// Без branch работает основная ветка (stateKey "signal_state_v2",
-// payout-фильтра нет). Каждая ветка копит СВОЙ список принятых:
-// лимиты F4/F5/F8 и конфликт FC считаются только по своим сигналам.
 function decideSignal_(data, badlist, branch) {
   const stateKey = (branch && branch.stateKey) || "signal_state_v2";
   const now = data.bartime ? new Date(data.bartime) : new Date();
@@ -985,23 +1175,21 @@ function decideSignal_(data, badlist, branch) {
   let state = stateRaw ? JSON.parse(stateRaw) : { sent: [] };
   if (!state.sent) state.sent = [];
 
-  // v3.8: стейт храним на МАКСИМАЛЬНЫЙ из горизонтов фильтров
-  // (кап 11 мин > конфликт 10 мин > окно лимитов 5 мин);
-  // каждый фильтр ниже режет список по своему сроку сам.
   const windowMs = CONFIG.WINDOW_MINUTES * 60 * 1000;
   const capMs = CONFIG.GLOBAL_CAP.WINDOW_MINUTES * 60 * 1000;
+  const bdMs = (CONFIG.BTC_DOWN && CONFIG.BTC_DOWN.ENABLED)
+    ? CONFIG.BTC_DOWN.EXPIRY_MINUTES * 60 * 1000 : 0;
   const keepMs = Math.max(windowMs, CONFIG.CONFLICT_MINUTES * 60 * 1000,
-                          CONFIG.GLOBAL_CAP.ENABLED ? capMs : 0);
+                          CONFIG.GLOBAL_CAP.ENABLED ? capMs : 0, bdMs);
   state.sent = state.sent.filter(s => now.getTime() - s.t < keepMs);
 
   const direction = (data.direction || "").toUpperCase();
   const isUp = (direction === "UP" || direction === "BUY");
   const isDown = (direction === "DOWN" || direction === "SELL");
   const dir = isUp ? "UP" : (isDown ? "DOWN" : "?");
-  const asset = (data.ticker || "").indexOf("BTC") >= 0 ? "BTC" : "ETH";
+  const asset = assetOf_(data);
   const settings = data.Settings || "";
 
-  // лимиты выбираются ПО АКТИВУ
   const lim = CONFIG.LIMITS[asset] || CONFIG.LIMITS.ETH;
 
   const currentHour = parseInt(Utilities.formatDate(now, "Europe/Warsaw", "H"));
@@ -1017,10 +1205,7 @@ function decideSignal_(data, badlist, branch) {
     return { status: "blocked", message: msg };
   };
 
-  // FM (v3.9, только ветка MEXC): блок при payout ниже порога.
-  // Заблокированный здесь сигнал НЕ попадает в стейт ветки, поэтому
-  // не съедает её лимиты - после возврата payout к порогу ветка
-  // принимает сигналы так, будто паузы не было.
+  // FM (только ветка MEXC): блок при payout ниже порога.
   if (branch && branch.payout !== undefined) {
     const timing = mexcTiming_(data);
     const pv = mexcPayoutFor_(branch.payout, asset, now.getTime(), dir, timing);
@@ -1030,37 +1215,18 @@ function decideSignal_(data, badlist, branch) {
     } else if (!CONFIG.MEXC.FAIL_OPEN) {
       return blocked("FM: payout " + asset + " неизвестен (монитор молчит), FAIL_OPEN=false");
     }
-    // payout неизвестен + FAIL_OPEN=true → фильтр тихо пропускается
   }
 
-  // F6: авто-карантин DEV_BADLIST - конфигурации, у которых WR за последние
-  // 4 дня ниже безубытка (список строит GitHub Actions каждое утро).
-  // Точное совпадение строки Settings: список формируется из этой же колонки.
-  // Карантинный сигнал уходит в BLOCKEDsignal и продолжает набирать
-  // статистику - реабилитация снимает карантин автоматически.
+  // F6: авто-карантин DEV_BADLIST
   if (badlist && badlist.length && settings) {
     if (badlist.indexOf(settings.trim()) >= 0) {
       return blocked("F6: авто-карантин DEV_BADLIST (WR 4д ниже безубытка)");
     }
   }
 
-  // F7: блокировка по дням недели и минутным окнам (Варшава) - оба направления
-  if (CONFIG.WEEKDAY_BLOCK.ENABLED) {
-    const wb = CONFIG.WEEKDAY_BLOCK;
-    const dow = Utilities.formatDate(now, "Europe/Warsaw", "EEE");   // Mon..Sun
-    if (wb.DAYS.indexOf(dow) >= 0) {
-      const nowMin = currentHour * 60 + currentMinute;               // минут от полуночи
-      const toMin = (hhmm) => { const p = String(hhmm).split(":"); return (+p[0]) * 60 + (+p[1]); };
-      for (const win of (wb.WINDOWS || [])) {
-        const a = toMin(win.from), b = toMin(win.to);
-        // обычное окно (a<=b) ИЛИ окно через полночь (a>b)
-        const inWin = (a <= b) ? (nowMin >= a && nowMin <= b) : (nowMin >= a || nowMin <= b);
-        if (inWin)
-          return blocked("F7: " + dow + " " + pad_(currentHour) + ":" + pad_(currentMinute) +
-                         " (окно " + win.from + "-" + win.to + ")");
-      }
-    }
-  }
+  // F7: блокировка по окнам времени (Варшава).
+  const tb = timeBlockReason_(now, data);
+  if (tb) return blocked(tb);
 
   // F1: DOWN 02-07
   if (CONFIG.ENABLE_DOWN_0207H && isDown && currentHour >= 2 && currentHour <= 7)
@@ -1077,8 +1243,6 @@ function decideSignal_(data, badlist, branch) {
     return blocked("F3: DOWN мин " + pad_(currentMinute) + " (50-54)");
 
   // ── дальше — счётчики ПО ТЕКУЩЕМУ АКТИВУ ──
-  // sameAsset - весь хранимый горизонт (для FD/FC с их сроками),
-  // sameAssetWin - только окно лимитов WINDOW_MINUTES (для F4/F5).
   const sameAsset = state.sent.filter(s => s.asset === asset);
   const sameAssetWin = sameAsset.filter(s => now.getTime() - s.t < windowMs);
 
@@ -1095,20 +1259,31 @@ function decideSignal_(data, badlist, branch) {
     if (sameAsset.some(s => s.dir !== dir && (now.getTime() - s.t) < conflictMs))
       return blocked("FC: конфликт по " + asset + " за " + CONFIG.CONFLICT_MINUTES + " мин");
   }
-  // F8: глобальный кап (v3.8) - суммарно по ОБОИМ активам за 11 мин
+  // F8: глобальный кап - суммарно по ОБОИМ активам
   if (CONFIG.GLOBAL_CAP.ENABLED) {
     const inCap = state.sent.filter(s => now.getTime() - s.t < capMs).length;
     if (inCap >= CONFIG.GLOBAL_CAP.MAX_OPEN)
       return blocked("F8: глобальный кап " + inCap + "/" + CONFIG.GLOBAL_CAP.MAX_OPEN +
                      " за " + CONFIG.GLOBAL_CAP.WINDOW_MINUTES + " мин");
   }
-  // F4: лимит окна (по активу)
-  if (sameAssetWin.length >= lim.MAX_SIGNALS_PER_WINDOW)
-    return blocked("F4: лимит окна " + asset + " (" + sameAssetWin.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")");
-  // F5: лимит цены (по активу)
-  const samePriceCount = sameAssetWin.filter(s => s.price === price).length;
-  if (samePriceCount >= lim.MAX_SAME_PRICE)
-    return blocked("F5: лимит цены " + asset + " " + price + " (" + samePriceCount + "/" + lim.MAX_SAME_PRICE + ")");
+  // ── BTC DOWN (v3.9.10): свой лимит ВМЕСТО F4/F5 ──
+  const bdCfg = CONFIG.BTC_DOWN;
+  if (bdCfg && bdCfg.ENABLED && asset === "BTC" && dir === "DOWN") {
+    const expMs = bdCfg.EXPIRY_MINUTES * 60 * 1000;
+    const openBd = state.sent.filter(s => s.asset === "BTC" && s.dir === "DOWN" &&
+                                          now.getTime() - s.t < expMs).length;
+    if (openBd >= bdCfg.MAX_CONCURRENT)
+      return blocked("F4bd: BTC DOWN в отработке " + openBd + "/" + bdCfg.MAX_CONCURRENT +
+                     " (экспирация " + bdCfg.EXPIRY_MINUTES + " мин)");
+  } else {
+    // F4: лимит окна (по активу)
+    if (sameAssetWin.length >= lim.MAX_SIGNALS_PER_WINDOW)
+      return blocked("F4: лимит окна " + asset + " (" + sameAssetWin.length + "/" + lim.MAX_SIGNALS_PER_WINDOW + ")");
+    // F5: лимит цены (по активу)
+    const samePriceCount = sameAssetWin.filter(s => s.price === price).length;
+    if (samePriceCount >= lim.MAX_SAME_PRICE)
+      return blocked("F5: лимит цены " + asset + " " + price + " (" + samePriceCount + "/" + lim.MAX_SAME_PRICE + ")");
+  }
 
   // Пропускаем
   state.sent.push({ t: now.getTime(), price: price, dir: dir, asset: asset });
@@ -1120,9 +1295,6 @@ function decideSignal_(data, badlist, branch) {
 function pad_(n) { return (n < 10 ? "0" : "") + n; }
 
 // ─── TELEGRAM ────────────────────────────────────────────────
-// chatIdOpt (v3.9): необязательный chat_id - для группы MEXC.
-// tokenOpt (v3.9.3): необязательный токен другого бота - для ALT-ветки.
-// Без них шлём основным ботом в основную группу, как раньше.
 function sendTelegram(data, chatIdOpt, tokenOpt) {
   const url = "https://api.telegram.org/bot" + (tokenOpt || getProp_("TELEGRAM_BOT_TOKEN")) + "/sendMessage";
   const payload = {
@@ -1172,20 +1344,21 @@ function getOrCreateSheet_(ss, name, header) {
   }
 }
 
-const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2"];
-const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1","ALT10m"];
+const HDR_ALL    = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","ReceivedAt"];
+const HDR_BLOCK  = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Direction1","ALT10m","ReceivedAt"];
 const HDR_FAILED = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Context"];
-const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout","Timing"];
-const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout","Timing"];
+const HDR_MEXC       = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Direction1","Direction2","Payout","Timing","MexcAlt","ReceivedAt"];
+const HDR_MEXC_BLOCK = ["Time","Ticker","Direction","Price","Volume","Text","Settings","Reason","Payout","Timing","ReceivedAt"];
 const HDR_PAYOUT     = ["Time","Asset","Payout","Source"];
 
 function writeToSheets_(ss, data) {
   try {
     const sheet = getOrCreateSheet_(ss, CONFIG.SHEET_NAME, HDR_ALL);
     return appendRowSafe_(sheet, [
-      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      rowTime_(data), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "",
-      data.direction1 || "", data.direction2 || ""
+      data.direction1 || "", data.direction2 || "",
+      data.receivedAt || ""
     ]);
   } catch (err) {
     console.error("writeToSheets_ fatal:", err);
@@ -1197,9 +1370,10 @@ function logBlocked_(ss, data, reason, altMarker) {
   try {
     const sheet = getOrCreateSheet_(ss, CONFIG.BLOCKED_SHEET_NAME, HDR_BLOCK);
     return appendRowSafe_(sheet, [
-      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      rowTime_(data), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "", reason,
-      data.direction1 || "", altMarker || ""    // колонка ALT10m: "ALT10m" если ушёл в ветку
+      data.direction1 || "", altMarker || "",
+      data.receivedAt || ""
     ]);
   } catch (err) {
     console.error("logBlocked_ fatal:", err);
@@ -1211,7 +1385,7 @@ function logFailed_safe_(ss, data, context) {
   try {
     const sheet = getOrCreateSheet_(ss, CONFIG.FAILED_SHEET_NAME, HDR_FAILED);
     const ok = appendRowSafe_(sheet, [
-      new Date(), data.ticker || "", data.direction || "", data.price || "",
+      rowTime_(data), data.ticker || "", data.direction || "", data.price || "",
       data.volume || "", data.text || "", data.Settings || "", context
     ]);
     if (!ok) console.error("LOST PAYLOAD [" + context + "]:", JSON.stringify(data));
@@ -1239,8 +1413,51 @@ function resetState() {
   const p = PropertiesService.getScriptProperties();
   p.deleteProperty("signal_state_v2");
   p.deleteProperty(CONFIG.MEXC.STATE_KEY);
+  p.deleteProperty(CONFIG.MEXC_ALT.STATE_KEY);
   p.deleteProperty(CONFIG.ALT10M.STATE_KEY);
-  console.log("State reset OK (основная, MEXC, ALT10m)");
+  p.deleteProperty(CONFIG.PREMIUM.STATE_KEY);
+  console.log("State reset OK (основная, MEXC, MEXC_ALT, ALT10m, Premium)");
+}
+
+// ─── РАЗОВАЯ ЧИСТКА КОЛОНКИ ReceivedAt ───────────────────────
+function normalizeReceivedAtUtc(applyChanges) {
+  const doApply = (applyChanges === true);
+  const ss = SpreadsheetApp.openById(getProp_("SPREADSHEET_ID"));
+  const sheets = [CONFIG.SHEET_NAME, CONFIG.BLOCKED_SHEET_NAME,
+                  CONFIG.MEXC.SHEET_NAME, CONFIG.MEXC.BLOCKED_SHEET_NAME];
+  const withOffset = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}$/;
+  let grand = 0;
+
+  for (const name of sheets) {
+    const sh = ss.getSheetByName(name);
+    if (!sh || sh.getLastRow() < 2) { console.log(name + ": пропуск (нет данных)"); continue; }
+    const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    let col = -1;
+    for (let i = 0; i < head.length; i++)
+      if (String(head[i]).trim() === "ReceivedAt") { col = i + 1; break; }
+    if (col < 0) { console.log(name + ": колонка ReceivedAt не найдена - пропуск"); continue; }
+
+    const n = sh.getLastRow() - 1;
+    const rng = sh.getRange(2, col, n, 1);
+    const vals = rng.getValues();
+    let changed = 0;
+    for (let i = 0; i < vals.length; i++) {
+      const v = String(vals[i][0] || "").trim();
+      if (!v || !withOffset.test(v)) continue;
+      const d = new Date(v);
+      if (isNaN(d.getTime())) { console.error(name + " строка " + (i+2) + ": не разобрал '" + v + "'"); continue; }
+      vals[i][0] = d.toISOString();
+      changed++;
+    }
+    grand += changed;
+    if (changed && doApply) { rng.setValues(vals); SpreadsheetApp.flush(); }
+    console.log(name + ": со смещением найдено " + changed +
+                (changed ? (doApply ? " - ИСПРАВЛЕНО" : " - НЕ трогал (пробный прогон)") : ""));
+  }
+  console.log(doApply
+    ? ("ГОТОВО. Приведено к UTC: " + grand + " строк.")
+    : ("ПРОБНЫЙ ПРОГОН, ничего не изменено. К UTC привёл бы " + grand +
+       " строк. Чтобы применить: normalizeReceivedAtUtc(true)"));
 }
 
 // ─── САМОПРОВЕРКА (запусти руками один раз после деплоя) ─────
@@ -1249,6 +1466,82 @@ function selfTest() {
   const a = getOrCreateSheet_(ss, CONFIG.SHEET_NAME, HDR_ALL);
   const b = getOrCreateSheet_(ss, CONFIG.BLOCKED_SHEET_NAME, HDR_BLOCK);
   const f = getOrCreateSheet_(ss, CONFIG.FAILED_SHEET_NAME, HDR_FAILED);
+
+  console.log("=== v3.9.13 ===");
+  // v3.9.11: быстрая проверка определения актива
+  console.log("АКТИВ (assetOf_): BTCUSDT.P →", assetOf_({ ticker: "BTCUSDT.P" }),
+    "| ETHUSDT.P →", assetOf_({ ticker: "ETHUSDT.P" }),
+    "| SPCXUSDT.P →", assetOf_({ ticker: "SPCXUSDT.P" }),
+    "| пусто →", assetOf_({ ticker: "" }));
+
+  // v3.9.12: торговые сессии по активу
+  const sesCfg = CONFIG.ASSET_SESSION || {};
+  const sesKeys = Object.keys(sesCfg);
+  if (sesKeys.length) {
+    for (const k of sesKeys) {
+      const c = sesCfg[k];
+      const nowSes = assetSessionReason_(new Date(), { ticker: k + "USDT.P" });
+      console.log("СЕССИЯ " + k + ":", c.ENABLED ? "ON" : "OFF",
+        "| " + c.FROM + "-" + c.TO + " " + (c.TZ || "America/New_York") +
+        " [" + (c.DAYS || WEEKDAYS).join(",") + "]",
+        "| сейчас:", nowSes ? ("БЛОКИРУЕТ → " + nowSes) : "пропускает");
+    }
+  } else {
+    console.log("СЕССИИ ПО АКТИВУ: не заданы (все активы без ограничения часов)");
+  }
+  const demo = new Date();
+  console.log("ВРЕМЯ: формат ReceivedAt =", CONFIG.RECEIVED_AT_FORMAT,
+    "| пример:", stampIso_(demo),
+    "| колонка A того же сигнала:", Utilities.formatDate(demo, "Europe/Warsaw", "yyyy-MM-dd HH:mm:ss"),
+    "| это ОДИН момент времени" +
+    (CONFIG.RECEIVED_AT_FORMAT === "utc"
+      ? " (часы отличаются на величину пояса - так и должно быть, Z = UTC)"
+      : " (часы совпадают)"));
+  console.log("ЛИМИТЫ (F4/F5): ETH окно " + CONFIG.LIMITS.ETH.MAX_SIGNALS_PER_WINDOW +
+    " / цена " + CONFIG.LIMITS.ETH.MAX_SAME_PRICE +
+    " | BTC окно " + CONFIG.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW +
+    " / цена " + CONFIG.LIMITS.BTC.MAX_SAME_PRICE +
+    " | (SPCX → фолбэк на ETH-лимиты)" +
+    " | окно " + CONFIG.WINDOW_MINUTES + " мин");
+  const wins = (CONFIG.TIME_BLOCK.WINDOWS || []).map(function (w) {
+    return w.from + "-" + w.to + " [" + (w.days || CONFIG.TIME_BLOCK.DAYS).join(",") + "]" +
+           (w.strict ? " STRICT(режет и BTC DOWN)" : "");
+  });
+  console.log("ОКНА ВРЕМЕНИ (F7):", CONFIG.TIME_BLOCK.ENABLED ? wins.join(" | ") : "DISABLED");
+  console.log("  режим:", CONFIG.TIME_BLOCK.GLOBAL
+    ? "ГЛОБАЛЬНЫЙ ГЕЙТ - действует на ВСЕ ветки (основная, MEXC, MEXC_ALT, ALT10m, Premium)"
+    : ("по веткам: ALT10m=" + !!CONFIG.ALT10M.APPLY_TIME_BLOCK +
+       ", MEXC_ALT=" + !!CONFIG.MEXC_ALT.APPLY_TIME_BLOCK +
+       ", Premium=" + !!CONFIG.PREMIUM.APPLY_TIME_BLOCK +
+       " (основная и MEXC - всегда)"));
+  console.log("ГЛОБАЛЬНЫЙ КАП (F8):", CONFIG.GLOBAL_CAP.ENABLED
+    ? (CONFIG.GLOBAL_CAP.MAX_OPEN + " за " + CONFIG.GLOBAL_CAP.WINDOW_MINUTES +
+       " мин (окно > экспирации 10 мин => не больше " + CONFIG.GLOBAL_CAP.MAX_OPEN +
+       " одновременно, в пределах ОДНОЙ ветки)") : "DISABLED");
+
+  const nowD = new Date();
+  const nowTb = timeBlockReason_(nowD);
+  console.log("ОКНА ВРЕМЕНИ сейчас:", nowTb ? ("БЛОКИРУЕТ → " + nowTb) : "пропускает");
+
+  const bdc = CONFIG.BTC_DOWN;
+  if (bdc && bdc.ENABLED) {
+    const strictWins = (CONFIG.TIME_BLOCK.WINDOWS || [])
+      .filter(function (w) { return w.strict; })
+      .map(function (w) { return w.from + "-" + w.to; });
+    const tbBd = timeBlockReason_(nowD, { ticker: "BTCUSDT.P", direction: "DOWN" });
+    console.log("BTC DOWN: особые правила ON" +
+      " | лимит " + bdc.MAX_CONCURRENT + " одновременно в отработке (" +
+      bdc.EXPIRY_MINUTES + " мин), вместо F4/F5" +
+      " | освобождён от окон: " + (bdc.EXEMPT_FROM_TIME_BLOCK ? "ДА" : "нет") +
+      (bdc.EXEMPT_FROM_TIME_BLOCK
+        ? (", кроме строгих: " + (strictWins.length ? strictWins.join(", ") : "нет"))
+        : "") +
+      " | общий кап F8 действует как обычно");
+    console.log("  сейчас для BTC DOWN:", tbBd ? ("БЛОКИРУЕТ → " + tbBd) : "пропускает");
+  } else {
+    console.log("BTC DOWN: особые правила DISABLED (общие правила BTC)");
+  }
+
   if (CONFIG.MEXC.ENABLED) {
     getOrCreateSheet_(ss, CONFIG.MEXC.SHEET_NAME, HDR_MEXC);
     getOrCreateSheet_(ss, CONFIG.MEXC.BLOCKED_SHEET_NAME, HDR_MEXC_BLOCK);
@@ -1256,34 +1549,64 @@ function selfTest() {
     const chatOk = !!PropertiesService.getScriptProperties().getProperty(CONFIG.MEXC.CHAT_ID_PROP);
     const po = getMexcPayout_();
     console.log("MEXC: ветка ON | chat_id задан:", chatOk,
+      "| символы:", JSON.stringify(CONFIG.MEXC.SYMBOLS),
       "| payout:", JSON.stringify(po),
       "| порог:", CONFIG.MEXC.MIN_PAYOUT + "%",
       "| источник:", CONFIG.MEXC.PAYOUT_URL ? ("URL-монитор (" + CONFIG.MEXC.TIME_UNIT + " " + CONFIG.MEXC.TIMINGS.join("/") + ")") : "ручной (setMexcPayoutManual)",
       "| MEXC-хук:", CONFIG.MEXC.WEBHOOK_ENABLED ? (CONFIG.MEXC.WEBHOOK_URL || "URL НЕ ЗАДАН") : "DISABLED",
       "| FAIL_OPEN:", CONFIG.MEXC.FAIL_OPEN);
+    console.log("MEXC_ALT (мягкий fallback):", CONFIG.MEXC_ALT.ENABLED
+      ? ("ON | окно " + CONFIG.MEXC_ALT.WINDOW_MINUTES + "мин, ETH " + CONFIG.MEXC_ALT.LIMITS.ETH.MAX_SIGNALS_PER_WINDOW +
+         "/BTC " + CONFIG.MEXC_ALT.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW +
+         " | окна времени: " + (CONFIG.MEXC_ALT.APPLY_TIME_BLOCK ? "ДА" : "нет"))
+      : "DISABLED");
   } else {
     console.log("MEXC: ветка DISABLED");
   }
-  console.log("Toobit-хук:", CONFIG.TOOBIT.ENABLED
-    ? (CONFIG.TOOBIT.WEBHOOK_URL || "URL НЕ ЗАДАН") : "DISABLED");
+  // v3.9.13: хук Toobit (PRO-ветка → локальный исполнитель)
+  console.log("TOOBIT-хук:", CONFIG.TOOBIT.ENABLED
+    ? (CONFIG.TOOBIT.WEBHOOK_URL || "URL НЕ ЗАДАН")
+    : "DISABLED",
+    "| шлём принятые основной веткой сигналы с меткой \"10m\"",
+    "| адрес общий с MEXC-хуком:", CONFIG.TOOBIT.WEBHOOK_URL === CONFIG.MEXC.WEBHOOK_URL);
   const props = PropertiesService.getScriptProperties();
   console.log("Партнёрские потоки:",
     "мастер:", CONFIG.PARTNER_WEBHOOK_ENABLED,
     "| потоки:", JSON.stringify(CONFIG.PARTNER_STREAMS));
   console.log("ALT10m:", CONFIG.ALT10M.ENABLED
     ? ("ON | окно " + CONFIG.ALT10M.WINDOW_MINUTES + "мин, ETH " + CONFIG.ALT10M.LIMITS.ETH.MAX_SIGNALS_PER_WINDOW +
-       "/BTC " + CONFIG.ALT10M.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW + ", одинаковых ≤" + CONFIG.ALT10M.LIMITS.ETH.MAX_SAME_PRICE +
+       "/BTC " + CONFIG.ALT10M.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW +
        " | ТГ-группа: " + !!props.getProperty(CONFIG.ALT10M.CHAT_ID_PROP) +
-       " | партнёр: " + (CONFIG.PARTNER_STREAMS["ALT10m"] ? "ON" : "off"))
+       " | партнёр: " + (CONFIG.PARTNER_STREAMS["ALT10m"] ? "ON" : "off") +
+       " | окна времени: " + (CONFIG.ALT10M.APPLY_TIME_BLOCK ? "ДА" : "нет"))
     : "DISABLED");
   resetBadlistCache();
   const bl = loadBadlist_();
   console.log("OK → вкладки:", a.getName(), "/", b.getName(), "/", f.getName(),
-    "| лимиты ETH:", JSON.stringify(CONFIG.LIMITS.ETH), "BTC:", JSON.stringify(CONFIG.LIMITS.BTC),
-    "| окно:", CONFIG.WINDOW_MINUTES + " мин",
-    "| глобальный кап:", CONFIG.GLOBAL_CAP.ENABLED
-      ? (CONFIG.GLOBAL_CAP.MAX_OPEN + " за " + CONFIG.GLOBAL_CAP.WINDOW_MINUTES + " мин") : "DISABLED",
     "| TG token:", !!getProp_("TELEGRAM_BOT_TOKEN"), "| chat:", !!getProp_("TELEGRAM_CHAT_ID"),
     "| partner webhook:", CONFIG.PARTNER_WEBHOOK_ENABLED ? CONFIG.PARTNER_WEBHOOK_URL : "DISABLED",
-    "| badlist:", CONFIG.BADLIST.ENABLED ? (bl.length + " конфигураций в карантине") : "DISABLED");
+    "| badlist (F6):", CONFIG.BADLIST.ENABLED ? (bl.length + " конфигураций в карантине") : "DISABLED");
+
+  const pc = CONFIG.PREMIUM;
+  if (pc.ENABLED) {
+    const pChat = props.getProperty(pc.CHAT_ID_PROP);
+    console.log("PREMIUM: ветка ON" +
+      " | расписание: " + pc.ALL_DAY_DAYS.join(",") + " целиком; " +
+      pc.EVENING_DAYS.join(",") + " часы " + pc.EVENING_HOURS.join(",") +
+      " | лимиты ETH " + pc.LIMITS.ETH.MAX_SIGNALS_PER_WINDOW + "/" + pc.LIMITS.ETH.MAX_SAME_PRICE +
+      ", BTC " + pc.LIMITS.BTC.MAX_SIGNALS_PER_WINDOW + "/" + pc.LIMITS.BTC.MAX_SAME_PRICE +
+      ", окно " + pc.WINDOW_MINUTES + " мин" +
+      " | свой кап " + pc.GLOBAL_CAP.MAX_OPEN + " за " + pc.GLOBAL_CAP.WINDOW_MINUTES + " мин" +
+      " | ТГ-группа задана: " + !!pChat +
+      " | свой бот: " + !!props.getProperty(pc.BOT_TOKEN_PROP) +
+      " | партнёр: " + (CONFIG.PARTNER_STREAMS[pc.PARTNER_TAG] ? "ON" : "off") +
+      " | в листы: НЕ пишем");
+    const pNow = premiumScheduleReason_(new Date());
+    console.log("  расписание PREMIUM сейчас:", pNow ? ("не подходит → " + pNow) : "ПОДХОДИТ");
+    if (!pChat)
+      console.log("  ВНИМАНИЕ: Script Property " + pc.CHAT_ID_PROP +
+                  " не задан - сигналы Premium никуда не уйдут.");
+  } else {
+    console.log("PREMIUM: ветка DISABLED");
+  }
 }

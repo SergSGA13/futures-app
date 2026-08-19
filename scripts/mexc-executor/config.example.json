@@ -11,6 +11,12 @@
       "minPayout": 80,
       "minPayoutStrict": false,
       "requirePagePayout": false,
+      "signalTimings": [
+        "MEXC _10m",
+        "MEXC _30m",
+        "MEXC_10m",
+        "MEXC_30m"
+      ],
       "stakes": {
         "ETH": 150,
         "BTC": 250,
@@ -40,6 +46,9 @@
       "minPayout": 75,
       "minPayoutStrict": true,
       "requirePagePayout": true,
+      "signalTimings": [
+        "10m"
+      ],
       "execTimings": [
         10
       ],

@@ -95,6 +95,13 @@ function exCfg(name) {
     // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
     // ошибке маршрутизации, должна отбиться, а не открыться.
     execTimings: e.execTimings || CFG.execTimings || [10],
+    // Метки потока в поле "timing" сигнала. Источник шлёт разные потоки
+    // разными метками: PRO-ветка - "10m", ветка MEXC - "MEXC _10m" и
+    // "MEXC _30m", ветка ALT - "ALT10m". По ним и различаем, куда
+    // ставить, без отдельного поля в сигнале. Сравнение ТОЧНОЕ: "10m"
+    // это подстрока и "ALT10m", и "MEXC_10m", и по вхождению PRO-поток
+    // забрал бы чужие сигналы.
+    signalTimings: (e.signalTimings || []).map(t => String(t).toLowerCase().trim()),
   };
   EX_CACHE.set(key, v);
   return v;
@@ -981,6 +988,18 @@ function namedExchange(sig) {
   const t = String(sig.ticker || '').toLowerCase();
   return names.find(n => t.includes(n.toLowerCase())) || '';
 }
+// Биржа по метке потока в поле "timing": "10m" - PRO, "MEXC _10m" -
+// ветка MEXC. Метку сравниваем целиком, поэтому "ALT10m" ничего не
+// заденет. Если биржа этой метки не торгует таким активом - молчим и
+// пропускаем ход дальше, чем ставить ETH туда, где его нет.
+function exchangeByTiming(sig, asset) {
+  const raw = String(sig.timing ?? '').toLowerCase().trim();
+  if (!raw) return '';
+  const hit = exNames().find(n => exCfg(n).signalTimings.includes(raw));
+  if (!hit) return '';
+  if (asset && !(exCfg(hit).urls || {})[asset]) return '';
+  return hit;
+}
 function allAssets() {
   const out = new Set();
   for (const n of exNames()) for (const a of Object.keys(exCfg(n).urls || {})) out.add(a);
@@ -999,12 +1018,24 @@ function normalizeSignal(sig) {
     sig.asset = pool.sort((a, b) => b.length - a.length)
       .find(k => t.includes(k.toUpperCase())) || '';
   }
-  // Биржу не назвали: если актив есть ровно на одной - вопрос решён,
-  // иначе идём на биржу по умолчанию. Молча раскидывать один и тот же
-  // тикер по двум биржам нельзя - это разные деньги и разные лимиты.
+  // Биржу не назвали - смотрим на метку потока, потом на актив: если он
+  // торгуется ровно на одной бирже, вопрос решён. Иначе биржа по
+  // умолчанию. Молча раскидывать один и тот же тикер по двум биржам
+  // нельзя - это разные деньги и разные лимиты.
+  if (!ex) ex = exchangeByTiming(sig, sig.asset);
   if (!ex) {
     const own = exOfAsset(sig.asset);
     ex = own.length === 1 ? own[0] : defaultEx();
+    // Метка потока есть, но её никто не заявил. Ставку не отменяем -
+    // она уйдёт на биржу по умолчанию, как было до маршрутизации по
+    // меткам, - но в логе это должно быть видно: чужой поток, случайно
+    // направленный в исполнитель, иначе торговал бы молча.
+    const raw = String(sig.timing ?? '').trim();
+    if (raw && exNames().some(n => exCfg(n).signalTimings.length)
+        && !exNames().some(n => exCfg(n).signalTimings.includes(raw.toLowerCase()))) {
+      log(`!! метка потока "${raw}" не заявлена ни одной биржей - `
+        + `${sig.asset || 'сигнал'} идёт на ${exCfg(ex).title} по умолчанию`);
+    }
   }
   sig.ex = ex;
   sig.direction = String(sig.direction || '').toUpperCase();

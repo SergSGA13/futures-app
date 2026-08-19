@@ -398,6 +398,7 @@
       <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
       <div class="row"><span>Часы</span><b id="win" style="font-size:11px">—</b></div>
       <div class="btns" style="margin-top:7px">
+        <select id="winEx" title="Какую биржу открыть"></select>
         <button id="btnOpen" title="Открыть окно биржи, чтобы посмотреть глазами. Перед ставкой исполнитель откроет его сам.">Открыть</button>
         <button id="btnClose">Закрыть</button>
       </div>
@@ -822,8 +823,14 @@ function buildAssetControls(st) {
 
   $('mEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
   $('mEx').style.display = multi ? '' : 'none';
+  // Тот же список для кнопки «Открыть»: смотреть глазами нужно и на ту
+  // биржу, что сейчас не в смене.
+  $('winEx').innerHTML = $('mEx').innerHTML;
+  $('winEx').style.display = multi ? '' : 'none';
+  winExTouched = false;
   $('commonHead').style.display = multi ? '' : 'none';
   buildManualAssets(s);
+  $('winEx').addEventListener('change', () => { winExTouched = true; });
   $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
   $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || s, true));
   $('tfBox').innerHTML = [10, 30].map(t =>
@@ -847,6 +854,8 @@ function buildManualAssets(s) {
 // ты набираешь прямо сейчас.
 const MSTAKE_MIN = 5;
 let mStakeAsset = null;
+// Пока биржу для окна не выбрали руками, она следует за сменой.
+let winExTouched = false;
 function syncManualStake(s, force) {
   const a = $('mAsset').value;
   const e = exBy(s, $('mEx').value);
@@ -974,6 +983,7 @@ async function refresh() {
   // Кто сейчас в смене. Общий ответ «активен» после разделения часов
   // перестал что-либо значить: работать может одна биржа из двух.
   const act = exs(s).filter(e => e.activeNow);
+  if (!winExTouched && act.length) $('winEx').value = act[0].name;
   $('activeNow').innerHTML = act.length
     ? act.map(e => `<span class="pill ok">${e.title}</span>`).join(' ')
     : '<span class="pill warn">никто</span>';
@@ -1132,7 +1142,11 @@ $('btnManual').onclick = async () => {
     refresh(); setTimeout(refresh, 800);
   }
 };
-$('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('browser-open'); refresh(); };
+$('btnOpen').onclick = async () => {
+  $('btnOpen').disabled = true;
+  await post('browser-open?ex=' + encodeURIComponent($('winEx').value || ''));
+  refresh();
+};
 $('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };
 
 $('btnSaveStakes').onclick = async () => {

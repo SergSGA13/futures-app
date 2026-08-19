@@ -87,18 +87,28 @@
         "BTC": "https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT"
       },
       "timeUnitText": {
-        "10": "10m"
+        "5": "5m",
+        "10": "10m",
+        "30": "30m",
+        "60": "60m"
       },
       "marketClosedText": "Market Closed",
       "openPositionsLabel": "Open Positions",
-      "payoutRe": "{DIR}[^%]{0,80}?([0-9.]+)\\s*%",
+      "payoutRe": "",
       "selectors": {
         "loginMarker": "button:has-text(\"Log In\"), button:has-text(\"Sign In\")",
-        "timeUnit": "button, div[role=button], span",
+        "timeUnit": "button, div[role=button], span, li",
         "amount": "input[placeholder*=\"USDT\"], input[inputmode=\"decimal\"], input[type=\"number\"]",
         "up": "button:has-text(\"Up\")",
         "down": "button:has-text(\"Down\")",
         "confirm": "button:has-text(\"Confirm\")"
+      },
+      "payoutList": {
+        "re": "Expected Payout Ratio[^%]{0,20}?([0-9.]+)\\s*%",
+        "order": [
+          "UP",
+          "DOWN"
+        ]
       }
     }
   },

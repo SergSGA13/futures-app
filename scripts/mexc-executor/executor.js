@@ -89,7 +89,16 @@ function exCfg(name) {
     // Главное отличие Toobit: сигналы приходят без выплаты, и проверить
     // её можно только на странице. Не прочитали - не ставим.
     requirePagePayout: e.requirePagePayout === true,
-    payoutRe: e.payoutRe || CFG.payoutRe || '{DIR}\\s*Payout\\s*([0-9.]+)\\s*%',
+    // ?? вместо ||: пустая строка здесь ЗНАЧАЩАЯ - она выключает поиск
+    // по слову направления. С || она подменялась значением по умолчанию,
+    // и выключить путь было нечем.
+    payoutRe: e.payoutRe ?? CFG.payoutRe ?? '{DIR}\\s*Payout\\s*([0-9.]+)\\s*%',
+    // Третий путь к выплате: на странице может не быть слов Up/Down
+    // вовсе (у Toobit до входа там две кнопки «Log in»), зато выплаты
+    // идут двумя одинаковыми блоками сверху вниз. re собирает их все по
+    // порядку, order говорит, какой чей. Порядок задаётся явно - гадать
+    // о том, где чья выплата, нельзя.
+    payoutList: e.payoutList || CFG.payoutList || null,
     dirWords: e.dirWords || CFG.dirWords || { UP: 'Up', DOWN: 'Down' },
     stakes: e.stakes || CFG.stakes || {},
     stakeLimits: e.stakeLimits || CFG.stakeLimits || {},
@@ -672,11 +681,18 @@ async function waitPositionsGrow(before, timeoutMs) {
 async function pagePayout(direction) {
   const E = curEx();
   const word = E.dirWords[direction] || (direction === 'UP' ? 'Up' : 'Down');
-  try {
-    const body = await page.evaluate(() => document.body.innerText);
-    const m = body.match(new RegExp(String(E.payoutRe).replace('{DIR}', word), 'i'));
-    if (m && m[1]) return parseFloat(m[1]);
-  } catch (e) { /* пробуем запасной путь */ }
+  // Пустой payoutRe = путь выключен. Он ищет процент ПОСЛЕ слова
+  // направления, а на Toobit подпись выплаты стоит НАД кнопкой - и
+  // шаблон брал процент соседнего блока: для Up возвращалось значение
+  // Down. Молча неверная выплата хуже непрочитанной, поэтому там, где
+  // порядок не тот, путь просто отключается.
+  if (E.payoutRe) {
+    try {
+      const body = await page.evaluate(() => document.body.innerText);
+      const m = body.match(new RegExp(String(E.payoutRe).replace('{DIR}', word), 'i'));
+      if (m && m[1]) return parseFloat(m[1]);
+    } catch (e) { /* пробуем запасной путь */ }
+  }
   try {
     // Ищем не только button/[role=button]: на Toobit кнопки направления
     // вообще не значатся кнопками, в списке страницы их нет. Берём любой
@@ -701,7 +717,26 @@ async function pagePayout(direction) {
     const uniq = [...new Set(vals)];
     if (uniq.length === 1) return uniq[0];
     if (uniq.length > 1) log(`выплата у «${word}» неоднозначна: ${uniq.join('%, ')}% - считаю непрочитанной`);
-    return null;
+  } catch (e) { /* остаётся третий путь */ }
+
+  // Третий путь: блоки выплат по порядку сверху вниз.
+  try {
+    const L = E.payoutList;
+    if (!L || !L.re || !Array.isArray(L.order)) return null;
+    const idx = L.order.indexOf(direction);
+    if (idx < 0) return null;
+    const body = await page.evaluate(() => document.body.innerText);
+    const found = [...body.matchAll(new RegExp(L.re, 'gi'))]
+      .map(m => parseFloat(String(m[1]).replace(',', '.')))
+      .filter(v => Number.isFinite(v) && v >= 10 && v <= 500);
+    if (found.length !== L.order.length) {
+      if (found.length) {
+        log(`блоков выплаты на странице ${found.length}, а ожидалось ${L.order.length}`
+          + ` (${found.join('%, ')}%) - считаю непрочитанной`);
+      }
+      return null;
+    }
+    return found[idx];
   } catch (e) { return null; }
 }
 
@@ -808,6 +843,12 @@ async function placeBet(sig) {
       const c = all.nth(i);
       if (await c.isVisible().catch(() => false)) return c;
     }
+    // Селектор из конфига перечисляет теги, а на Toobit чипы «Time
+    // Increment» - обычные div: по селектору находилось НОЛЬ элементов,
+    // хотя на экране они есть. getByText берёт самый глубокий узел с
+    // точным текстом, каким бы тегом он ни был.
+    const byText = page.getByText(re).first();
+    if (await byText.count() > 0 && await byText.isVisible().catch(() => false)) return byText;
     return null;
   }
   // «Выбран» на разных вёрстках отмечается по-разному: aria-selected на
@@ -1841,13 +1882,23 @@ const server = http.createServer((req, res) => {
     // обязательно, а посмотреть глазами иногда нужно.
     if (req.method === 'POST' && action === 'browser-open') {
       if (state.busy) return sendJson(409, { error: 'исполнитель занят' });
+      // Какую биржу открывать: названную панелью, иначе ту, что сейчас в
+      // смене, иначе биржу по умолчанию. Раньше здесь стоял адрес MEXC
+      // прямо в коде - кнопка «Открыть» всегда вела на него, какую биржу
+      // ни выбирай, и посмотреть на Toobit глазами было нельзя.
+      const want = String(new URL(req.url, 'http://x').searchParams.get('ex') || '').toLowerCase();
+      const name = exNames().includes(want) ? want : (activeExchanges()[0] || defaultEx());
+      const E = exCfg(name);
+      const first = Object.values(E.urls || {})[0];
+      if (!first) return sendJson(400, { error: `у биржи ${E.title} не задан ни один адрес` });
       browser().then(async () => {
-        if (!/mexc\.com/.test(page.url())) {
-          await page.goto(CFG.urls.ETH, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
-        }
+        // Уже стоим на нужной бирже - не дёргаем страницу.
+        const here = Object.values(E.urls).some(u => page.url().startsWith(u));
+        if (!here) await page.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+        EX = E;
         state.windowManual = true;
-        log('панель: окно биржи открыто');
-        sendJson(200, { ok: true });
+        log(`панель: окно биржи открыто (${E.title})`);
+        sendJson(200, { ok: true, exchange: name });
       }).catch(e => { log('окно биржи не открылось: ' + e.message); sendJson(500, { error: e.message }); });
       return;
     }
@@ -1959,7 +2010,9 @@ function migrateMode() {
     timeUnitText: { 10: '10m' },        // 30m на странице Toobit нет
     marketClosedText: 'Market Closed',
     openPositionsLabel: 'Open Positions',
-    payoutRe: '{DIR}[^%]{0,80}?([0-9.]+)\\s*%',
+    // Пусто: на Toobit подпись выплаты стоит НАД кнопкой, и поиск
+    // процента после слова направления брал бы значение соседнего блока.
+    payoutRe: '',
     selectors: {
       loginMarker: 'button:has-text("Log In"), button:has-text("Sign In")',
       timeUnit: 'button, div[role=button], span',
@@ -2042,11 +2095,17 @@ async function diagMode() {
             : 'панель НЕ отрисовалась за отведённое время');
   await dumpPage(`diag-${EX.name}-${asset}`);
 
-  // Проверяем чип таймфрейма тем же способом, что и боевой код
+  // Чипы проверяем ОБОИМИ способами, которыми их ищет боевой код.
+  // Раньше печатался только счёт по селектору из конфига, и ноль по нему
+  // читался как «чипа нет на странице» - хотя чип есть, просто он не той
+  // разметки. По такому нулю я и выкинул 30m из конфига Toobit зря.
   for (const tfText of Object.values(EX.timeUnitText)) {
-    const n = await page.locator(EX.selectors.timeUnit)
-      .filter({ hasText: new RegExp('^\\s*' + tfText + '\\s*$') }).count().catch(() => -1);
-    log(`чип "${tfText}": найдено элементов ${n}`);
+    const re = new RegExp('^\\s*' + tfText + '\\s*$');
+    const n = await page.locator(EX.selectors.timeUnit).filter({ hasText: re }).count().catch(() => -1);
+    const byText = await page.getByText(re).count().catch(() => -1);
+    log(`чип "${tfText}": по селектору ${n}, по тексту ${byText}`
+      + (n === 0 && byText > 0 ? ' - берётся по тексту' : '')
+      + (n === 0 && byText === 0 ? ' - НЕ НАЙДЕН' : ''));
   }
   for (const dir of ['UP', 'DOWN']) {
     const v = await pagePayout(dir);

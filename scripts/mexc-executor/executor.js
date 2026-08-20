@@ -488,6 +488,26 @@ async function approach(loc) {
   } catch (e) { /* подвод - украшение, а не условие ставки */ }
 }
 
+// Клик, который не сдаётся с первого раза. На Toobit чип «Time
+// Increment» - обычный div, и его центр перекрыт соседним элементом:
+// locator.click ждёт «получает события» и падает по таймауту, хотя чип
+// на экране и кликабелен руками. Порядок отступления: человечный клик →
+// клик с force (пропускает проверку перекрытия, но остальные оставляет)
+// → синтетический DOM-клик. Каждый следующий шаг менее «человечный»,
+// поэтому применяется только когда предыдущий не сработал.
+async function clickStubborn(loc, what) {
+  try { await humanClick(loc, 6000); return 'обычный'; }
+  catch (e1) {
+    log(`${what}: обычный клик не прошёл (${String(e1.message).split('\n')[0]}), пробую с force`);
+    try { await loc.click({ force: true, timeout: 4000 }); return 'force'; }
+    catch (e2) {
+      log(`${what}: force тоже не прошёл, кликаю через DOM`);
+      await loc.evaluate(el => el.click());
+      return 'dom';
+    }
+  }
+}
+
 async function humanClick(loc, timeout = 5000) {
   if (CFG.humanize === false) return loc.click({ timeout });
   await sleep(randInt(120, 480));
@@ -762,6 +782,37 @@ async function pageAsset() {
   return hit.length === 1 ? hit[0] : null;
 }
 
+// Актив, который показывает САМА ПАНЕЛЬ, а не заголовок вкладки.
+// Заголовок на Toobit догоняет адрес с задержкой в десятки секунд, а
+// символ в шапке панели меняется сразу. Мешает то, что символов на
+// странице несколько: рядом бежит лента чужих сделок (BTCUSDT, SOLUSDT).
+// Различаем по кеглю: символ инструмента набран крупно, лента - мелко.
+// Это подсказка, а не приговор: используется только чтобы РАЗРЕШИТЬ
+// ставку, когда заголовок ещё не обновился. Отказ по-прежнему выносит
+// проверка заголовка.
+async function pageAssetOnPage() {
+  const keys = Object.keys(curEx().urls || {}).sort((a, b) => b.length - a.length);
+  if (!keys.length) return null;
+  try {
+    return await page.evaluate(ks => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      let best = null, bestSize = 0;
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 1) continue;
+        const t = (el.innerText || '').trim();
+        if (!t || t.length > 24) continue;
+        for (const k of ks) {
+          if (!new RegExp('^' + k + '\\s*[-_/]?\\s*USDT', 'i').test(t)) continue;
+          const size = parseFloat(getComputedStyle(el).fontSize) || 0;
+          if (size > bestSize) { bestSize = size; best = k; }
+        }
+      }
+      // Мелкий текст - это лента, а не шапка: такому не верим.
+      return bestSize >= 14 ? best : null;
+    }, keys);
+  } catch (e) { return null; }
+}
+
 // ── ставка ──
 async function placeBet(sig) {
   const t0 = Date.now();
@@ -810,17 +861,45 @@ async function placeBet(sig) {
   // Ставка не на тот актив - самая дорогая из возможных ошибок, и
   // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
   // пока SPA договорит: сразу после goto заголовок ещё прежний.
-  let seen = await pageAsset();
-  if (seen && seen !== sig.asset) {
+  const settleAsset = async () => {
+    let seen = await pageAsset();
+    if (!seen || seen === sig.asset) return seen;
     const until = Date.now() + (CFG.assetSettleMs ?? 6000);
     while (Date.now() < until && seen && seen !== sig.asset) {
       await page.waitForTimeout(400);
       seen = await pageAsset();
     }
+    return seen;
+  };
+  let seen = await settleAsset();
+  // Заголовок врёт, но панель показывает нужный символ - значит мы на
+  // месте, и ждать нечего. Ровно этот случай ронял ставки на Toobit:
+  // после переключения с BTC на ETH в title ещё висел BTC.
+  if (seen && seen !== sig.asset) {
+    const onPage = await pageAssetOnPage();
+    if (onPage === sig.asset) {
+      log(`заголовок отстал (в title ${seen}), но панель показывает ${onPage} - работаю`);
+      seen = onPage;
+    }
+  }
+  // Ни заголовок, ни панель не подтвердили актив. Одна перезагрузка:
+  // адрес мы задавали сами, он и есть источник правды, а перезагрузка
+  // заставляет SPA переписать всё остальное.
+  if (seen && seen !== sig.asset && page.url().startsWith(url)) {
+    log(`заголовок отстал: адрес ${sig.asset}, а в title ещё ${seen} - перезагружаю страницу`);
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    ready = (await waitForPanel()) || ready;
+    seen = await settleAsset();
+    if (seen && seen !== sig.asset && (await pageAssetOnPage()) === sig.asset) {
+      log(`после перезагрузки заголовок всё ещё ${seen}, но панель показывает ${sig.asset} - работаю`);
+      seen = sig.asset;
+    }
   }
   if (seen && seen !== sig.asset) {
     await shot('wrong-asset');
-    throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset} - ставку не делаю`);
+    throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset}`
+      + ` (адрес ${page.url()}) - ставку не делаю`);
   }
   // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
   // основании остановил бы все ставки, если биржа сменит заголовок.
@@ -890,7 +969,9 @@ async function placeBet(sig) {
   }
   const before = await activeChipName();
   if (before !== tfText) {
-    await humanClick(tf).catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
+    const how = await clickStubborn(tf, `чип ${tfText}`)
+      .catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
+    if (how !== 'обычный') log(`чип ${tfText} нажат способом «${how}»`);
     await page.waitForTimeout(randInt(500, 900));
   }
   // Проверяем РЕЗУЛЬТАТ, а не факт клика: клик мог не переключить вкладку,
@@ -2013,6 +2094,9 @@ function migrateMode() {
                  '{DIR}\\s*(?:Payout|Return|Profit)?\\s*[:\\s]\\s*([0-9.]+)\\s*%'],
       // «30m на Toobit нет» - это был промах селектора, а не отсутствие чипа.
       timeUnitText: [JSON.stringify({ 10: '10m' })],
+      // На Toobit счётчик подписан «Current Positions», и со старой
+      // меткой ставка не подтверждалась: уходила как placed-unverified.
+      openPositionsLabel: ['Open Positions'],
     },
   };
   const fill = (cur, def, who) => {
@@ -2168,6 +2252,33 @@ async function diagMode() {
       + (n === 0 && byText > 0 ? ' - берётся по тексту' : '')
       + (n === 0 && byText === 0 ? ' - НЕ НАЙДЕН' : ''));
   }
+  // Чем разметка отмечает ВЫБРАННЫЙ чип. Без этого проверка «таймфрейм
+  // действительно переключился» на Toobit не работает: она пишет
+  // «проверить выбор нечем», и ставка может уйти на 5m вместо 10m -
+  // ровно та ошибка, что уже случалась на MEXC. По классам из этого
+  // дампа настраивается признак активного чипа.
+  try {
+    const marks = await page.evaluate(names => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      const out = [];
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 1) continue;
+        const t = (el.innerText || '').trim();
+        if (!names.includes(t)) continue;
+        const cs = getComputedStyle(el);
+        out.push({
+          t,
+          cls: String(el.className || '').slice(0, 70),
+          up: String((el.parentElement || {}).className || '').slice(0, 70),
+          aria: el.getAttribute('aria-selected') || (el.parentElement || el).getAttribute('aria-selected') || '',
+          bg: cs.backgroundColor, color: cs.color, weight: cs.fontWeight,
+        });
+        if (out.length >= 8) break;
+      }
+      return out;
+    }, Object.values(EX.timeUnitText));
+    log('  чипы, чем отмечен выбранный: ' + JSON.stringify(marks));
+  } catch (e) { log('  разбор чипов не удался: ' + e.message); }
   for (const dir of ['UP', 'DOWN']) {
     const v = await pagePayout(dir);
     log(`выплата ${dir} по текущему шаблону: ${v == null ? 'НЕ ПРОЧИТАНА' : v + '%'}`

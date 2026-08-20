@@ -93,7 +93,7 @@
         "60": "60m"
       },
       "marketClosedText": "Market Closed",
-      "openPositionsLabel": "Open Positions",
+      "openPositionsLabel": "Current Positions",
       "payoutRe": "",
       "selectors": {
         "loginMarker": "button:has-text(\"Log In\"), button:has-text(\"Sign In\")",

@@ -495,14 +495,32 @@ async function approach(loc) {
 // клик с force (пропускает проверку перекрытия, но остальные оставляет)
 // → синтетический DOM-клик. Каждый следующий шаг менее «человечный»,
 // поэтому применяется только когда предыдущий не сработал.
+// Что сработало в прошлый раз - чтобы не тратить каждый раз шесть
+// секунд на заведомо провальный обычный клик. Память живёт до
+// перезапуска: после обновления биржи разметка может поправиться, и
+// новый запуск снова начнёт с человечного клика.
+const clickWay = new Map();
 async function clickStubborn(loc, what) {
-  try { await humanClick(loc, 6000); return 'обычный'; }
+  const key = curEx().name + '|' + what.replace(/\d+/g, '');
+  const known = clickWay.get(key);
+  if (known === 'force' || known === 'dom') {
+    try {
+      if (known === 'force') await loc.click({ force: true, timeout: 4000 });
+      else await loc.evaluate(el => el.click());
+      return known + ' (как в прошлый раз)';
+    } catch (e) { /* разметка поменялась - идём обычным путём */ }
+  }
+  try { await humanClick(loc, 6000); clickWay.set(key, 'обычный'); return 'обычный'; }
   catch (e1) {
     log(`${what}: обычный клик не прошёл (${String(e1.message).split('\n')[0]}), пробую с force`);
-    try { await loc.click({ force: true, timeout: 4000 }); return 'force'; }
-    catch (e2) {
+    try {
+      await loc.click({ force: true, timeout: 4000 });
+      clickWay.set(key, 'force');
+      return 'force';
+    } catch (e2) {
       log(`${what}: force тоже не прошёл, кликаю через DOM`);
       await loc.evaluate(el => el.click());
+      clickWay.set(key, 'dom');
       return 'dom';
     }
   }
@@ -839,6 +857,17 @@ async function placeBet(sig) {
   if (!ready) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    // Биржа может увести с заданного адреса на «последний символ»: так
+    // делает Toobit, если адрес задан параметром (?symbol=...), а не
+    // путём. Первый заход мог прийтись на ещё не проснувшееся приложение,
+    // поэтому повторяем - к этому моменту оно уже загружено и роутер
+    // обычно слушается. Если и это не помогло, скажем прямо в отказе.
+    if (!page.url().startsWith(url)) {
+      log(`биржа увела с ${url} на ${page.url()} - повторяю переход`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+      if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
+    }
     ready = await waitForPanel();
   }
   if (!ready) {
@@ -898,8 +927,10 @@ async function placeBet(sig) {
   }
   if (seen && seen !== sig.asset) {
     await shot('wrong-asset');
+    const drifted = !page.url().startsWith(url);
     throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset}`
-      + ` (адрес ${page.url()}) - ставку не делаю`);
+      + ` (адрес ${page.url()}) - ставку не делаю`
+      + (drifted ? `; биржа не пустила на ${url} - проверь URL актива в конфиге` : ''));
   }
   // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
   // основании остановил бы все ставки, если биржа сменит заголовок.
@@ -2097,6 +2128,14 @@ function migrateMode() {
       // На Toobit счётчик подписан «Current Positions», и со старой
       // меткой ставка не подтверждалась: уходила как placed-unverified.
       openPositionsLabel: ['Open Positions'],
+      // Адрес вида ?symbol=ETHUSDT биржа ИГНОРИРУЕТ и открывает
+      // последний просмотренный символ. Пока им был ETH, всё сходилось;
+      // стоило странице побывать на BTC - и каждая ставка по ETH стала
+      // отбиваться проверкой актива. Правильный вид - путь.
+      urls: [JSON.stringify({
+        ETH: 'https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT',
+        BTC: 'https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT',
+      })],
     },
   };
   const fill = (cur, def, who) => {

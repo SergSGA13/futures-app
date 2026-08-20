@@ -104,6 +104,10 @@ function exCfg(name) {
     stakeLimits: e.stakeLimits || CFG.stakeLimits || {},
     // Лимит одновременных ставок держит БИРЖА, поэтому он у каждой свой.
     maxOpenBets: e.maxOpenBets ?? CFG.maxOpenBets ?? 5,
+    // Ставить, не убедившись в выбранной экспирации, нельзя: ставка
+    // уйдёт на чужие минуты и с чужой выплатой. false - только если
+    // разметку иначе не прочитать и риск осознан.
+    requireTimeframeCheck: e.requireTimeframeCheck !== false,
     // Какие таймфреймы биржа вообще отрабатывает. На Toobit идут только
     // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
     // ошибке маршрутизации, должна отбиться, а не открыться.
@@ -982,14 +986,89 @@ async function placeBet(sig) {
     return false;
   }).catch(() => false);
 
+  // Какой чип отмечен выбранным - ПО СТИЛЮ. Разметка Toobit не ставит
+  // ни aria-selected, ни класса active: чипы отличаются только видом.
+  // Зато выбранный там ровно один, а остальные одинаковые - значит
+  // «белая ворона» и есть выбранный. Сравниваем фон, цвет, насыщенность
+  // и рамку. Если чипов меньше трёх или отличается не один - молчим.
+  async function activeChipByStyle() {
+    const names = Object.values(EX.timeUnitText);
+    try {
+      return await page.evaluate(ns => {
+        const vis = el => !!(el.offsetWidth || el.offsetHeight);
+        const found = new Map();
+        for (const el of document.querySelectorAll('*')) {
+          if (!vis(el) || el.children.length > 1) continue;
+          const t = (el.innerText || '').trim();
+          if (!ns.includes(t) || found.has(t)) continue;
+          // Берём предка с настоящей подложкой: у самого текста фон
+          // обычно прозрачный, красят обёртку.
+          let box = el;
+          for (let i = 0; i < 3 && box.parentElement; i++) {
+            const bg = getComputedStyle(box).backgroundColor;
+            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
+            box = box.parentElement;
+          }
+          const cs = getComputedStyle(box), ts = getComputedStyle(el);
+          found.set(t, [cs.backgroundColor, ts.color, ts.fontWeight, cs.borderColor].join('|'));
+        }
+        if (found.size < 3) return null;
+        const counts = {};
+        for (const v of found.values()) counts[v] = (counts[v] || 0) + 1;
+        const odd = [...found.entries()].filter(([, v]) => counts[v] === 1);
+        return odd.length === 1 ? odd[0][0] : null;
+      }, names);
+    } catch (e) { return null; }
+  }
+
   // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
-  // понять; тогда проверять нечего, но и ломать исполнение нельзя.
+  // понять ни разметкой, ни видом.
   async function activeChipName() {
     for (const t of Object.values(EX.timeUnitText)) {
       const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
       if (c && await chipActive(c)) return t;
     }
-    return null;
+    return await activeChipByStyle();
+  }
+
+  // Клик по чипу настоящей мышью в его координаты. Синтетический
+  // el.click() на Toobit «срабатывал» без ошибки и НЕ переключал
+  // таймфрейм: приложение слушает не click, а нажатие мыши. Ставка при
+  // этом уходила на 5 минут - и с выплатой от чужого таймфрейма.
+  // Здесь события те же, что от руки, и проверки перекрытия не мешают.
+  async function clickChipByMouse(text) {
+    const box = await page.evaluate(t => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 1) continue;
+        if ((el.innerText || '').trim() !== t) continue;
+        // Поднимаемся, только пока цель слишком мала для клика: сам
+        // текст бывает обёрнут в span без размера. Требовать при этом
+        // cursor:pointer нельзя - у обычной <button> курсор по
+        // умолчанию другой, и подъём уходил до самого body, после чего
+        // клик приходился в пустое место страницы.
+        let hit = el;
+        for (let i = 0; i < 3 && hit.parentElement; i++) {
+          const r = hit.getBoundingClientRect();
+          if (r.width >= 24 && r.height >= 16) break;
+          hit = hit.parentElement;
+        }
+        hit.scrollIntoView({ block: 'center', inline: 'center' });
+        const r = hit.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) return null;
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      }
+      return null;
+    }, text);
+    if (!box) return false;
+    const x = box.x + box.w * (0.3 + Math.random() * 0.4);
+    const y = box.y + box.h * (0.3 + Math.random() * 0.4);
+    await mouseGlide(page, x, y);
+    await sleep(randInt(40, 140));
+    await page.mouse.down();
+    await sleep(randInt(45, 120));
+    await page.mouse.up();
+    return true;
   }
 
   const tf = await visibleChip(tfRe);
@@ -999,11 +1078,16 @@ async function placeBet(sig) {
     throw new Error(`чип таймфрейма "${tfText}" не найден - смотри ДАМП выше`);
   }
   const before = await activeChipName();
-  if (before !== tfText) {
-    const how = await clickStubborn(tf, `чип ${tfText}`)
-      .catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
-    if (how !== 'обычный') log(`чип ${tfText} нажат способом «${how}»`);
-    await page.waitForTimeout(randInt(500, 900));
+  const needClick = before !== tfText;
+  if (needClick) {
+    const byMouse = await clickChipByMouse(tfText).catch(() => false);
+    if (byMouse) log(`чип ${tfText} нажат мышью`);
+    else {
+      const how = await clickStubborn(tf, `чип ${tfText}`)
+        .catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
+      log(`чип ${tfText} нажат способом «${how}»`);
+    }
+    await page.waitForTimeout(randInt(600, 1000));
   }
   // Проверяем РЕЗУЛЬТАТ, а не факт клика: клик мог не переключить вкладку,
   // и ставка ушла бы не на те минуты. Но если разметка вообще не отмечает
@@ -1013,8 +1097,20 @@ async function placeBet(sig) {
   const after = await activeChipName();
   if (after === tfText) {
     log(`таймфрейм ${tfText} выбран`);
-  } else if (after == null && before == null) {
-    log(`таймфрейм ${tfText}: кликнул, но проверить выбор нечем - разметка не отмечает активный чип`);
+  } else if (after == null) {
+    // РАНЬШЕ ЗДЕСЬ ШЛИ ДАЛЬШЕ - и это стоило ставки на 5 минут вместо
+    // 10, с выплатой, прочитанной у чужого таймфрейма. Непроверяемый
+    // выбор экспирации - это ставка вслепую на чужих условиях, поэтому
+    // теперь пропуск. Отключается на бирже: requireTimeframeCheck:false.
+    if (EX.requireTimeframeCheck === false) {
+      log(`таймфрейм ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
+    } else {
+      log(`пропуск ${sig.asset} ${sig.direction}: не удалось убедиться, что выбран ${tfText}`
+        + ' - ставка на чужой экспирации хуже пропущенной');
+      await shot('timeframe-unverified');
+      await dumpPage('timeframe-unverified');
+      return { status: 'skip-timeframe' };
+    }
   } else {
     await shot('timeframe-mismatch');
     throw new Error(`таймфрейм не переключился на ${tfText}, на странице выбран ${after}`);

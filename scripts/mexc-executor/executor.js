@@ -902,21 +902,33 @@ async function activeChipByStyle() {
   try {
     return await page.evaluate(ns => {
       const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      // Подпись вида элемента. Берём ВСЁ, чем обычно помечают выбранное:
+      // подложку, цвет, насыщенность, рамку, тень, обводку, подчёркивание,
+      // прозрачность и фон-картинку. Плюс псевдоэлементы - подсветку
+      // часто рисуют полоской в ::after, и по одному backgroundColor её
+      // не видно: из-за этого проверка молчала, а ставки пропускались.
+      const KEYS = ['backgroundColor', 'backgroundImage', 'color', 'fontWeight',
+                    'borderColor', 'borderWidth', 'borderRadius', 'boxShadow',
+                    'outlineColor', 'textDecorationLine', 'opacity', 'filter'];
+      const sig = el => {
+        const parts = [];
+        for (const who of [null, '::before', '::after']) {
+          const cs = getComputedStyle(el, who);
+          for (const k of KEYS) parts.push(cs[k]);
+          if (who) parts.push(cs.content, cs.width, cs.height);
+        }
+        return parts.join('|');
+      };
       const found = new Map();
       for (const el of document.querySelectorAll('*')) {
         if (!vis(el) || el.children.length > 1) continue;
         const t = (el.innerText || '').trim();
         if (!ns.includes(t) || found.has(t)) continue;
-        // Берём предка с настоящей подложкой: у самого текста фон
-        // обычно прозрачный, красят обёртку.
-        let box = el;
-        for (let i = 0; i < 3 && box.parentElement; i++) {
-          const bg = getComputedStyle(box).backgroundColor;
-          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
-          box = box.parentElement;
-        }
-        const cs = getComputedStyle(box), ts = getComputedStyle(el);
-        found.set(t, [cs.backgroundColor, ts.color, ts.fontWeight, cs.borderColor].join('|'));
+        // Подпись собираем и с самого текста, и с двух предков: красят то
+        // сам чип, то его обёртку.
+        const chain = [];
+        for (let e = el, i = 0; e && i < 3; e = e.parentElement, i++) chain.push(sig(e));
+        found.set(t, chain.join('||'));
       }
       if (found.size < 3) return null;
       const counts = {};
@@ -927,6 +939,53 @@ async function activeChipByStyle() {
   } catch (e) { return null; }
 }
 
+// Выбранная экспирация глазами САМОЙ биржи: приложения обычно помнят её
+// между заходами, а помнят - в localStorage. Читаем только на чтение и
+// только то, что похоже на время: ключ про time/increment/period, а
+// значение совпадает с одним из наших таймфреймов («10», «10m», 600000).
+async function activeChipByStorage() {
+  const pairs = Object.entries(EX.timeUnitText);   // [['10','10m'], ...]
+  try {
+    return await page.evaluate(ps => {
+      const stores = [];
+      try { stores.push(localStorage); } catch (e) {}
+      try { stores.push(sessionStorage); } catch (e) {}
+      const hits = new Set();
+      const KEY = /(time|increment|period|duration|expir|minute|interval)/i;
+      const match = (val) => {
+        const v = String(val).trim().toLowerCase();
+        for (const [min, label] of ps) {
+          if (v === min || v === label.toLowerCase() || v === String(+min * 60)
+              || v === String(+min * 60000)) return label;
+        }
+        return null;
+      };
+      for (const st of stores) {
+        for (let i = 0; i < st.length; i++) {
+          const k = st.key(i);
+          if (!KEY.test(k)) continue;
+          const raw = st.getItem(k);
+          if (raw == null) continue;
+          let hit = match(raw);
+          if (!hit && /^[[{]/.test(raw.trim())) {
+            // Значение бывает объектом: ищем поле с временем внутри.
+            try {
+              const o = JSON.parse(raw);
+              for (const [kk, vv] of Object.entries(o || {})) {
+                if (!KEY.test(kk) || typeof vv === 'object') continue;
+                hit = match(vv);
+                if (hit) break;
+              }
+            } catch (e) {}
+          }
+          if (hit) hits.add(hit);
+        }
+      }
+      return hits.size === 1 ? [...hits][0] : null;
+    }, pairs);
+  } catch (e) { return null; }
+}
+
 // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
 // понять ни разметкой, ни видом.
 async function activeChipName() {
@@ -934,7 +993,9 @@ async function activeChipName() {
     const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
     if (c && await chipActive(c)) return t;
   }
-  return await activeChipByStyle();
+  const byStyle = await activeChipByStyle();
+  if (byStyle) return byStyle;
+  return await activeChipByStorage();
 }
 
 // Клик по чипу настоящей мышью в его координаты. Синтетический
@@ -978,6 +1039,50 @@ async function clickChipByMouse(text) {
 }
 
 
+// Отпечаток выплат страницы: все проценты по порядку. Меняется вместе с
+// экспирацией - у каждого таймфрейма своя ставка возврата.
+async function payoutFingerprint() {
+  try {
+    const body = await page.evaluate(() => document.body.innerText);
+    const all = [...String(body).matchAll(/([0-9]{1,3}(?:[.,][0-9]+)?)\s*%/g)]
+      .map(m => m[1]).slice(0, 8);
+    return all.length ? all.join(',') : null;
+  } catch (e) { return null; }
+}
+
+// Доказательство от противного, когда выбранный чип не отличить ни
+// разметкой, ни видом. Нажимаем ЧУЖОЙ таймфрейм и смотрим, изменились ли
+// выплаты; потом нажимаем нужный и смотрим снова. Две перемены подряд
+// означают, что страница слушается чипов, а последним нажат наш - значит
+// на нём и стоим. Если хоть одна перемена не случилась, ничего не
+// доказано и ставки не будет.
+async function proveByPayoutSwitch(tfText) {
+  const others = Object.values(EX.timeUnitText).filter(t => t !== tfText);
+  if (!others.length) return false;
+  const other = others[randInt(0, others.length - 1)];
+  const sig0 = await payoutFingerprint();
+  if (!sig0) return false;
+  if (!(await clickChipByMouse(other).catch(() => false))) return false;
+  await page.waitForTimeout(randInt(800, 1200));
+  const sig1 = await payoutFingerprint();
+  if (!sig1 || sig1 === sig0) {
+    log(`проверка чипов: нажал ${other}, выплаты не изменились - страница не отзывается`);
+    await clickChipByMouse(tfText).catch(() => {});
+    await page.waitForTimeout(randInt(800, 1200));
+    return false;
+  }
+  if (!(await clickChipByMouse(tfText).catch(() => false))) return false;
+  await page.waitForTimeout(randInt(800, 1200));
+  const sig2 = await payoutFingerprint();
+  if (!sig2 || sig2 === sig1) {
+    log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
+    return false;
+  }
+  log(`таймфрейм ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
+    + `на ${other} и на ${tfText} (выплаты ${sig0} → ${sig1} → ${sig2}) - принимаю`);
+  return true;
+}
+
 // Выставить экспирацию и УБЕДИТЬСЯ, что она выставилась. Проверка сразу
 // после клика ловила старое состояние: SPA перерисовывает чипы не
 // мгновенно, и в журнале копились «таймфрейм не переключился на 10m»,
@@ -1002,6 +1107,10 @@ async function ensureTimeframe(tfText) {
       if (cur === tfText) return { ok: true, cur, tries, how };
     }
     if (tries === 1) log(`чип ${tfText}: нажал (${how}), а выбран ${cur ?? 'неизвестно'} - пробую ещё раз`);
+  }
+  // Разметка молчит - пробуем доказать переключение сменой выплат.
+  if (cur == null && await proveByPayoutSwitch(tfText)) {
+    return { ok: true, cur: tfText, tries: 2, how: 'по смене выплат' };
   }
   return { ok: false, cur, tries: 2 };
 }

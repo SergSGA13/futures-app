@@ -58,7 +58,8 @@
       "minPayoutStrict": true,
       "requirePagePayout": true,
       "signalTimings": [
-        "10m"
+        "10m",
+        "30m"
       ],
       "schedule": {
         "hours": [
@@ -72,19 +73,26 @@
         ]
       },
       "execTimings": [
-        10
+        10,
+        30
       ],
       "stakes": {
         "ETH": 20,
-        "BTC": 20
+        "BTC": 20,
+        "SOL": 20,
+        "XRP": 20
       },
       "stakeLimits": {
         "ETH": 50,
-        "BTC": 50
+        "BTC": 50,
+        "SOL": 50,
+        "XRP": 50
       },
       "urls": {
         "ETH": "https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT",
-        "BTC": "https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT"
+        "BTC": "https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT",
+        "SOL": "https://www.toobit.com/en-US/event-futures/SOL-SWAP-USDT",
+        "XRP": "https://www.toobit.com/en-US/event-futures/XRP-SWAP-USDT"
       },
       "timeUnitText": {
         "5": "5m",

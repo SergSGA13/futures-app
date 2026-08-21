@@ -1171,6 +1171,9 @@ async function placeBet(sig) {
   const url = EX.urls[sig.asset];
   if (!url) throw new Error(`нет URL для актива ${sig.asset} на бирже ${EX.title}`);
   page = await pageFor(sig.ex);
+  // Своя вкладка ставки. Общая переменная page - удобство для помощников,
+  // но её может увести чужая задача; перед нажатием сверимся с этой.
+  const myPage = page;
   // На передний план - тот же разговор про фоновое окно: невидимой
   // вкладке браузер отдаёт кадры по остаточному принципу.
   await page.bringToFront().catch(() => {});
@@ -1369,6 +1372,27 @@ async function placeBet(sig) {
     await shot('no-button');
     await dumpPage('no-button');
     throw new Error('кнопка не найдена: ' + btnSel + ' - смотри ДАМП выше');
+  }
+
+  // ── последняя проверка перед нажатием ──
+  // Между началом ставки и кликом страницу могли увести: расписание
+  // открывает вкладки, холостое действие бродит по бирже. Locator суммы
+  // остаётся привязан к своей странице, а кнопка направления ищется
+  // заново - и жать её можно было уже на чужой вкладке. Ровно так сигнал
+  // по SPCX открыл позицию по BTC.
+  if (page !== myPage) {
+    log('!! вкладка подменилась во время ставки - возвращаю свою');
+    page = myPage;
+  }
+  if (!page.url().startsWith(url)) {
+    await shot('page-drifted');
+    throw new Error(`перед нажатием страница уехала на ${page.url()}`
+      + ` вместо ${url} - ставку не делаю`);
+  }
+  const seenNow = await pageAsset();
+  if (seenNow && seenNow !== sig.asset) {
+    await shot('page-drifted');
+    throw new Error(`перед нажатием на странице ${seenNow}, а сигнал по ${sig.asset} - ставку не делаю`);
   }
 
   if (state.dryRun) {
@@ -1932,29 +1956,38 @@ async function windowBySchedule() {
   }
   if (state.paused) return;   // пауза - «не трогай биржу»
 
-  // Своя вкладка КАЖДОЙ бирже в смене. Раньше вкладка была одна на всех,
-  // и на пересменке страница переезжала с биржи на биржу; когда смены
-  // перекрываются, они начинали её делить - отсюда чужой актив и чужой
-  // таймфрейм в момент ставки.
-  for (const n of active) {
-    if (open.includes(n)) continue;
-    state.busy = true;
-    try {
-      EX = exCfg(n);
-      page = await pageFor(n);
-      const url = homeUrl(EX);
-      if (!url) continue;
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-      await waitForPanel();
-      state.windowAt = Date.now();
-      log(`вкладка ${EX.title} открыта заранее (${homeAsset(EX)}): началась смена`);
-      // Сразу ставим рабочую экспирацию: к приходу сигнала всё готово.
-      await restoreHome('к началу смены');
-    } catch (e) {
-      log(`вкладка ${exCfg(n).title} не открылась: ${e.message}`);
-      await closePageOf(n);
-    } finally { state.busy = false; }
+  // Занятость держим на ВЕСЬ проход. Раньше она ставилась и снималась
+  // внутри цикла - и между двумя биржами успевала начаться ставка. Она
+  // работает с общей переменной страницы, которую следующий виток цикла
+  // тут же переводил на чужую вкладку: сумма набиралась на своей
+  // странице, а кнопку направления жали уже на чужой. Так сигнал по SPCX
+  // и открыл позицию по BTC.
+  state.busy = true;
+  try {
+    // Своя вкладка КАЖДОЙ бирже в смене.
+    for (const n of active) {
+      if (open.includes(n)) continue;
+      if (state.queue.length) break;   // пришёл сигнал - уступаем ему
+      try {
+        EX = exCfg(n);
+        page = await pageFor(n);
+        const url = homeUrl(EX);
+        if (!url) continue;
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+        await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+        await waitForPanel();
+        state.windowAt = Date.now();
+        log(`вкладка ${EX.title} открыта заранее (${homeAsset(EX)}): началась смена`);
+        // Сразу ставим рабочую экспирацию: к приходу сигнала всё готово.
+        await restoreHome('к началу смены');
+      } catch (e) {
+        log(`вкладка ${exCfg(n).title} не открылась: ${e.message}`);
+        await closePageOf(n);
+      }
+    }
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
   }
 
   // Сдавшие смену вкладки закрываем: открытая биржа без торговли - тот
@@ -2460,10 +2493,22 @@ function migrateMode() {
       // последний просмотренный символ. Пока им был ETH, всё сходилось;
       // стоило странице побывать на BTC - и каждая ставка по ETH стала
       // отбиваться проверкой актива. Правильный вид - путь.
-      urls: [JSON.stringify({
-        ETH: 'https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT',
-        BTC: 'https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT',
-      })],
+      urls: [
+        // Параметр ?symbol=... биржа игнорирует и открывает последний
+        // просмотренный символ - отсюда ставки по чужому активу.
+        JSON.stringify({
+          ETH: 'https://www.toobit.com/en-US/event-futures?symbol=ETHUSDT',
+          BTC: 'https://www.toobit.com/en-US/event-futures?symbol=BTCUSDT',
+        }),
+        // Было только два актива - добавились SOL и XRP.
+        JSON.stringify({
+          ETH: 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT',
+          BTC: 'https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT',
+        }),
+      ],
+      // Toobit получил и 30-минутные сигналы.
+      execTimings: [JSON.stringify([10])],
+      signalTimings: [JSON.stringify(['10m'])],
     },
   };
   const fill = (cur, def, who) => {
@@ -2479,7 +2524,28 @@ function migrateMode() {
     }
     return cur;
   };
-  const mexc = (had && raw.exchanges.mexc) ? fill({ ...raw.exchanges.mexc }, sample.mexc, 'mexc') : {
+  // Новый актив в urls без записи в stakes/stakeLimits молча получил бы
+  // ставку 5 USDT и ЧУЖОЙ потолок 150 - на Toobit биржа принимает не
+  // больше 50. Дописываем недостающие активы из примера, а если и там их
+  // нет - берём значения соседнего актива этой же биржи.
+  const fillAssets = (cur, def, who) => {
+    for (const key of ['stakes', 'stakeLimits']) {
+      const assets = Object.keys(cur.urls || {});
+      if (!assets.length) continue;
+      cur[key] = cur[key] || {};
+      const vals = Object.values(cur[key]);
+      for (const a of assets) {
+        if (cur[key][a] != null) continue;
+        const from = ((def || {})[key] || {})[a];
+        const v = from != null ? from : vals[0];
+        if (v == null) continue;
+        cur[key][a] = v;
+        added.push(`${who}.${key}.${a}`);
+      }
+    }
+    return cur;
+  };
+  const mexc = (had && raw.exchanges.mexc) ? fillAssets(fill({ ...raw.exchanges.mexc }, sample.mexc, 'mexc'), sample.mexc, 'mexc') : {
     ...(sample.mexc || { title: 'MEXC', enabled: true }),
     // Пользовательские значения важнее примера: это его настройки.
     maxOpenBets: raw.maxOpenBets ?? (sample.mexc || {}).maxOpenBets ?? 5,
@@ -2492,7 +2558,7 @@ function migrateMode() {
     openPositionsLabel: raw.openPositionsLabel || (sample.mexc || {}).openPositionsLabel || 'Open Positions',
     schedule: { hours: mexcHours },
   };
-  const toobit = (had && raw.exchanges.toobit) ? fill({ ...raw.exchanges.toobit }, sample.toobit, 'toobit') : {
+  const toobit = (had && raw.exchanges.toobit) ? fillAssets(fill({ ...raw.exchanges.toobit }, sample.toobit, 'toobit'), sample.toobit, 'toobit') : {
     ...(sample.toobit || {
       title: 'Toobit', enabled: true, minPayout: 75,
       minPayoutStrict: true, requirePagePayout: true,

@@ -976,8 +976,11 @@ async function refresh() {
     : 'Каждый сигнал - своя ставка. Вход мгновенный, но три сигнала подряд '
       + 'растянутся секунд на десять и займут три биржевых слота из пяти.';
 
+  // У каждой биржи своя вкладка, поэтому показываем какие открыты.
+  const tabs = st.openTabs || [];
   $('browserState').innerHTML = st.browserOpen
-    ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
+    ? `<span class="pill ok" title="${tabs.join(', ')}">${tabs.length > 1 ? tabs.length + ' вкладки' : 'открыт'}</span>`
+    : '<span class="pill">закрыт</span>';
   $('btnOpen').disabled = st.browserOpen || st.busy;
   $('btnClose').disabled = !st.browserOpen || st.busy;
   // Кто сейчас в смене. Общий ответ «активен» после разделения часов

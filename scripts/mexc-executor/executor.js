@@ -409,21 +409,48 @@ function launchOpts(headless) {
 }
 
 let ctx = null, page = null;
+// У КАЖДОЙ биржи своя вкладка. Одна страница на двоих означала, что
+// биржи перетягивают её друг у друга: холостое действие уводило её на
+// чужой актив и таймфрейм, а следующая ставка тратила секунды на
+// возврат - и часто не успевала, отсюда «таймфрейм не переключился» и
+// «страница показывает BTC». Со своей вкладкой каждая биржа сохраняет
+// выбранный актив и экспирацию между ставками.
+const pages = new Map();
 async function browser() {
   if (ctx) return;
   ctx = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(CFG.headless !== false));
-  page = ctx.pages()[0] || await ctx.newPage();
   // Окно могут закрыть крестиком - тогда ctx мёртв, и следующая ставка
   // должна поднять новый, а не биться в закрытый контекст.
-  ctx.on('close', () => { ctx = null; page = null; });
+  ctx.on('close', () => { ctx = null; page = null; pages.clear(); });
+}
+// Вкладка биржи: живая - отдаём, нет - заводим. Первую вкладку контекста
+// переиспользуем, иначе рядом всегда висела бы пустая.
+async function pageFor(name) {
+  await browser();
+  const have = pages.get(name);
+  if (have && !have.isClosed()) return have;
+  const taken = new Set([...pages.values()]);
+  const free = ctx.pages().find(p => !p.isClosed() && !taken.has(p));
+  const p = free || await ctx.newPage();
+  pages.set(name, p);
+  return p;
+}
+function openExchanges() {
+  return [...pages.entries()].filter(([, p]) => p && !p.isClosed()).map(([n]) => n);
+}
+async function closePageOf(name) {
+  const p = pages.get(name);
+  pages.delete(name);
+  if (p && !p.isClosed()) await p.close().catch(() => {});
+  if (page === p) page = null;
 }
 async function closeBrowser() {
   if (!ctx) return;
   const c = ctx;
-  ctx = null; page = null;
+  ctx = null; page = null; pages.clear();
   await c.close().catch(() => {});
 }
-function browserOpen() { return !!ctx; }
+function browserOpen() { return !!ctx && openExchanges().length > 0; }
 
 // ── клик «как человек» ──
 // Playwright по умолчанию бьёт точно в геометрический центр элемента и
@@ -443,7 +470,9 @@ function wordRe(word) {
 
 // Где сейчас курсор. page.mouse своего положения не отдаёт, поэтому
 // ведём сами: без этого каждое движение начиналось бы из (0,0).
-let mousePos = null;
+// Отдельно НА КАЖДУЮ вкладку: у бирж теперь свои страницы, и путь от
+// координат чужой вкладки был бы бессмыслицей.
+const mouseAt = new WeakMap();
 
 // Подвод курсора к точке по дуге. Прямая из точки в точку - такой же
 // машинный след, как и мгновенный «телепорт» в кнопку: у человека
@@ -451,7 +480,7 @@ let mousePos = null;
 // рука подрагивает. Квадратичная кривая Безье с контрольной точкой
 // сбоку от прямой даёт ровно это, и стоит десяток move-событий.
 async function mouseGlide(pg, x, y) {
-  const from = mousePos || { x: x + randInt(-320, 320), y: y + randInt(-220, 220) };
+  const from = mouseAt.get(pg) || { x: x + randInt(-320, 320), y: y + randInt(-220, 220) };
   const dist = Math.hypot(x - from.x, y - from.y) || 1;
   const steps = Math.max(6, Math.min(26, Math.round(dist / 24) + randInt(2, 6)));
   // Нормаль к прямой: вдоль неё отводим контрольную точку. Чем длиннее
@@ -468,7 +497,7 @@ async function mouseGlide(pg, x, y) {
     if (i % 3 === 0) await sleep(randInt(4, 18));
   }
   await pg.mouse.move(x, y);
-  mousePos = { x, y };
+  mouseAt.set(pg, { x, y });
 }
 
 // Подход к элементу: иногда покрутить колесо (человек не попадает в
@@ -835,6 +864,148 @@ async function pageAssetOnPage() {
   } catch (e) { return null; }
 }
 
+// Берём первый ВИДИМЫЙ чип, а не первый попавшийся: селектор широкий
+// и легко цепляет скрытую разметку вкладок.
+async function visibleChip(re) {
+  const all = page.locator(EX.selectors.timeUnit).filter({ hasText: re });
+  const n = Math.min(await all.count().catch(() => 0), 12);
+  for (let i = 0; i < n; i++) {
+    const c = all.nth(i);
+    if (await c.isVisible().catch(() => false)) return c;
+  }
+  // Селектор из конфига перечисляет теги, а на Toobit чипы «Time
+  // Increment» - обычные div: по селектору находилось НОЛЬ элементов,
+  // хотя на экране они есть. getByText берёт самый глубокий узел с
+  // точным текстом, каким бы тегом он ни был.
+  const byText = page.getByText(re).first();
+  if (await byText.count() > 0 && await byText.isVisible().catch(() => false)) return byText;
+  return null;
+}
+// «Выбран» на разных вёрстках отмечается по-разному: aria-selected на
+// самом элементе или класс active/selected/checked на нём либо на
+// обёртке вкладки. Поэтому смотрим и вверх по нескольким предкам.
+const chipActive = c => c.evaluate(el => {
+  const hit = e => !!e && (
+    (e.getAttribute && e.getAttribute('aria-selected') === 'true') ||
+    /(^|[-_ ])(active|selected|checked)([-_ ]|$)/i.test(String(e.className || '')));
+  for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) if (hit(e)) return true;
+  return false;
+}).catch(() => false);
+
+// Какой чип отмечен выбранным - ПО СТИЛЮ. Разметка Toobit не ставит
+// ни aria-selected, ни класса active: чипы отличаются только видом.
+// Зато выбранный там ровно один, а остальные одинаковые - значит
+// «белая ворона» и есть выбранный. Сравниваем фон, цвет, насыщенность
+// и рамку. Если чипов меньше трёх или отличается не один - молчим.
+async function activeChipByStyle() {
+  const names = Object.values(EX.timeUnitText);
+  try {
+    return await page.evaluate(ns => {
+      const vis = el => !!(el.offsetWidth || el.offsetHeight);
+      const found = new Map();
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 1) continue;
+        const t = (el.innerText || '').trim();
+        if (!ns.includes(t) || found.has(t)) continue;
+        // Берём предка с настоящей подложкой: у самого текста фон
+        // обычно прозрачный, красят обёртку.
+        let box = el;
+        for (let i = 0; i < 3 && box.parentElement; i++) {
+          const bg = getComputedStyle(box).backgroundColor;
+          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
+          box = box.parentElement;
+        }
+        const cs = getComputedStyle(box), ts = getComputedStyle(el);
+        found.set(t, [cs.backgroundColor, ts.color, ts.fontWeight, cs.borderColor].join('|'));
+      }
+      if (found.size < 3) return null;
+      const counts = {};
+      for (const v of found.values()) counts[v] = (counts[v] || 0) + 1;
+      const odd = [...found.entries()].filter(([, v]) => counts[v] === 1);
+      return odd.length === 1 ? odd[0][0] : null;
+    }, names);
+  } catch (e) { return null; }
+}
+
+// Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
+// понять ни разметкой, ни видом.
+async function activeChipName() {
+  for (const t of Object.values(EX.timeUnitText)) {
+    const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
+    if (c && await chipActive(c)) return t;
+  }
+  return await activeChipByStyle();
+}
+
+// Клик по чипу настоящей мышью в его координаты. Синтетический
+// el.click() на Toobit «срабатывал» без ошибки и НЕ переключал
+// таймфрейм: приложение слушает не click, а нажатие мыши. Ставка при
+// этом уходила на 5 минут - и с выплатой от чужого таймфрейма.
+// Здесь события те же, что от руки, и проверки перекрытия не мешают.
+async function clickChipByMouse(text) {
+  const box = await page.evaluate(t => {
+    const vis = el => !!(el.offsetWidth || el.offsetHeight);
+    for (const el of document.querySelectorAll('*')) {
+      if (!vis(el) || el.children.length > 1) continue;
+      if ((el.innerText || '').trim() !== t) continue;
+      // Поднимаемся, только пока цель слишком мала для клика: сам
+      // текст бывает обёрнут в span без размера. Требовать при этом
+      // cursor:pointer нельзя - у обычной <button> курсор по
+      // умолчанию другой, и подъём уходил до самого body, после чего
+      // клик приходился в пустое место страницы.
+      let hit = el;
+      for (let i = 0; i < 3 && hit.parentElement; i++) {
+        const r = hit.getBoundingClientRect();
+        if (r.width >= 24 && r.height >= 16) break;
+        hit = hit.parentElement;
+      }
+      hit.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = hit.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return null;
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }
+    return null;
+  }, text);
+  if (!box) return false;
+  const x = box.x + box.w * (0.3 + Math.random() * 0.4);
+  const y = box.y + box.h * (0.3 + Math.random() * 0.4);
+  await mouseGlide(page, x, y);
+  await sleep(randInt(40, 140));
+  await page.mouse.down();
+  await sleep(randInt(45, 120));
+  await page.mouse.up();
+  return true;
+}
+
+
+// Выставить экспирацию и УБЕДИТЬСЯ, что она выставилась. Проверка сразу
+// после клика ловила старое состояние: SPA перерисовывает чипы не
+// мгновенно, и в журнале копились «таймфрейм не переключился на 10m»,
+// хотя через секунду он был уже тот. Поэтому ждём результата до трёх
+// секунд и, если не дождались, нажимаем второй раз.
+async function ensureTimeframe(tfText) {
+  const re = new RegExp('^\\s*' + tfText + '\\s*$');
+  let cur = await activeChipName();
+  if (cur === tfText) return { ok: true, cur, tries: 0 };
+  for (let tries = 1; tries <= 2; tries++) {
+    const chip = await visibleChip(re);
+    let how = 'мышью';
+    if (!(await clickChipByMouse(tfText).catch(() => false))) {
+      if (!chip) return { ok: false, cur, tries, missing: true };
+      how = await clickStubborn(chip, `чип ${tfText}`).catch(() => null);
+      if (!how) return { ok: false, cur, tries };
+    }
+    const until = Date.now() + 3000;
+    while (Date.now() < until) {
+      await page.waitForTimeout(300);
+      cur = await activeChipName();
+      if (cur === tfText) return { ok: true, cur, tries, how };
+    }
+    if (tries === 1) log(`чип ${tfText}: нажал (${how}), а выбран ${cur ?? 'неизвестно'} - пробую ещё раз`);
+  }
+  return { ok: false, cur, tries: 2 };
+}
+
 // ── ставка ──
 async function placeBet(sig) {
   const t0 = Date.now();
@@ -843,7 +1014,7 @@ async function placeBet(sig) {
   EX = exCfg(sig.ex);
   const url = EX.urls[sig.asset];
   if (!url) throw new Error(`нет URL для актива ${sig.asset} на бирже ${EX.title}`);
-  await browser();
+  page = await pageFor(sig.ex);
   // На передний план - тот же разговор про фоновое окно: невидимой
   // вкладке браузер отдаёт кадры по остаточному принципу.
   await page.bringToFront().catch(() => {});
@@ -949,159 +1120,19 @@ async function placeBet(sig) {
 
   // ── таймфрейм ──
   // Экспирация НЕ подтверждается ничем, кроме выбранного чипа, поэтому
-  // ошибиться тут значит открыть ставку не на те минуты. Так и вышло:
-  // .first() брал первое совпадение, оно оказывалось скрытым, клик
-  // молча пропускался, и ставка уходила на тот таймфрейм, что стоял на
-  // странице. Пока каждая ставка перезагружала страницу, чип сбрасывался
-  // сам; после оптимизации «не перезагружать, если уже открыто» прежний
-  // выбор стал сохраняться - и 10-минутные сигналы поехали на 30 минут.
+  // ошибиться тут значит открыть ставку не на те минуты - и прочитать
+  // выплату чужого таймфрейма.
   const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
-  const tfRe = new RegExp('^\\s*' + tfText + '\\s*$');
-
-  // Берём первый ВИДИМЫЙ чип, а не первый попавшийся: селектор широкий
-  // и легко цепляет скрытую разметку вкладок.
-  async function visibleChip(re) {
-    const all = page.locator(EX.selectors.timeUnit).filter({ hasText: re });
-    const n = Math.min(await all.count().catch(() => 0), 12);
-    for (let i = 0; i < n; i++) {
-      const c = all.nth(i);
-      if (await c.isVisible().catch(() => false)) return c;
-    }
-    // Селектор из конфига перечисляет теги, а на Toobit чипы «Time
-    // Increment» - обычные div: по селектору находилось НОЛЬ элементов,
-    // хотя на экране они есть. getByText берёт самый глубокий узел с
-    // точным текстом, каким бы тегом он ни был.
-    const byText = page.getByText(re).first();
-    if (await byText.count() > 0 && await byText.isVisible().catch(() => false)) return byText;
-    return null;
-  }
-  // «Выбран» на разных вёрстках отмечается по-разному: aria-selected на
-  // самом элементе или класс active/selected/checked на нём либо на
-  // обёртке вкладки. Поэтому смотрим и вверх по нескольким предкам.
-  const chipActive = c => c.evaluate(el => {
-    const hit = e => !!e && (
-      (e.getAttribute && e.getAttribute('aria-selected') === 'true') ||
-      /(^|[-_ ])(active|selected|checked)([-_ ]|$)/i.test(String(e.className || '')));
-    for (let e = el, i = 0; e && i < 4; e = e.parentElement, i++) if (hit(e)) return true;
-    return false;
-  }).catch(() => false);
-
-  // Какой чип отмечен выбранным - ПО СТИЛЮ. Разметка Toobit не ставит
-  // ни aria-selected, ни класса active: чипы отличаются только видом.
-  // Зато выбранный там ровно один, а остальные одинаковые - значит
-  // «белая ворона» и есть выбранный. Сравниваем фон, цвет, насыщенность
-  // и рамку. Если чипов меньше трёх или отличается не один - молчим.
-  async function activeChipByStyle() {
-    const names = Object.values(EX.timeUnitText);
-    try {
-      return await page.evaluate(ns => {
-        const vis = el => !!(el.offsetWidth || el.offsetHeight);
-        const found = new Map();
-        for (const el of document.querySelectorAll('*')) {
-          if (!vis(el) || el.children.length > 1) continue;
-          const t = (el.innerText || '').trim();
-          if (!ns.includes(t) || found.has(t)) continue;
-          // Берём предка с настоящей подложкой: у самого текста фон
-          // обычно прозрачный, красят обёртку.
-          let box = el;
-          for (let i = 0; i < 3 && box.parentElement; i++) {
-            const bg = getComputedStyle(box).backgroundColor;
-            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
-            box = box.parentElement;
-          }
-          const cs = getComputedStyle(box), ts = getComputedStyle(el);
-          found.set(t, [cs.backgroundColor, ts.color, ts.fontWeight, cs.borderColor].join('|'));
-        }
-        if (found.size < 3) return null;
-        const counts = {};
-        for (const v of found.values()) counts[v] = (counts[v] || 0) + 1;
-        const odd = [...found.entries()].filter(([, v]) => counts[v] === 1);
-        return odd.length === 1 ? odd[0][0] : null;
-      }, names);
-    } catch (e) { return null; }
-  }
-
-  // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
-  // понять ни разметкой, ни видом.
-  async function activeChipName() {
-    for (const t of Object.values(EX.timeUnitText)) {
-      const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
-      if (c && await chipActive(c)) return t;
-    }
-    return await activeChipByStyle();
-  }
-
-  // Клик по чипу настоящей мышью в его координаты. Синтетический
-  // el.click() на Toobit «срабатывал» без ошибки и НЕ переключал
-  // таймфрейм: приложение слушает не click, а нажатие мыши. Ставка при
-  // этом уходила на 5 минут - и с выплатой от чужого таймфрейма.
-  // Здесь события те же, что от руки, и проверки перекрытия не мешают.
-  async function clickChipByMouse(text) {
-    const box = await page.evaluate(t => {
-      const vis = el => !!(el.offsetWidth || el.offsetHeight);
-      for (const el of document.querySelectorAll('*')) {
-        if (!vis(el) || el.children.length > 1) continue;
-        if ((el.innerText || '').trim() !== t) continue;
-        // Поднимаемся, только пока цель слишком мала для клика: сам
-        // текст бывает обёрнут в span без размера. Требовать при этом
-        // cursor:pointer нельзя - у обычной <button> курсор по
-        // умолчанию другой, и подъём уходил до самого body, после чего
-        // клик приходился в пустое место страницы.
-        let hit = el;
-        for (let i = 0; i < 3 && hit.parentElement; i++) {
-          const r = hit.getBoundingClientRect();
-          if (r.width >= 24 && r.height >= 16) break;
-          hit = hit.parentElement;
-        }
-        hit.scrollIntoView({ block: 'center', inline: 'center' });
-        const r = hit.getBoundingClientRect();
-        if (r.width < 4 || r.height < 4) return null;
-        return { x: r.x, y: r.y, w: r.width, h: r.height };
-      }
-      return null;
-    }, text);
-    if (!box) return false;
-    const x = box.x + box.w * (0.3 + Math.random() * 0.4);
-    const y = box.y + box.h * (0.3 + Math.random() * 0.4);
-    await mouseGlide(page, x, y);
-    await sleep(randInt(40, 140));
-    await page.mouse.down();
-    await sleep(randInt(45, 120));
-    await page.mouse.up();
-    return true;
-  }
-
-  const tf = await visibleChip(tfRe);
-  if (!tf) {
+  const tf = await ensureTimeframe(tfText);
+  if (tf.missing) {
     await shot('no-timeframe');
     await dumpPage('no-timeframe');
     throw new Error(`чип таймфрейма "${tfText}" не найден - смотри ДАМП выше`);
   }
-  const before = await activeChipName();
-  const needClick = before !== tfText;
-  if (needClick) {
-    const byMouse = await clickChipByMouse(tfText).catch(() => false);
-    if (byMouse) log(`чип ${tfText} нажат мышью`);
-    else {
-      const how = await clickStubborn(tf, `чип ${tfText}`)
-        .catch(e => { throw new Error('чип таймфрейма не кликнулся: ' + e.message); });
-      log(`чип ${tfText} нажат способом «${how}»`);
-    }
-    await page.waitForTimeout(randInt(600, 1000));
-  }
-  // Проверяем РЕЗУЛЬТАТ, а не факт клика: клик мог не переключить вкладку,
-  // и ставка ушла бы не на те минуты. Но если разметка вообще не отмечает
-  // выбранный чип (activeChipName вернул null и до, и после), проверять
-  // нечем - тогда идём дальше с записью в лог. Запрет на этом основании
-  // остановил бы вообще все ставки, а это хуже исходной ошибки.
-  const after = await activeChipName();
-  if (after === tfText) {
-    log(`таймфрейм ${tfText} выбран`);
-  } else if (after == null) {
-    // РАНЬШЕ ЗДЕСЬ ШЛИ ДАЛЬШЕ - и это стоило ставки на 5 минут вместо
-    // 10, с выплатой, прочитанной у чужого таймфрейма. Непроверяемый
-    // выбор экспирации - это ставка вслепую на чужих условиях, поэтому
-    // теперь пропуск. Отключается на бирже: requireTimeframeCheck:false.
+  if (tf.ok) {
+    log(`таймфрейм ${tfText} выбран${tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : ''}`);
+  } else if (tf.cur == null) {
+    // Непроверяемый выбор экспирации - ставка вслепую на чужих условиях.
     if (EX.requireTimeframeCheck === false) {
       log(`таймфрейм ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
     } else {
@@ -1113,7 +1144,7 @@ async function placeBet(sig) {
     }
   } else {
     await shot('timeframe-mismatch');
-    throw new Error(`таймфрейм не переключился на ${tfText}, на странице выбран ${after}`);
+    throw new Error(`таймфрейм не переключился на ${tfText}, на странице выбран ${tf.cur}`);
   }
 
   // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
@@ -1563,6 +1594,36 @@ async function pump() {
   }
 }
 
+// Рабочее состояние биржи: первый актив из urls и первый таймфрейм из
+// execTimings. Именно к нему возвращаемся после блужданий.
+function homeAsset(E) {
+  const all = Object.keys(E.urls || {});
+  return E.homeAsset && all.includes(E.homeAsset) ? E.homeAsset : all[0];
+}
+function homeUrl(E) {
+  const a = homeAsset(E);
+  return a ? E.urls[a] : null;
+}
+// Вернуть текущую вкладку к рабочему активу и экспирации. Ошибки глотаем:
+// это подготовка к будущей ставке, а не условие текущей.
+async function restoreHome(why) {
+  try {
+    const url = homeUrl(EX);
+    if (!page || page.isClosed() || !url) return;
+    if (!page.url().startsWith(url)) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+      await waitForPanel();
+    }
+    const tfText = EX.timeUnitText[String((EX.execTimings || [10])[0])] || '10m';
+    const r = await ensureTimeframe(tfText);
+    log(`${EX.title}: возврат к ${homeAsset(EX)} ${tfText} ${why} - `
+      + (r.ok ? 'готово' : `не вышло (выбран ${r.cur ?? 'неизвестно'})`));
+  } catch (e) {
+    log('возврат в рабочее состояние не удался: ' + e.message);
+  }
+}
+
 // ── холостая активность ──
 // Аккаунт, который заходит на страницу ровно за секунду до ставки и тут
 // же уходит, выглядит роботом. Между ставками делаем то, что делает
@@ -1643,17 +1704,26 @@ async function idleAction() {
       await page.mouse.wheel(0, -randInt(150, 700));
 
     } else if (act === 'timeframe') {
-      // 30m и обратно на 10m. Безопасно: боевой код всё равно сам
-      // выставляет нужный чип перед каждой ставкой.
-      for (const t of ['30m', '10m']) {
-        const chip = page.locator(EX.selectors.timeUnit)
-          .filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
-        if (await chip.isVisible().catch(() => false)) await humanClick(chip);
-        if (!await idleWait(randInt(1200, 4000))) break;
+      // Смотрим соседний таймфрейм и возвращаемся. Возврат делает
+      // restoreHome ниже - раньше он был частью самого действия, и если
+      // клик не срабатывал, страница оставалась на чужой экспирации.
+      const names = Object.values(EX.timeUnitText);
+      const other = names.filter(t => t !== EX.timeUnitText[String((EX.execTimings || [10])[0])]);
+      if (other.length) {
+        await ensureTimeframe(other[randInt(0, other.length - 1)]).catch(() => {});
+        await idleWait(randInt(1200, 4000));
       }
     }
     state.lastIdle = { act, at: Date.now() };
     log(`холостое действие: ${act}`);
+
+    // ── возврат в рабочее состояние ──
+    // Холостое действие уводит страницу на другой актив и таймфрейм, а
+    // сигнал приходит внезапно и должен успеть в свою свечу. Раньше
+    // возврат ложился на саму ставку, и в журнале копились «таймфрейм не
+    // переключился» и пропуски. Теперь страница возвращается к рабочему
+    // активу и экспирации сразу после блуждания - времени сколько угодно.
+    await restoreHome('после холостого действия');
   } catch (e) {
     // Намеренно не трогаем consecutiveErrors: это шум, а не ставка,
     // и его сбои не должны загонять исполнитель в dry-run.
@@ -1696,47 +1766,53 @@ async function windowBySchedule() {
   // Под руку не лезем: идёт ставка, что-то в очереди - не наше время.
   if (state.busy || state.queue.length) return;
   const active = activeExchanges();
-  // Окно открыто на бирже, которая уже сдала смену? Это и есть
-  // пересменка: страницу надо перевести на ту, что заступила.
-  const openOn = browserOpen() && exNames().find(n => Object.values(exCfg(n).urls || {})
-    .some(u => page.url().startsWith(u)));
-  const shift = openOn && !active.includes(openOn) && active.length;
+  const open = openExchanges();
 
-  if (active.length && (!browserOpen() || shift)) {
-    // На паузе окно не открываем: пауза - это «не трогай биржу».
-    if (state.paused) return;
-    // Открытое руками не перетаскиваем на другую биржу: человек смотрит.
-    if (shift && state.windowManual) return;
-    state.busy = true;
-    try {
-      await browser();
-      // Биржу и актив выбираем случайно среди работающих сейчас: одна и
-      // та же стартовая страница каждое утро - такая же сигнатура, как
-      // одинаковая точка клика. Держать открытыми обе биржи смысла нет,
-      // вторую откроет сама ставка.
-      EX = exCfg(active[randInt(0, active.length - 1)]);
-      const all = Object.keys(EX.urls || {});
-      if (!all.length) return;
-      const a = all[randInt(0, all.length - 1)];
-      await page.goto(EX.urls[a], { waitUntil: 'domcontentloaded', timeout: 25000 });
-      state.windowAt = Date.now();
-      log(shift
-        ? `пересменка: ${exCfg(openOn).title} закончила, окно переведено на ${EX.title} ${a}`
-        : `окно биржи открыто заранее (${EX.title} ${a}): начались активные часы`);
-    } catch (e) {
-      log('окно биржи не открылось по расписанию: ' + e.message);
-      await closeBrowser();
-    } finally { state.busy = false; }
-    return;
-  }
-
-  if (!active.length && browserOpen()) {
-    // Открытое руками не закрываем: человек смотрит на него сам.
-    if (state.windowManual) return;
+  // Никто не в смене - закрываем окно целиком.
+  if (!active.length) {
+    if (!browserOpen() || state.windowManual) return;
     await closeBrowser();
     state.windowAt = Date.now();
     log('окно биржи закрыто: начались тихие часы');
+    return;
   }
+  if (state.paused) return;   // пауза - «не трогай биржу»
+
+  // Своя вкладка КАЖДОЙ бирже в смене. Раньше вкладка была одна на всех,
+  // и на пересменке страница переезжала с биржи на биржу; когда смены
+  // перекрываются, они начинали её делить - отсюда чужой актив и чужой
+  // таймфрейм в момент ставки.
+  for (const n of active) {
+    if (open.includes(n)) continue;
+    state.busy = true;
+    try {
+      EX = exCfg(n);
+      page = await pageFor(n);
+      const url = homeUrl(EX);
+      if (!url) continue;
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+      await waitForPanel();
+      state.windowAt = Date.now();
+      log(`вкладка ${EX.title} открыта заранее (${homeAsset(EX)}): началась смена`);
+      // Сразу ставим рабочую экспирацию: к приходу сигнала всё готово.
+      await restoreHome('к началу смены');
+    } catch (e) {
+      log(`вкладка ${exCfg(n).title} не открылась: ${e.message}`);
+      await closePageOf(n);
+    } finally { state.busy = false; }
+  }
+
+  // Сдавшие смену вкладки закрываем: открытая биржа без торговли - тот
+  // самый круглосуточный след. Открытое руками не трогаем.
+  if (state.windowManual) return;
+  for (const n of openExchanges()) {
+    if (active.includes(n)) continue;
+    await closePageOf(n);
+    state.windowAt = Date.now();
+    log(`вкладка ${exCfg(n).title} закрыта: смена закончилась`);
+  }
+  if (!openExchanges().length && browserOpen()) await closeBrowser();
 }
 
 function scheduleIdle() {
@@ -1786,6 +1862,7 @@ function snapshot() {
     activeNow: anyActive(),
     todayWindows: todayWindows(),
     browserOpen: browserOpen(),
+    openTabs: openExchanges().map(n => exCfg(n).title),
     busy: state.busy,
     // всё, что редактируется в панели, отдаём одним куском
     settings: {
@@ -2108,13 +2185,14 @@ const server = http.createServer((req, res) => {
       const E = exCfg(name);
       const first = Object.values(E.urls || {})[0];
       if (!first) return sendJson(400, { error: `у биржи ${E.title} не задан ни один адрес` });
-      browser().then(async () => {
+      pageFor(name).then(async (p) => {
+        EX = E; page = p;
         // Уже стоим на нужной бирже - не дёргаем страницу.
-        const here = Object.values(E.urls).some(u => page.url().startsWith(u));
-        if (!here) await page.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
-        EX = E;
+        const here = Object.values(E.urls).some(u => p.url().startsWith(u));
+        if (!here) await p.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+        await p.bringToFront().catch(() => {});
         state.windowManual = true;
-        log(`панель: окно биржи открыто (${E.title})`);
+        log(`панель: вкладка биржи открыта (${E.title})`);
         sendJson(200, { ok: true, exchange: name });
       }).catch(e => { log('окно биржи не открылось: ' + e.message); sendJson(500, { error: e.message }); });
       return;

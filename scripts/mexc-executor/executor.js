@@ -112,7 +112,7 @@ function exCfg(name) {
     // уйдёт на чужие минуты и с чужой выплатой. false - только если
     // разметку иначе не прочитать и риск осознан.
     requireTimeframeCheck: e.requireTimeframeCheck !== false,
-    // Какие таймфреймы биржа вообще отрабатывает. На Toobit идут только
+    // Какие времена экспирации биржа вообще отрабатывает. На Toobit идут только
     // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
     // ошибке маршрутизации, должна отбиться, а не открыться.
     execTimings: e.execTimings || CFG.execTimings || [10],
@@ -415,8 +415,8 @@ function launchOpts(headless) {
 let ctx = null, page = null;
 // У КАЖДОЙ биржи своя вкладка. Одна страница на двоих означала, что
 // биржи перетягивают её друг у друга: холостое действие уводило её на
-// чужой актив и таймфрейм, а следующая ставка тратила секунды на
-// возврат - и часто не успевала, отсюда «таймфрейм не переключился» и
+// чужой актив и экспирацию, а следующая ставка тратила секунды на
+// возврат - и часто не успевала, отсюда «экспирация не переключилась» и
 // «страница показывает BTC». Со своей вкладкой каждая биржа сохраняет
 // выбранный актив и экспирацию между ставками.
 const pages = new Map();
@@ -1011,7 +1011,7 @@ async function activeChipByStyle() {
 // Выбранная экспирация глазами САМОЙ биржи: приложения обычно помнят её
 // между заходами, а помнят - в localStorage. Читаем только на чтение и
 // только то, что похоже на время: ключ про time/increment/period, а
-// значение совпадает с одним из наших таймфреймов («10», «10m», 600000).
+// значение совпадает с одним из наших времён экспирации («10», «10m», 600000).
 async function activeChipByStorage() {
   const pairs = Object.entries(EX.timeUnitText);   // [['10','10m'], ...]
   try {
@@ -1069,8 +1069,8 @@ async function activeChipName() {
 
 // Клик по чипу настоящей мышью в его координаты. Синтетический
 // el.click() на Toobit «срабатывал» без ошибки и НЕ переключал
-// таймфрейм: приложение слушает не click, а нажатие мыши. Ставка при
-// этом уходила на 5 минут - и с выплатой от чужого таймфрейма.
+// экспирацию: приложение слушает не click, а нажатие мыши. Ставка при
+// этом уходила на 5 минут - и с выплатой от чужой экспирации.
 // Здесь события те же, что от руки, и проверки перекрытия не мешают.
 async function clickChipByMouse(text) {
   const r = await chipScan(text);
@@ -1087,7 +1087,7 @@ async function clickChipByMouse(text) {
 }
 
 // Отпечаток выплат страницы: все проценты по порядку. Меняется вместе с
-// экспирацией - у каждого таймфрейма своя ставка возврата.
+// экспирацией - у каждой экспирации своя ставка возврата.
 async function payoutFingerprint() {
   try {
     const body = await page.evaluate(() => document.body.innerText);
@@ -1098,7 +1098,7 @@ async function payoutFingerprint() {
 }
 
 // Доказательство от противного, когда выбранный чип не отличить ни
-// разметкой, ни видом. Нажимаем ЧУЖОЙ таймфрейм и смотрим, изменились ли
+// разметкой, ни видом. Нажимаем ЧУЖУЮ экспирацию и смотрим, изменились ли
 // выплаты; потом нажимаем нужный и смотрим снова. Две перемены подряд
 // означают, что страница слушается чипов, а последним нажат наш - значит
 // на нём и стоим. Если хоть одна перемена не случилась, ничего не
@@ -1125,14 +1125,14 @@ async function proveByPayoutSwitch(tfText) {
     log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
     return false;
   }
-  log(`таймфрейм ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
+  log(`экспирация ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
     + `на ${other} и на ${tfText} (выплаты ${sig0} → ${sig1} → ${sig2}) - принимаю`);
   return true;
 }
 
 // Выставить экспирацию и УБЕДИТЬСЯ, что она выставилась. Проверка сразу
 // после клика ловила старое состояние: SPA перерисовывает чипы не
-// мгновенно, и в журнале копились «таймфрейм не переключился на 10m»,
+// мгновенно, и в журнале копились «экспирация не переключилась на 10m»,
 // хотя через секунду он был уже тот. Поэтому ждём результата до трёх
 // секунд и, если не дождались, нажимаем второй раз.
 async function ensureTimeframe(tfText) {
@@ -1277,33 +1277,33 @@ async function placeBet(sig) {
     throw new Error('НЕ ЗАЛОГИНЕН - выполни: node executor.js login');
   }
 
-  // ── таймфрейм ──
+  // ── время экспирации ──
   // Экспирация НЕ подтверждается ничем, кроме выбранного чипа, поэтому
   // ошибиться тут значит открыть ставку не на те минуты - и прочитать
-  // выплату чужого таймфрейма.
+  // выплату чужой экспирации.
   const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
   const tf = await ensureTimeframe(tfText);
   if (tf.missing) {
-    await shot('no-timeframe');
-    await dumpPage('no-timeframe');
-    throw new Error(`чип таймфрейма "${tfText}" не найден - смотри ДАМП выше`);
+    await shot('no-expiry');
+    await dumpPage('no-expiry');
+    throw new Error(`чип экспирации "${tfText}" не найден - смотри ДАМП выше`);
   }
   if (tf.ok) {
-    log(`таймфрейм ${tfText} выбран${tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : ''}`);
+    log(`экспирация ${tfText} выбрана${tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : ''}`);
   } else if (tf.cur == null) {
     // Непроверяемый выбор экспирации - ставка вслепую на чужих условиях.
     if (EX.requireTimeframeCheck === false) {
-      log(`таймфрейм ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
+      log(`экспирация ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
     } else {
-      log(`пропуск ${sig.asset} ${sig.direction}: не удалось убедиться, что выбран ${tfText}`
+      log(`пропуск ${sig.asset} ${sig.direction}: не удалось убедиться, что выбрана экспирация ${tfText}`
         + ' - ставка на чужой экспирации хуже пропущенной');
-      await shot('timeframe-unverified');
-      await dumpPage('timeframe-unverified');
-      return { status: 'skip-timeframe' };
+      await shot('expiry-unverified');
+      await dumpPage('expiry-unverified');
+      return { status: 'skip-expiry' };
     }
   } else {
-    await shot('timeframe-mismatch');
-    throw new Error(`таймфрейм не переключился на ${tfText}, на странице выбран ${tf.cur}`);
+    await shot('expiry-mismatch');
+    throw new Error(`экспирация не переключилась на ${tfText}, на странице выбрана ${tf.cur}`);
   }
 
   // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
@@ -1547,7 +1547,14 @@ function namedExchange(sig) {
 function exchangeByTiming(sig, asset) {
   const raw = String(sig.timing ?? '').toLowerCase().trim();
   if (!raw) return '';
-  const hit = exNames().find(n => exCfg(n).signalTimings.includes(raw));
+  let hit = exNames().find(n => exCfg(n).signalTimings.includes(raw));
+  // Метка вида "TOOBIT_10m" / "MEXC_30m" называет биржу прямо в себе.
+  // Разбираем префикс, даже если такую метку не успели прописать в
+  // signalTimings: источник может завести новую в любой момент.
+  if (!hit) {
+    const pre = raw.split(/[ _:-]/)[0];
+    hit = exNames().find(n => n.toLowerCase() === pre);
+  }
   if (!hit) return '';
   if (asset && !(exCfg(hit).urls || {})[asset]) return '';
   return hit;
@@ -1610,7 +1617,7 @@ function acceptSignal(sig, src) {
   const execTimings = exCfg(sig.ex).execTimings;
   if (execTimings.indexOf(sig.timing) < 0) {
     return skip('timing', null,
-      `${exCfg(sig.ex).title}: тайминг ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
+      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
   }
   if (!inActiveHours(null, sig.ex)) {
     return skip('quiet-hours', 'skip-quiet',
@@ -1648,7 +1655,8 @@ function acceptSignal(sig, src) {
   // Биржа входит в ключ: ETH UP на MEXC и ETH UP на Toobit - две разные
   // ставки разными деньгами, и вторая не повтор первой. Без этого при
   // двух биржах второй сигнал молча пропадал бы как дубль.
-  const key = `${sig.ex}|${sig.asset}|${sig.direction}|${sig.dedupKey || sig.receivedAt || sig.bartime || sig.sentAt}`;
+  const key = `${sig.ex}|${sig.asset}|${sig.direction}|${sig.timing}`
+    + `|${sig.dedupKey || sig.receivedAt || sig.bartime || sig.sentAt}`;
   state.recent = state.recent.filter(r => now - r.t < 120000);
   if (state.recent.some(r => r.key === key)) return 'duplicate';
   state.recent.push({ key, t: now });
@@ -1698,9 +1706,12 @@ function enqueueSignal(sig) {
     setImmediate(pump);
     return 'queued';
   }
-  // Ключ пачки включает биржу: один и тот же ETH UP на MEXC и на Toobit -
-  // две разные ставки разными деньгами, складывать их в одну нельзя.
-  const k = sig.ex + '|' + sig.asset + '|' + sig.direction;
+  // Ключ пачки включает биржу И время экспирации. Биржу - потому что
+  // один и тот же ETH UP на MEXC и на Toobit это разные деньги.
+  // Экспирацию - потому что 10-минутный и 30-минутный сигналы это разные
+  // ставки на разные свечи: без неё они складывались в одну, и ставка
+  // уходила на экспирацию того сигнала, что пришёл первым.
+  const k = `${sig.ex}|${sig.asset}|${sig.direction}|${sig.timing}`;
   const g = groups.get(k);
   if (g) {
     g.count++;
@@ -1774,7 +1785,7 @@ async function pump() {
   }
 }
 
-// Рабочее состояние биржи: первый актив из urls и первый таймфрейм из
+// Рабочее состояние биржи: первый актив из urls и первое время экспирации из
 // execTimings. Именно к нему возвращаемся после блужданий.
 function homeAsset(E) {
   const all = Object.keys(E.urls || {});
@@ -1808,7 +1819,7 @@ async function restoreHome(why) {
 // Аккаунт, который заходит на страницу ровно за секунду до ставки и тут
 // же уходит, выглядит роботом. Между ставками делаем то, что делает
 // живой человек: смотрит другой актив, открывает историю, листает,
-// щёлкает таймфреймы. Ставок это не касается - только «шум» вокруг них.
+// щёлкает время экспирации. Ставок это не касается - только «шум» вокруг них.
 // Холостое действие держит ту же блокировку, что и ставка, - иначе они
 // дрались бы за страницу. Значит, любая его пауза откладывает пришедший
 // сигнал. Поэтому ждём не сплошняком, а поглядывая на очередь: как
@@ -1882,7 +1893,7 @@ async function idleAction() {
       await page.mouse.wheel(0, -randInt(150, 700));
 
     } else if (act === 'timeframe') {
-      // Смотрим соседний таймфрейм и возвращаемся. Возврат делает
+      // Смотрим соседнюю экспирацию и возвращаемся. Возврат делает
       // restoreHome ниже - раньше он был частью самого действия, и если
       // клик не срабатывал, страница оставалась на чужой экспирации.
       const names = Object.values(EX.timeUnitText);
@@ -1896,9 +1907,9 @@ async function idleAction() {
     log(`холостое действие: ${act}`);
 
     // ── возврат в рабочее состояние ──
-    // Холостое действие уводит страницу на другой актив и таймфрейм, а
+    // Холостое действие уводит страницу на другой актив и экспирацию, а
     // сигнал приходит внезапно и должен успеть в свою свечу. Раньше
-    // возврат ложился на саму ставку, и в журнале копились «таймфрейм не
+    // возврат ложился на саму ставку, и в журнале копились «экспирация не
     // переключился» и пропуски. Теперь страница возвращается к рабочему
     // активу и экспирации сразу после блуждания - времени сколько угодно.
     await restoreHome('после холостого действия');
@@ -2022,7 +2033,7 @@ function recentBets(n) {
     const cells = l.split(',');
     const o = {};
     head.forEach((h, i) => { o[h] = cells[i]; });
-    // Заметка - последний столбец, и в ней бывают запятые: «таймфрейм не
+    // Заметка - последний столбец, и в ней бывают запятые: «экспирация не
     // переключился на 10m, на странице выбран 30m». Разбиение по запятой
     // оставляло от такой заметки только начало - то есть ровно ту часть,
     // где ещё не сказано, что именно пошло не так. Хвост собираем назад.
@@ -2212,7 +2223,7 @@ function applySettings(s) {
   if (Array.isArray(s.execTimings)) {
     const v = s.execTimings.map(Number).filter(x => x === 10 || x === 30);
     if (v.length) {
-      if (String(v) !== String(CFG.execTimings || [10])) changed.push('таймфреймы: ' + v.join(', ') + 'м');
+      if (String(v) !== String(CFG.execTimings || [10])) changed.push('время экспирации: ' + v.join(', ') + 'м');
       CFG.execTimings = v;
     }
   }
@@ -2479,6 +2490,10 @@ function migrateMode() {
   // неверными. Заменяем ТОЛЬКО точное совпадение с ними: если ты правил
   // ключ руками, значение останется твоим.
   const STALE = {
+    mexc: {
+      // Источник перешёл на именные метки потока.
+      signalTimings: [JSON.stringify(['MEXC _10m', 'MEXC _30m', 'MEXC_10m', 'MEXC_30m'])],
+    },
     toobit: {
       // Искал процент ПОСЛЕ слова направления, а на Toobit подпись стоит
       // над кнопкой - для Higher приезжала выплата Lower.
@@ -2508,7 +2523,8 @@ function migrateMode() {
       ],
       // Toobit получил и 30-минутные сигналы.
       execTimings: [JSON.stringify([10])],
-      signalTimings: [JSON.stringify(['10m'])],
+      // Метки потока стали именными: TOOBIT_10m / TOOBIT_30m.
+      signalTimings: [JSON.stringify(['10m']), JSON.stringify(['10m', '30m'])],
     },
   };
   const fill = (cur, def, who) => {
@@ -2681,7 +2697,7 @@ async function diagMode() {
     const re = new RegExp('^\\s*' + tfText + '\\s*$');
     const n = await page.locator(EX.selectors.timeUnit).filter({ hasText: re }).count().catch(() => -1);
     const byText = await page.getByText(re).count().catch(() => -1);
-    log(`чип "${tfText}": по селектору ${n}, по тексту ${byText}`
+    log(`чип экспирации "${tfText}": по селектору ${n}, по тексту ${byText}`
       + (n === 0 && byText > 0 ? ' - берётся по тексту' : '')
       + (n === 0 && byText === 0 ? ' - НЕ НАЙДЕН' : ''));
   }
@@ -2695,7 +2711,7 @@ async function diagMode() {
       + `, координаты первой подписи: ${grp.box ? 'есть' : 'НЕ НАЙДЕНЫ'}`
     : 'НЕ НАЙДЕНА - подписи чипов не сложились в один блок'));
 
-  // Чем разметка отмечает ВЫБРАННЫЙ чип. Без этого проверка «таймфрейм
+  // Чем разметка отмечает ВЫБРАННЫЙ чип. Без этого проверка «экспирация
   // действительно переключился» на Toobit не работает: она пишет
   // «проверить выбор нечем», и ставка может уйти на 5m вместо 10m -
   // ровно та ошибка, что уже случалась на MEXC. По классам из этого

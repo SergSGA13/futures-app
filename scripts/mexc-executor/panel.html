@@ -410,7 +410,7 @@
         <select id="mEx" title="Биржа"></select>
         <select id="mAsset"></select>
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
-        <select id="mTiming"><option value="10">10м</option><option value="30">30м</option></select>
+        <select id="mTiming" title="Время экспирации"><option value="10">10м</option><option value="30">30м</option></select>
       </div>
       <!-- Сумма отдельно от настроечной ставки: разовый заход руками чаще
            всего отличается от той, что автомат ставит по сигналу. Границы
@@ -490,7 +490,7 @@
       <div class="ex-h" id="commonHead" style="display:none">Общее</div>
       <div class="row"><span>Ставок в день</span>
       <input type="number" id="perDay" min="1" max="500" step="1"></div>
-      <div class="row"><span>Таймфреймы</span><span id="tfBox"></span></div>
+      <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
       </div>
@@ -783,7 +783,7 @@ $('btnSplit').onclick = () => {
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
-  'timeframe':    'Переключить таймфрейм',
+  'timeframe':    'Переключить время экспирации',
   'history':      'Открыть историю сделок',
   'scroll':       'Полистать страницу',
 };
@@ -1006,14 +1006,14 @@ async function refresh() {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
   }
   // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
-  // таймфреймы. Последнее важно, потому что общий выключатель
-  // таймфреймов ниже биржу с собственным списком не трогает.
+  // время экспирации. Последнее важно: общий выключатель ниже биржу
+  // с собственным списком не трогает.
   $('stakeHint').textContent = exs(s).map(e => {
     const own = e.execTimings && String(e.execTimings) !== String(s.execTimings);
     return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
       + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
       + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
-      + (own ? `, только ${e.execTimings.join('/')}м` : '');
+      + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '');
   }).join('. ') + '.';
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
@@ -1061,7 +1061,7 @@ async function refresh() {
     : `${rows.length} из ${all.length}`;
 
   // Сколько входов сегодня НЕ ушло. Ошибка в журнале - это чаще всего
-  // отбитая проверкой ставка (не тот таймфрейм, не тот актив, форма не
+  // отбитая проверкой ставка (не то время экспирации, не тот актив, форма не
   // отрисовалась). По одной строке среди полутора сотен это незаметно, а
   // три подряд означают, что автоматика стоит и надо смотреть логи.
   const today = new Date().toDateString();
@@ -1077,7 +1077,7 @@ async function refresh() {
       all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
     // Клик по строке раскрывает заметку целиком: в колонке она обрезана,
-    // а длинные причины отказа («таймфрейм не переключился на 10m, на
+    // а длинные причины отказа («экспирация не переключилась на 10m, на
     // странице выбран 30m») начинаются одинаково и различаются в хвосте.
     tb.innerHTML = rows.map(b => {
       const note = noteText(b.note);
@@ -1126,7 +1126,7 @@ $('btnManual').onclick = async () => {
   const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
   $('mStake').value = stake;
   const exTitle = (exBy(lastSettings || {}, exchange) || {}).title || exchange;
-  if (!confirm(`Поставить ${exTitle} ${asset} ${direction} на ${timing} минут, ${stake} USDT?`)) return;
+  if (!confirm(`Поставить ${exTitle} ${asset} ${direction}, экспирация ${timing} минут, ${stake} USDT?`)) return;
   manualBusy = true;
   const btn = $('btnManual'), label = btn.textContent;
   btn.disabled = true; btn.textContent = 'Ставлю…';

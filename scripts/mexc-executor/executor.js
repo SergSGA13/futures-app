@@ -80,6 +80,10 @@ function exCfg(name) {
     // один-два, а не весь набор.
     selectors: { ...(CFG.selectors || {}), ...(e.selectors || {}) },
     timeUnitText: e.timeUnitText || CFG.timeUnitText || { 10: '10m', 30: '30m' },
+    // Надпись рядом со строкой чипов экспирации. Нужна, когда такие же
+    // подписи есть в другом месте страницы - у Toobit «5m» и «30m» есть
+    // ещё и в интервалах графика.
+    timeUnitAnchor: e.timeUnitAnchor || CFG.timeUnitAnchor || '',
     marketClosedText: e.marketClosedText || CFG.marketClosedText || 'Market Closed',
     openPositionsLabel: e.openPositionsLabel || CFG.openPositionsLabel || 'Open Positions',
     // Порог выплаты у каждой биржи свой. minPayoutStrict - когда нужно
@@ -897,16 +901,22 @@ const chipActive = c => c.evaluate(el => {
 // Зато выбранный там ровно один, а остальные одинаковые - значит
 // «белая ворона» и есть выбранный. Сравниваем фон, цвет, насыщенность
 // и рамку. Если чипов меньше трёх или отличается не один - молчим.
-async function activeChipByStyle() {
-  const names = Object.values(EX.timeUnitText);
+// ── чипы экспирации ──
+// Одна и та же подпись на странице встречается дважды: «5m» и «30m» есть
+// и у графика (1s 1m 5m 15m 30m 1h 4h 1D), и в строке Time Increment.
+// Пока чипы искались по всей странице, сравнивался вид кнопки графика с
+// видом чипа экспирации - «белая ворона» находилась не та, а нажатие
+// «5m» при доказательстве меняло интервал ГРАФИКА, а не экспирацию.
+// Поэтому сначала находим ГРУППУ: ближайшего общего предка, внутри
+// которого лежит нужная подпись и как можно больше остальных. Если у
+// биржи задан timeUnitAnchor («Time Increment»), группа рядом с этой
+// надписью получает предпочтение.
+async function chipScan(want) {
+  const labels = Object.values(EX.timeUnitText);
+  const anchor = EX.timeUnitAnchor || '';
   try {
-    return await page.evaluate(ns => {
+    return await page.evaluate(({ labels, anchor, want }) => {
       const vis = el => !!(el.offsetWidth || el.offsetHeight);
-      // Подпись вида элемента. Берём ВСЁ, чем обычно помечают выбранное:
-      // подложку, цвет, насыщенность, рамку, тень, обводку, подчёркивание,
-      // прозрачность и фон-картинку. Плюс псевдоэлементы - подсветку
-      // часто рисуют полоской в ::after, и по одному backgroundColor её
-      // не видно: из-за этого проверка молчала, а ставки пропускались.
       const KEYS = ['backgroundColor', 'backgroundImage', 'color', 'fontWeight',
                     'borderColor', 'borderWidth', 'borderRadius', 'boxShadow',
                     'outlineColor', 'textDecorationLine', 'opacity', 'filter'];
@@ -919,24 +929,83 @@ async function activeChipByStyle() {
         }
         return parts.join('|');
       };
-      const found = new Map();
+      // Все видимые узлы с нужными подписями.
+      const cands = [];
       for (const el of document.querySelectorAll('*')) {
         if (!vis(el) || el.children.length > 1) continue;
         const t = (el.innerText || '').trim();
-        if (!ns.includes(t) || found.has(t)) continue;
-        // Подпись собираем и с самого текста, и с двух предков: красят то
-        // сам чип, то его обёртку.
-        const chain = [];
-        for (let e = el, i = 0; e && i < 3; e = e.parentElement, i++) chain.push(sig(e));
-        found.set(t, chain.join('||'));
+        if (labels.includes(t)) cands.push({ t, el });
       }
-      if (found.size < 3) return null;
-      const counts = {};
-      for (const v of found.values()) counts[v] = (counts[v] || 0) + 1;
-      const odd = [...found.entries()].filter(([, v]) => counts[v] === 1);
-      return odd.length === 1 ? odd[0][0] : null;
-    }, names);
+      if (!cands.length) return null;
+
+      // Кандидаты в группы: предки, содержащие несколько разных подписей.
+      const groups = [];
+      for (const c of cands) {
+        for (let e = c.el.parentElement, i = 0; e && i < 6; e = e.parentElement, i++) {
+          if (groups.some(g => g.box === e)) continue;
+          const inside = cands.filter(x => e.contains(x.el));
+          const names = new Set(inside.map(x => x.t));
+          if (names.size < 2) continue;
+          const txt = ((e.parentElement || e).innerText || '').slice(0, 400);
+          groups.push({
+            box: e, inside, count: names.size,
+            hasWant: !want || inside.some(x => x.t === want),
+            anchored: anchor ? txt.includes(anchor) : false,
+            depth: i,
+          });
+        }
+      }
+      if (!groups.length) return null;
+      // Лучшая группа: с нужной подписью, ближе к якорю, шире по составу,
+      // и при прочих равных - самая тесная (меньший подъём).
+      groups.sort((a, b) =>
+        (b.hasWant - a.hasWant) || (b.anchored - a.anchored) ||
+        (b.count - a.count) || (a.depth - b.depth));
+      const g = groups[0];
+      if (!g.hasWant) return null;
+
+      // Вид каждого чипа группы: подпись самого узла и двух предков.
+      const styles = {};
+      for (const x of g.inside) {
+        if (styles[x.t]) continue;
+        const chain = [];
+        for (let e = x.el, i = 0; e && i < 3 && e !== g.box.parentElement; e = e.parentElement, i++) chain.push(sig(e));
+        styles[x.t] = chain.join('||');
+      }
+      // Выбранный - тот, чей вид отличается от остальных одинаковых.
+      let active = null;
+      const vals = Object.values(styles);
+      if (vals.length >= 3) {
+        const counts = {};
+        for (const v of vals) counts[v] = (counts[v] || 0) + 1;
+        const odd = Object.entries(styles).filter(([, v]) => counts[v] === 1);
+        if (odd.length === 1) active = odd[0][0];
+      }
+
+      // Координаты нужного чипа: поднимаемся, только пока цель мала.
+      let box = null;
+      if (want) {
+        const hitItem = g.inside.find(x => x.t === want);
+        if (hitItem) {
+          let hit = hitItem.el;
+          for (let i = 0; i < 3 && hit.parentElement && hit !== g.box; i++) {
+            const r = hit.getBoundingClientRect();
+            if (r.width >= 24 && r.height >= 16) break;
+            hit = hit.parentElement;
+          }
+          hit.scrollIntoView({ block: 'center', inline: 'center' });
+          const r = hit.getBoundingClientRect();
+          if (r.width >= 4 && r.height >= 4) box = { x: r.x, y: r.y, w: r.width, h: r.height };
+        }
+      }
+      return { active, box, labels: Object.keys(styles), anchored: g.anchored };
+    }, { labels, anchor, want: want || null });
   } catch (e) { return null; }
+}
+
+async function activeChipByStyle() {
+  const r = await chipScan(null);
+  return r ? r.active : null;
 }
 
 // Выбранная экспирация глазами САМОЙ биржи: приложения обычно помнят её
@@ -1004,30 +1073,9 @@ async function activeChipName() {
 // этом уходила на 5 минут - и с выплатой от чужого таймфрейма.
 // Здесь события те же, что от руки, и проверки перекрытия не мешают.
 async function clickChipByMouse(text) {
-  const box = await page.evaluate(t => {
-    const vis = el => !!(el.offsetWidth || el.offsetHeight);
-    for (const el of document.querySelectorAll('*')) {
-      if (!vis(el) || el.children.length > 1) continue;
-      if ((el.innerText || '').trim() !== t) continue;
-      // Поднимаемся, только пока цель слишком мала для клика: сам
-      // текст бывает обёрнут в span без размера. Требовать при этом
-      // cursor:pointer нельзя - у обычной <button> курсор по
-      // умолчанию другой, и подъём уходил до самого body, после чего
-      // клик приходился в пустое место страницы.
-      let hit = el;
-      for (let i = 0; i < 3 && hit.parentElement; i++) {
-        const r = hit.getBoundingClientRect();
-        if (r.width >= 24 && r.height >= 16) break;
-        hit = hit.parentElement;
-      }
-      hit.scrollIntoView({ block: 'center', inline: 'center' });
-      const r = hit.getBoundingClientRect();
-      if (r.width < 4 || r.height < 4) return null;
-      return { x: r.x, y: r.y, w: r.width, h: r.height };
-    }
-    return null;
-  }, text);
-  if (!box) return false;
+  const r = await chipScan(text);
+  if (!r || !r.box) return false;
+  const box = r.box;
   const x = box.x + box.w * (0.3 + Math.random() * 0.4);
   const y = box.y + box.h * (0.3 + Math.random() * 0.4);
   await mouseGlide(page, x, y);
@@ -1037,7 +1085,6 @@ async function clickChipByMouse(text) {
   await page.mouse.up();
   return true;
 }
-
 
 // Отпечаток выплат страницы: все проценты по порядку. Меняется вместе с
 // экспирацией - у каждого таймфрейма своя ставка возврата.
@@ -1770,21 +1817,19 @@ async function idleAction() {
   state.busy = true;
   const act = pool[randInt(0, pool.length - 1)];
   try {
-    await browser();
-    // Биржу для холостого захода выбираем ту, что уже открыта, иначе
-    // случайную: гонять окно между биржами каждые десять минут - это
-    // не «человечность», а метание.
     // Ходим только по биржам, которые сейчас в смене: активность на
-    // спящей бирже - ровно тот след, которого мы избегаем.
+    // спящей бирже - ровно тот след, которого мы избегаем. И работаем в
+    // ЕЁ вкладке: раньше бралась последняя использованная, то есть
+    // холостое действие могло бродить по чужой бирже.
     const names = activeExchanges();
     if (!names.length) return;
-    const openOn = names.find(n => Object.values(exCfg(n).urls || {})
-      .some(u => page.url().startsWith(u)));
-    EX = exCfg(openOn || names[randInt(0, names.length - 1)]);
-    if (!openOn) {
-      const first = Object.values(EX.urls)[0];
-      if (!first) return;
-      await page.goto(first, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const name = names[randInt(0, names.length - 1)];
+    EX = exCfg(name);
+    page = await pageFor(name);
+    const home = homeUrl(EX);
+    if (!home) return;
+    if (!Object.values(EX.urls).some(u => page.url().startsWith(u))) {
+      await page.goto(home, { waitUntil: 'domcontentloaded', timeout: 15000 });
       await idleWait(randInt(1500, 3000));
     }
 
@@ -2544,7 +2589,7 @@ async function diagMode() {
   const asset = assets.includes(want) ? want : assets[0];
   if (!asset) { console.error(`у биржи ${EX.title} не задан ни один адрес в urls`); process.exit(1); }
   console.log(`Открываю ${EX.title} ${asset} и смотрю, что на странице. Ставка НЕ делается.`);
-  await browser();
+  page = await pageFor(EX.name);
   await page.goto(EX.urls[asset], { waitUntil: 'domcontentloaded', timeout: 25000 });
   await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
 
@@ -2574,6 +2619,16 @@ async function diagMode() {
       + (n === 0 && byText > 0 ? ' - берётся по тексту' : '')
       + (n === 0 && byText === 0 ? ' - НЕ НАЙДЕН' : ''));
   }
+  // Какая группа чипов найдена: на странице те же подписи бывают у
+  // интервалов графика, и важно видеть, что взята именно строка
+  // экспирации (по якорю timeUnitAnchor).
+  const grp = await chipScan(Object.values(EX.timeUnitText)[0]);
+  log('  группа чипов: ' + (grp
+    ? `подписи ${JSON.stringify(grp.labels)}, якорь ${grp.anchored ? 'совпал' : 'не искали/не совпал'}`
+      + `, выбран сейчас: ${grp.active ?? 'не определить по виду'}`
+      + `, координаты первой подписи: ${grp.box ? 'есть' : 'НЕ НАЙДЕНЫ'}`
+    : 'НЕ НАЙДЕНА - подписи чипов не сложились в один блок'));
+
   // Чем разметка отмечает ВЫБРАННЫЙ чип. Без этого проверка «таймфрейм
   // действительно переключился» на Toobit не работает: она пишет
   // «проверить выбор нечем», и ставка может уйти на 5m вместо 10m -

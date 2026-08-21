@@ -92,6 +92,7 @@
         "30": "30m",
         "60": "60m"
       },
+      "timeUnitAnchor": "Time Increment",
       "marketClosedText": "Market Closed",
       "openPositionsLabel": "Current Positions",
       "payoutRe": "",

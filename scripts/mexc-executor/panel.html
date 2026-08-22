@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MEXC Executor</title>
+<title>Event Futures Executor</title>
 <style>
   :root {
     /* Пара холодный/тёплый: циан и фиолетовый.
@@ -43,7 +43,10 @@
     animation:gridDrift 24s linear infinite;
   }
   @keyframes gridDrift { to { background-position:0 44px, 44px 0, 0 0; } }
-  .wrap { max-width:1180px; margin:0 auto; position:relative; z-index:1; }
+  /* Шире прежних 1180px: в ряду теперь и сетка часов (её ширина
+     фиксирована - 24 колонки), и журнал из восьми колонок. На 1180
+     журналу оставалось около 600px, и он ехал горизонтально. */
+  .wrap { max-width:1440px; margin:0 auto; position:relative; z-index:1; }
 
   h1 {
     font-size:17px; letter-spacing:2px; text-transform:uppercase; font-weight:800;
@@ -54,34 +57,65 @@
   .sub { color:var(--muted); font-size:11px; margin-bottom:12px; letter-spacing:.6px;
          font-family:var(--mono); }
 
-  /* Колоночная раскладка вместо сетки. У grid высота СТРОКИ равна самой
-     высокой карточке в ней, и под короткими зияла пустота до следующего
-     ряда - align-items:start убирал растягивание, но не дыру. В multicol
-     карточки текут сверху вниз и пакуются вплотную, а браузер сам
-     выравнивает высоту колонок. break-inside не даёт разорвать карточку
-     между колонками. */
-  .cards { columns:4 250px; column-gap:10px; margin-bottom:10px; }
-  /* Сетка часов шире карточки, но уже страницы: 24 колонки занимают
-     ~620px, и справа оставалась пустая половина. Сажаем рядом журнал
-     ставок - он как раз узкий. На тесном экране колонка одна. */
-  .bottom { display:grid; grid-template-columns:minmax(0,640px) minmax(0,1fr);
-            gap:10px; align-items:start; }
-  @media (max-width: 1080px) { .bottom { grid-template-columns:1fr; } }
-  /* min-width:0 обязателен: у элемента grid минимальная ширина по
-     умолчанию равна ширине содержимого, и карточка с сеткой часов
-     (24 колонки, ~550px) отказывалась сжиматься - вместо прокрутки
-     внутри неё ехала вся страница. */
-  .bottom .card { margin:0; min-width:0; }
+  /* Карточки настроек - сетка равных колонок. Многоколоночная раскладка
+     паковала их плотно, но каждая получалась своей высоты и своей ширины,
+     и блок выглядел рваным. В сетке колонки равны по определению, а
+     stretch (он по умолчанию) равняет высоту внутри ряда. Пустоту снизу
+     съедает кнопка «Сохранить», прижатая к низу карточки. */
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr));
+           gap:10px; margin-bottom:10px; }
   .sched, .tablewrap { min-width:0; }
+  /* Карточки верхнего уровня идут стопкой: пульт, журнал, настройки. */
+  .wrap > .card { margin-bottom:10px; }
   /* Журнал из восьми колонок не влезает в узкий экран, а панель
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
-  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  .tablewrap table { min-width:520px; }
-  .cards > .card {
-    break-inside:avoid; -webkit-column-break-inside:avoid; page-break-inside:avoid;
-    margin:0 0 10px; width:100%;
+  .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; max-height:420px; overflow-y:auto; }
+  .tablewrap table { min-width:560px; }
+  /* Шапка таблицы не уезжает при прокрутке журнала */
+  .tablewrap thead th { position:sticky; top:0; background:var(--card); z-index:1; }
+
+  /* Заголовок сворачиваемой секции. Настройки правят раз в месяц, а
+     место они занимали столько же, сколько мониторинг. */
+  .sect-toggle {
+    width:100%; text-align:left; margin:2px 0 10px; padding:9px 14px;
+    background:linear-gradient(90deg, rgba(34,232,255,.10), transparent 60%);
+    border:1px solid var(--line); border-radius:12px;
+    font-size:11px; letter-spacing:1.1px;
   }
+  .sect-toggle::after { content:' ▾'; color:var(--cyan); }
+  .sect-toggle.open::after { content:' ▴'; }
+  .hidden { display:none; }
+  /* Расписание слева, журнал справа. Левой колонке даём ровно ширину
+     сетки 7x24 - она фиксированная и от ширины окна не зависит; всё
+     остальное забирает журнал. min-width:0 обязателен: элемент grid по
+     умолчанию не сжимается уже содержимого, и таблица распирала бы
+     страницу вместо прокрутки внутри себя. */
+  .duo { display:grid; grid-template-columns:minmax(0,580px) minmax(0,1fr);
+         gap:10px; align-items:stretch; margin-bottom:10px; }
+  /* Обе карточки ряда одной высоты (stretch), а внутри правой тянется
+     таблица: иначе под коротким журналом зияла бы дыра до низа
+     расписания. min-height:0 нужен, чтобы прокрутка осталась внутри
+     таблицы, а не распирала карточку. */
+  .duo > .card { margin:0; min-width:0; display:flex; flex-direction:column; }
+  /* flex:1 растягивает таблицу на свободную высоту, но потолок в 420px
+     из общего правила остаётся: со 150 строками карточка иначе уехала бы
+     на несколько экранов вниз. */
+  .duo .tablewrap { flex:1; min-height:0; }
+  /* Ниже 1240px пара уже не помещается по-честному: складываем в стопку,
+     расписание сверху. */
+  @media (max-width: 1240px) { .duo { grid-template-columns:1fr; } }
+  #logFilter button { padding:5px 11px; font-size:10.5px; }
+  #logHead th[data-c] { cursor:pointer; user-select:none; }
+  #logHead th[data-c]:hover { color:var(--cyan); }
+  #logHead th.sorted { color:var(--cyan); text-shadow:0 0 9px rgba(34,232,255,.5); }
+  #logHead th.sorted::after { content:' ↑'; }
+  #logHead[data-dir="down"] th.sorted::after { content:' ↓'; }
+  #logFilter button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
+  .cards > .card { margin:0; display:flex; flex-direction:column; }
+  /* Кнопка сохранения - к низу карточки: одинаковая высота карточек без
+     этого означала бы просто дырку разного размера под содержимым. */
+  .cards > .card > button:last-child { margin-top:auto; align-self:flex-start; }
   .card {
     position:relative;
     background:linear-gradient(180deg, rgba(34,232,255,.05), transparent 42%), var(--card);
@@ -115,46 +149,124 @@
 
   .big { font-size:20px; font-weight:800; }
 
-  /* ── Карточка режима ──
-     Это единственный переключатель, который стоит денег, поэтому она
-     кричит громче остальных: свой цвет свечения на каждое состояние и
-     пульс в боевом. Цвет ведёт рамка, свечение и плашка - одного
-     текста мало, состояние должно читаться боковым зрением. */
-  .mode-card { transition:box-shadow .3s, border-color .3s; }
-  .mode-card .big { margin-bottom:4px; }
-  .mode-card .pill { font-size:12.5px; padding:6px 16px; letter-spacing:2px; }
-  .mode-card.live {
-    border-color:rgba(78,255,160,.5);
-    box-shadow:
-      inset 0 1px 0 rgba(78,255,160,.18),
-      inset 0 0 40px rgba(78,255,160,.07),
-      0 0 26px rgba(78,255,160,.22),
-      0 8px 26px rgba(0,0,0,.55);
+  /* ── Пульт ──
+     Один блок, но секции внутри должны читаться как отдельные. Прежняя
+     версия разделяла их линией в 14% прозрачности - её было не видно, а
+     приоритет задавался общей прозрачностью секции, отчего текст просто
+     мутнел. Теперь: разделитель - световой луч, а важность выражена
+     размером и цветом, не мутью. */
+  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(150px,.8fr) minmax(175px,.9fr);
+         gap:9px; padding:11px; }
+  /* Каждая секция - своё окно с рамкой в собственном цвете. Линия-
+     разделитель этого не давала: блоки читались как один сплошной текст. */
+  .ctl-sec {
+    position:relative; padding:11px 13px; border-radius:11px;
+    border:1px solid rgba(34,232,255,.22);
+    background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.07), transparent 70%);
+    display:flex; flex-direction:column;
+  }
+  /* Секции пульта равны по высоте (grid растягивает их), поэтому ряд
+     кнопок прижимаем к низу - иначе у одной секции кнопки посередине,
+     у другой под самым краем, и ряд выглядит случайным. */
+  .ctl-sec > .btns:last-child,
+  .ctl-sec > button:last-child { margin-top:auto; }
+  .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
+  .ctl-sec-win   { border-color:rgba(102,163,255,.24);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
+  .ctl-sec-man   { border-color:rgba(157,80,255,.32);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(157,80,255,.09), transparent 70%); }
+  @media (max-width: 900px) { .ctl { grid-template-columns:1fr 1fr; } }
+  @media (max-width: 540px) { .ctl { grid-template-columns:1fr; } }
+
+  /* Заголовки секций: у режима яркий, у остальных служебный */
+  .ctl-h { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:1.2px;
+           color:var(--muted); margin-bottom:8px; }
+  .ctl-note { font-size:10px; color:var(--muted); margin:3px 0 9px; line-height:1.4; }
+
+  /* Главный блок пульта: собственная неоновая рамка, меняющая цвет
+     вместе с режимом. Именно она отвечает на вопрос «что сейчас», и
+     видно её должно быть боковым зрением, из другого конца комнаты. */
+  .ctl-mode {
+    padding:11px 13px;
+    border:1px solid rgba(34,232,255,.35); border-radius:11px;
+    background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.10), transparent 68%);
+    transition:border-color .3s, box-shadow .3s, background .3s;
+  }
+  .ctl-mode .ctl-h { color:#DFF7FF; text-shadow:0 0 10px rgba(34,232,255,.5); }
+  .ctl-mode .pill { font-size:14px; padding:7px 20px; letter-spacing:2.5px; }
+  .ctl-mode .big { margin-bottom:3px; }
+
+  /* ── Состояние режима красит главный блок ──
+     Цвет ведут рамка, подложка и свечение: одного текста мало, режим
+     должен читаться боковым зрением. Пульс только в боевом - это
+     единственное состояние, где ошибка стоит денег. */
+  #ctlCard.live .ctl-mode {
+    border-color:rgba(78,255,160,.7);
+    background:radial-gradient(130% 110% at 0% 0%, rgba(78,255,160,.16), transparent 68%);
     animation:liveBreath 2.6s ease-in-out infinite;
   }
-  .mode-card.live::before { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
-  .mode-card.live::after  { border-color:var(--green); filter:drop-shadow(0 0 6px rgba(78,255,160,.9)); }
-  .mode-card.live .modeNote { color:#8CFFC6; }
   @keyframes liveBreath {
-    0%,100% { box-shadow: inset 0 1px 0 rgba(78,255,160,.18), inset 0 0 40px rgba(78,255,160,.07),
-                          0 0 22px rgba(78,255,160,.18), 0 8px 26px rgba(0,0,0,.55); }
-    50%     { box-shadow: inset 0 1px 0 rgba(78,255,160,.18), inset 0 0 40px rgba(78,255,160,.12),
-                          0 0 40px rgba(78,255,160,.38), 0 8px 26px rgba(0,0,0,.55); }
+    0%,100% { box-shadow: inset 0 0 26px rgba(78,255,160,.10), 0 0 16px rgba(78,255,160,.30); }
+    50%     { box-shadow: inset 0 0 26px rgba(78,255,160,.20), 0 0 34px rgba(78,255,160,.60); }
   }
-  .mode-card.dry {
-    border-color:rgba(34,232,255,.42);
-    box-shadow: inset 0 1px 0 rgba(34,232,255,.14), inset 0 0 36px rgba(34,232,255,.06),
-                0 0 20px rgba(34,232,255,.16), 0 8px 26px rgba(0,0,0,.55);
+  @media (prefers-reduced-motion: reduce) { #ctlCard.live .ctl-mode { animation:none; } }
+
+  #ctlCard.dry .ctl-mode {
+    border-color:rgba(34,232,255,.6);
+    background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.13), transparent 68%);
+    box-shadow: inset 0 0 26px rgba(34,232,255,.08), 0 0 18px rgba(34,232,255,.32);
   }
-  .mode-card.paused {
-    border-color:rgba(255,209,102,.45);
-    box-shadow: inset 0 1px 0 rgba(255,209,102,.14), inset 0 0 36px rgba(255,209,102,.06),
-                0 0 20px rgba(255,209,102,.18), 0 8px 26px rgba(0,0,0,.55);
+  #ctlCard.paused .ctl-mode {
+    border-color:rgba(255,209,102,.65);
+    background:radial-gradient(130% 110% at 0% 0%, rgba(255,209,102,.14), transparent 68%);
+    box-shadow: inset 0 0 26px rgba(255,209,102,.08), 0 0 18px rgba(255,209,102,.35);
   }
-  .mode-card.paused::before, .mode-card.paused::after {
-    border-color:var(--yellow); filter:drop-shadow(0 0 6px rgba(255,209,102,.8));
-  }
-  @media (prefers-reduced-motion: reduce) { .mode-card.live { animation:none; } }
+  #ctlCard.live .modeNote { color:#8CFFC6; }
+
+  /* Счётчики - второй уровень: цифры крупные и яркие, подписи тихие */
+  .ctl-slots .row > b { font-size:13.5px; color:#DFF7FF; }
+  /* Спарклайн ставок по часам: одна картинка вместо строки цифр -
+     видно не только «сколько сегодня», но и когда они шли. */
+  .spark-row { gap:7px; }
+  .spark { flex:1; min-width:44px; height:20px; display:block; }
+  .spark svg { width:100%; height:100%; display:block; overflow:visible; }
+  #errPill { font-size:9px; padding:2px 7px; border-radius:6px; margin-left:5px;
+             background:rgba(255,82,114,.16); color:var(--red); border:1px solid rgba(255,82,114,.45); }
+  /* Возраст сигнала красим так же, как режим: на него смотрят боковым
+     зрением, и красное здесь означает «проверь туннель», а не «рынок тих». */
+  #sigAge.fresh { color:var(--green);  text-shadow:0 0 10px rgba(78,255,160,.45); }
+  #sigAge.stale { color:var(--yellow); text-shadow:0 0 10px rgba(255,209,102,.45); }
+  #sigAge.dead  { color:var(--red);    text-shadow:0 0 10px rgba(255,82,114,.5); }
+  /* Заголовок биржи в списке ставок и порогов. */
+  .ex-h { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:1.1px;
+          color:var(--cyan); margin:9px 0 3px; padding-bottom:3px;
+          border-bottom:1px solid rgba(34,232,255,.16); text-shadow:0 0 10px rgba(34,232,255,.35); }
+  .ex-h:first-child { margin-top:0; }
+  /* Занятые под завязку слоты - повод не ждать входа, а не просто цифра. */
+  .slots-full { color:var(--yellow) !important; text-shadow:0 0 10px rgba(255,209,102,.45) !important; }
+  #lostPill { font-size:9.5px; padding:3px 9px; border-radius:6px; align-self:center;
+              background:rgba(255,82,114,.14); color:var(--red);
+              border:1px solid rgba(255,82,114,.42);
+              text-transform:uppercase; letter-spacing:.8px; font-weight:700; }
+  /* Раскрытая строка журнала. Заметка в колонке обрезана, а именно в ней
+     написано, почему ставка не ушла - целиком её видно только здесь. */
+  #bets tr[data-k] { cursor:pointer; }
+  #bets tr.open td { background:rgba(34,232,255,.07); }
+  #bets tr.detail td { color:#9FB0D8; font-size:11.5px; white-space:pre-wrap;
+                       word-break:break-word; padding:2px 9px 9px 24px;
+                       box-shadow:inset 2px 0 0 rgba(34,232,255,.45);
+                       background:rgba(34,232,255,.03); }
+  .ctl-slots .row > span:first-child { font-size:11.5px; }
+
+  /* Служебное - третий уровень. Приглушаем ЦВЕТОМ, а не прозрачностью:
+     opacity мутит и текст, и рамки, и читать становится тяжело. */
+  .ctl-dim .ctl-h { color:#5C6690; }
+  .ctl-dim .row > span:first-child { color:#5C6690; font-size:11.5px; }
+  .ctl-dim .row > b { color:#9FB0D8; font-size:12px; text-shadow:none; font-weight:600; }
+  .ctl-dim button { font-size:10.5px; padding:6px 11px; opacity:.85; }
+  .ctl-dim:hover button { opacity:1; }
+  .ctl-sec .row { padding:1.5px 0; }
+
   .row { display:flex; justify-content:space-between; align-items:center; padding:2.5px 0; font-size:12.5px; gap:8px; }
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
@@ -207,17 +319,21 @@
   input[type=number] { width:74px; text-align:right; }
   label.chk { display:flex; align-items:center; gap:7px; font-size:12.5px; padding:2px 0; cursor:pointer; }
   input[type=checkbox] { accent-color:var(--cyan); width:15px; height:15px; cursor:pointer; }
-  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; }
+  /* Пояснения читают глазами, а не сканируют: строка во всю ширину
+     панели уводит взгляд, поэтому ограничиваем длину. */
+  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; max-width:78ch; }
   .hint { color:var(--muted); font-size:11px; }
 
   /* недельная сетка часов */
   .sched { overflow-x:auto; padding-bottom:4px; }
+  .sched .ex-h { margin-top:12px; }
+  .sched .ex-h:first-child { margin-top:0; }
   .sched table { border-collapse:separate; border-spacing:2px; width:auto; }
   .sched th { padding:0 3px; font-size:9.5px; text-align:center; border:none;
               color:var(--muted); font-family:var(--mono); letter-spacing:0; }
   .sched td { padding:0; border:none; }
   .cell {
-    width:20px; height:18px; border-radius:4px; cursor:pointer;
+    width:19px; height:18px; border-radius:4px; cursor:pointer;
     background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.05);
     transition:background .12s, box-shadow .12s;
   }
@@ -243,143 +359,177 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>MEXC Executor</h1>
+  <h1>Event Futures Executor</h1>
   <div class="sub" id="sub">загрузка…</div>
 
-  <div class="cards">
-    <div class="card mode-card" id="modeCard">
-      <h2>Режим</h2>
+  <!-- Управление одним блоком. Четыре карточки рядом читались как четыре
+       независимые темы, хотя это один пульт: режим - слоты - окно - ручная
+       ставка. Разделители вместо рамок, яркость по важности: режим
+       кричит, счётчики говорят, служебное шепчет. -->
+  <div class="card ctl" id="ctlCard">
+    <div class="ctl-sec ctl-mode" id="modeCard">
+      <div class="ctl-h">Режим</div>
       <div class="big" id="mode">—</div>
-      <div class="note modeNote" id="modeNote"></div>
-      <div class="btns" style="margin-top:10px">
+      <div class="ctl-note modeNote" id="modeNote"></div>
+      <div class="btns">
         <button id="btnPause">Пауза</button>
         <button id="btnDry">В dry-run</button>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Слоты и лимиты</h2>
-      <div class="row"><span>Открыто ставок</span><b id="slots">—</b></div>
-      <div class="row"><span>UP в окне</span><b id="upUsed">—</b></div>
-      <div class="row"><span>DOWN в окне</span><b id="downUsed">—</b></div>
-      <div class="row"><span>В очереди</span><b id="queue">—</b></div>
-      <div class="row"><span>За сегодня</span><b id="today">—</b></div>
-      <div class="row"><span>Ошибок подряд</span><b id="errs">—</b></div>
+    <div class="ctl-sec ctl-slots ctl-sec-slots">
+      <div class="ctl-h">Слоты <span id="errPill"></span></div>
+      <!-- Возраст последнего сигнала. Молчащий хук и тихий рынок выглядят
+           в журнале одинаково - никак, в нём просто ничего не появляется.
+           Эта строка единственная их различает. -->
+      <div class="row"><span>Сигнал</span><b id="sigAge" title="">—</b></div>
+      <!-- Слоты держит сама биржа, поэтому при двух биржах это две
+           независимые пятёрки, а не общая. -->
+      <div id="slotRows"></div>
+      <div class="row"><span>UP / DOWN</span><b id="updown">—</b></div>
+      <div class="row"><span>Очередь</span><b id="queue">—</b></div>
+      <div class="row spark-row"><span>Сегодня</span>
+        <span class="spark" id="todaySpark"></span><b id="today">—</b></div>
     </div>
 
-    <div class="card" id="pulseCard">
-      <h2>Связь <span class="saved" id="savedSil">сохранено</span></h2>
-      <div class="row"><span>Последний сигнал</span><b id="lastSig">—</b></div>
-      <div class="row"><span>Порог тишины, мин</span>
-        <input type="number" id="brkSilence" min="0" max="1440" step="1"></div>
-      <button style="margin-top:8px" id="btnSaveSil">Сохранить</button>
-      <div class="note">Молчание в активные часы - единственный признак,
-        что упал туннель или слетел деплой Apps Script: в журнале ставок
-        при этом не появляется ничего. 0 - алерт выключен.</div>
-    </div>
-
-    <div class="card">
-      <h2>Окно биржи</h2>
+    <div class="ctl-sec ctl-dim ctl-sec-win">
+      <div class="ctl-h">Окно биржи</div>
       <div class="row"><span>Браузер</span><b id="browserState">—</b></div>
-      <div class="row"><span>Расписание сегодня</span><b id="win" style="font-size:12px">—</b></div>
       <div class="row"><span>Сейчас</span><b id="activeNow">—</b></div>
-      <div class="btns" style="margin-top:10px">
-        <button id="btnOpen">Открыть окно</button>
+      <div class="row"><span>Часы</span><b id="win" style="font-size:11px">—</b></div>
+      <div class="btns" style="margin-top:7px">
+        <select id="winEx" title="Какую биржу открыть"></select>
+        <button id="btnOpen" title="Открыть окно биржи, чтобы посмотреть глазами. Перед ставкой исполнитель откроет его сам.">Открыть</button>
         <button id="btnClose">Закрыть</button>
       </div>
-      <div class="note">Только чтобы посмотреть глазами - перед ставкой
-        исполнитель откроет его сам.</div>
     </div>
 
-    <div class="card">
-      <h2>Ручная ставка</h2>
-      <div class="btns" style="margin-bottom:8px">
-        <select id="mAsset"><option>ETH</option><option>BTC</option></select>
+    <div class="ctl-sec ctl-dim ctl-sec-man">
+      <div class="ctl-h">Ручная ставка</div>
+      <div class="btns" style="margin-bottom:6px">
+        <select id="mEx" title="Биржа"></select>
+        <select id="mAsset"></select>
         <select id="mDir"><option>UP</option><option>DOWN</option></select>
+        <select id="mTiming" title="Время экспирации"><option value="10">10м</option><option value="30">30м</option></select>
       </div>
-      <button class="go" id="btnManual">Поставить</button>
-      <div class="note">Payout и режим проверяются, лимиты слотов и
-        направления - нет: ты нажал сам.</div>
+      <!-- Сумма отдельно от настроечной ставки: разовый заход руками чаще
+           всего отличается от той, что автомат ставит по сигналу. Границы
+           биржевые и у каждого актива свои - подставляются по выбору. -->
+      <div class="row"><span>Сумма, USDT</span>
+        <input type="number" id="mStake" min="5" step="5"></div>
+      <div class="ctl-note" id="mStakeHint" style="margin:2px 0 7px"></div>
+      <button class="go" id="btnManual"
+        title="Payout и режим проверяются как обычно. Лимиты слотов и направления ручная ставка обходит: ты нажал сам.">Поставить</button>
     </div>
-    <div class="card">
+  </div>
+
+  <!-- Часы работы слева, журнал справа - оба на виду. Раньше эта пара
+       не помещалась, потому что страница была шириной 1180px и журналу
+       из восьми колонок доставалось около 600. Теперь под расписание
+       отведена ровно ширина сетки 7x24, остальное - журналу, а сама
+       страница стала шире. -->
+  <div class="duo">
+  <div class="card sched-card">
+  <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
+  <div class="row" style="margin-bottom:10px">
+    <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
+    <span><span class="hint">разброс краёв, мин</span>
+    <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
+  </div>
+  <label class="chk" style="margin-bottom:8px">
+    <input type="checkbox" id="autoWindow"> Открывать окно биржи на активные часы</label>
+  <div class="sched" id="schedGrid"></div>
+  <div class="note">У каждой биржи своя сетка: пока одна в смене, вторая
+  молчит, сигналы на неё отклоняются как «тихие часы». Клик по клетке
+  переключает час, протяжка мышью красит несколько. Клик по названию дня -
+  весь день. Фиолетовая рамка - текущий час. Разброс краёв сдвигает начало
+  и конец каждого блока на случайные минуты, чтобы старт не приходился
+  ровно на :00 изо дня в день. Окно биржи с галочкой выше открывается само
+  к началу смены и закрывается, когда не работает ни одна: холодный старт
+  съедает секунды, а первая ставка после перерыва должна успеть в свою
+  свечу. На пересменке окно переезжает на заступившую биржу.</div>
+  <div class="btns" style="margin-top:10px">
+    <button id="btnSaveSched">Сохранить</button>
+    <button id="btnSplit" title="Разделить сутки поровну между биржами">Смена 12/12</button>
+    <button id="btnAll">Все часы</button>
+    <button id="btnNone">Снять всё</button>
+  </div>
+  </div>
+
+  <div class="card">
+  <h2>Журнал ставок</h2>
+  <div class="btns" style="margin-bottom:9px" id="logFilter">
+  <button data-f="all" class="on">Все</button>
+  <button data-f="bets">Только ставки</button>
+  <button data-f="errors">Ошибки</button>
+  <span class="hint" id="logCount" style="align-self:center"></span>
+  <span id="lostPill" style="display:none"></span>
+  </div>
+  <div class="tablewrap">
+  <table>
+  <thead><tr id="logHead">
+        <th data-c="time">Время</th><th data-c="exchange">Биржа</th>
+        <th data-c="asset">Актив</th><th data-c="direction">Напр.</th>
+        <th data-c="stake">Сумма</th><th data-c="payout_page">Payout</th><th data-c="mode">Реж.</th>
+        <th data-c="status">Статус</th><th>Заметка</th>
+      </tr></thead>
+  <tbody id="bets"><tr><td colspan="9" style="color:var(--muted)">пусто</td></tr></tbody>
+  </table>
+  </div>
+  </div>
+  </div>
+
+  <button class="sect-toggle" id="btnSettings">Настройки</button>
+  <div id="settingsBox" class="hidden">
+    <div class="cards">
+      <div class="card">
       <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
-      <div class="row"><span>Ставка ETH, USDT</span>
-        <input type="number" id="stETH" min="1" step="1"></div>
-      <div class="row"><span>Ставка BTC, USDT</span>
-        <input type="number" id="stBTC" min="1" step="1"></div>
-      <div class="row"><span>Мин. payout, %</span>
-        <input type="number" id="minPay" min="50" max="100" step="1"></div>
+      <div id="stakeRows"></div>
+      <!-- Ниже - общее для всех бирж. Без заголовка эти строки читались
+           как продолжение блока последней биржи. -->
+      <div class="ex-h" id="commonHead" style="display:none">Общее</div>
       <div class="row"><span>Ставок в день</span>
-        <input type="number" id="perDay" min="1" max="500" step="1"></div>
+      <input type="number" id="perDay" min="1" max="500" step="1"></div>
+      <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
-    </div>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Приоритет направлений <span class="saved" id="savedDir">сохранено</span></h2>
       <div class="row"><span>UP в окне, не больше</span>
-        <select id="limUp"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <select id="limUp"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
       <div class="row"><span>DOWN в окне, не больше</span>
-        <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+      <select id="limDown"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
       <div class="note" id="dirHint"></div>
       <button style="margin-top:10px" id="btnSaveDir">Сохранить</button>
-    </div>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Пачки сигналов <span class="saved" id="savedBurst">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="burstOn"> Складывать в одну ставку</label>
       <div class="row"><span>Окно сбора, сек</span>
-        <input type="number" id="burstWin" min="0" max="60" step="1"></div>
+      <input type="number" id="burstWin" min="0" max="60" step="1"></div>
       <div class="row"><span>Множитель не больше</span>
-        <input type="number" id="burstMax" min="1" max="10" step="1"></div>
-      <button style="margin-top:8px" id="btnSaveBurst">Сохранить</button>
+      <input type="number" id="burstMax" min="1" max="10" step="1"></div>
       <div class="note" id="burstHint"></div>
-    </div>
+      <button style="margin-top:10px" id="btnSaveBurst">Сохранить</button>
+      </div>
 
-    <div class="card">
+      <div class="card">
       <h2>Холостые действия <span class="saved" id="savedIdle">сохранено</span></h2>
       <label class="chk"><input type="checkbox" id="idleOn"> Включены</label>
       <div id="idleActs" style="margin:6px 0 4px"></div>
       <div class="row"><span>Раз в, минут</span>
-        <span><input type="number" id="idleFrom" min="1" max="240" step="1" style="width:62px">
-        –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
+      <span><input type="number" id="idleFrom" min="1" max="240" step="1" style="width:62px">
+      –<input type="number" id="idleTo" min="1" max="240" step="1" style="width:62px"></span></div>
       <div class="row"><span>Клик с разбросом</span>
-        <input type="checkbox" id="humanize"></div>
-      <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
+      <input type="checkbox" id="humanize"></div>
       <div class="note" id="lastIdle"></div>
+      <button style="margin-top:10px" id="btnSaveIdle">Сохранить</button>
+      </div>
     </div>
-  </div>
 
-  <div class="bottom">
-  <div class="card">
-    <h2>Часы работы <span class="saved" id="savedSched">сохранено</span></h2>
-    <div class="row" style="margin-bottom:10px">
-      <label class="chk"><input type="checkbox" id="schedOn"> Работать по расписанию</label>
-      <span><span class="hint">разброс краёв, мин</span>
-        <input type="number" id="jitter" min="0" max="59" step="1" style="width:62px"></span>
-    </div>
-    <div class="sched"><table id="schedGrid"></table></div>
-    <div class="note">Клик по клетке переключает час, протяжка мышью красит
-      несколько. Клик по названию дня - весь день. Фиолетовая рамка - текущий
-      час. Разброс краёв сдвигает начало и конец каждого блока на случайные
-      минуты, чтобы старт не приходился ровно на :00 изо дня в день.</div>
-    <div class="btns" style="margin-top:10px">
-      <button id="btnSaveSched">Сохранить</button>
-      <button id="btnAll">Все часы</button>
-      <button id="btnWorkday">08:00–23:00</button>
-      <button id="btnNone">Снять всё</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Последние ставки</h2>
-    <div class="tablewrap">
-    <table>
-      <thead><tr><th>Время</th><th>Актив</th><th>Напр.</th><th>Ставка</th><th>Payout</th><th>Режим</th><th>Статус</th><th>Заметка</th></tr></thead>
-      <tbody id="bets"><tr><td colspan="8" style="color:var(--muted)">пусто</td></tr></tbody>
-    </table>
-    </div>
-  </div>
   </div>
 </div>
 
@@ -392,6 +542,121 @@ const post = (a, body) => api(a, body === undefined
   : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const $ = id => document.getElementById(id);
 
+// ── фильтр журнала ──
+// Половину строк занимает шум: ночные skip-quiet, дубли, merged. Ставки
+// в нём тонут, а смотрят журнал ради них и ради ошибок.
+const BET_STATUSES = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
+const ERR_STATUSES = ['error', 'placed-unconfirmed', 'placed-unverified'];
+let logFilter = localStorage.getItem('mx_logfilter') || 'all';
+function passesFilter(st) {
+  if (logFilter === 'bets') return BET_STATUSES.includes(st);
+  if (logFilter === 'errors') return ERR_STATUSES.includes(st);
+  return true;
+}
+document.getElementById('logHead').addEventListener('click', e => {
+  const c = e.target.dataset.c;
+  if (!c) return;
+  if (sortBy === c) sortDir = -sortDir; else { sortBy = c; sortDir = 1; }
+  document.querySelectorAll('#logHead th').forEach(th =>
+    th.classList.toggle('sorted', th.dataset.c === sortBy));
+  document.getElementById('logHead').dataset.dir = sortDir > 0 ? 'up' : 'down';
+  refresh();
+});
+document.getElementById('logFilter').addEventListener('click', e => {
+  const f = e.target.dataset.f;
+  if (!f) return;
+  logFilter = f;
+  localStorage.setItem('mx_logfilter', f);
+  document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  refresh();
+});
+document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
+
+
+// ── свёрнутые настройки ──
+// Состояние держим в localStorage: панель обновляется каждые 5 секунд, и
+// секция, свёрнутая по умолчанию, разворачивалась бы обратно при каждом
+// заходе, хотя правишь ты её сериями.
+(function () {
+  const box = document.getElementById('settingsBox'), btn = document.getElementById('btnSettings');
+  const apply = open => {
+    box.classList.toggle('hidden', !open);
+    btn.classList.toggle('open', open);
+    localStorage.setItem('mx_settings', open ? '1' : '0');
+  };
+  apply(localStorage.getItem('mx_settings') === '1');
+  btn.onclick = () => apply(box.classList.contains('hidden'));
+})();
+
+// ── спарклайн ставок по часам ──
+// Число «5 из 44» говорит сколько, но не говорит когда. Двадцать четыре
+// столбика рядом отвечают на оба вопроса и занимают строку, а не блок.
+function sparkline(el, counts) {
+  const max = Math.max(1, ...counts);
+  const w = 100, h = 20, bw = w / counts.length;
+  const bars = counts.map((v, i) => {
+    const bh = v ? Math.max(2, (v / max) * h) : 0;
+    return bh ? `<rect x="${(i * bw).toFixed(2)}" y="${(h - bh).toFixed(2)}"
+      width="${(bw * .74).toFixed(2)}" height="${bh.toFixed(2)}" rx="0.6"
+      fill="url(#sg)"></rect>` : '';
+  }).join('');
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <defs><linearGradient id="sg" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#22E8FF" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#22E8FF" stop-opacity="1"/>
+    </linearGradient></defs>${bars}</svg>`;
+}
+// Считаем только настоящие ставки: skip/merged/duplicate - это шум, и в
+// картинке активности им делать нечего.
+const PLACED = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
+function betsByHour(bets) {
+  const today = new Date().toDateString();
+  const h = new Array(24).fill(0);
+  for (const b of bets || []) {
+    if (!PLACED.includes(b.status)) continue;
+    const d = new Date(b.time);
+    if (isNaN(d) || d.toDateString() !== today) continue;
+    h[d.getHours()]++;
+  }
+  return h;
+}
+
+// ── сортировка журнала ──
+let sortBy = null, sortDir = 1;
+
+// ── раскрытые строки журнала ──
+// Ключ - время строки: журнал перерисовывается каждые 5 секунд, и по
+// индексу раскрытие переезжало бы на соседнюю ставку, стоит прийти новой.
+const openRows = new Set();
+const rowKey = b => `${b.time}|${b.exchange || ''}|${b.asset || ''}|${b.direction || ''}`;
+// Заметки собираются из текста биржевой страницы и текста ошибок, то есть
+// приходят снаружи. В разметку их вставляем только экранированными.
+const esc = v => String(v ?? '').replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Заметка пишется через JSON.stringify, поэтому приходит в кавычках и с
+// экранированием. Разбираем обратно, а если не вышло - снимаем кавычки.
+function noteText(v) {
+  if (!v) return '';
+  try { const p = JSON.parse(v); return typeof p === 'string' ? p : String(v); }
+  catch (e) { return String(v).replace(/^"|"$/g, ''); }
+}
+document.getElementById('bets').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-k]');
+  if (!tr) return;
+  const k = tr.dataset.k;
+  if (openRows.has(k)) openRows.delete(k); else openRows.add(k);
+  refresh();
+});
+
+// Возраст последнего сигнала словами. Колонка узкая, поэтому коротко.
+function fmtAgo(min) {
+  if (min == null || isNaN(min)) return '—';
+  if (min < 1) return 'только что';
+  if (min < 60) return min + ' мин';
+  const h = Math.floor(min / 60);
+  return h + ' ч ' + (min % 60) + ' мин';
+}
+
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
   (s === 'placed-unconfirmed' || s === 'placed-unverified') ? 's-error' :
@@ -399,10 +664,16 @@ const statusClass = (s) =>
   s === 'merged' ? 's-dry' :
   s === 'error' ? 's-error' : 's-skip';
 
+// В журнале лежат ставки за несколько суток, а показывалось только
+// время: строка «08:55» из вчера выглядела свежее, чем «00:12» из
+// сегодня. Дату дописываем ровно там, где день не сегодняшний.
 function fmtTime(v) {
   if (!v) return '—';
   const d = new Date(v);
-  return isNaN(d) ? v : d.toLocaleTimeString('ru-RU');
+  if (isNaN(d)) return v;
+  const t = d.toLocaleTimeString('ru-RU');
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? t : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + t;
 }
 function flash(id) {
   const el = $(id);
@@ -413,44 +684,55 @@ function flash(id) {
 // ── недельная сетка ──
 // Держим её в своей переменной: обновление состояния каждые 5 секунд не должно
 // затирать клетки, которые пользователь красит прямо сейчас.
-let sched = Array(7).fill('0'.repeat(24));
+// Ключ - имя биржи, значение - семь строк по 24 символа.
+let schedBy = {};
 let schedDirty = false;          // есть несохранённые правки
 let painting = null;             // '1'/'0' - что красим протяжкой
+let schedExs = [];               // биржи в порядке отрисовки (имя + заголовок)
 const DAYS = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 const ORDER = [1,2,3,4,5,6,0];   // показываем с понедельника
 
-function setCell(day, hour, val) {
-  const r = sched[day].split('');
+function setCell(ex, day, hour, val) {
+  const r = schedBy[ex][day].split('');
   r[hour] = val;
-  sched[day] = r.join('');
+  schedBy[ex][day] = r.join('');
   schedDirty = true;
 }
 
+// Одна таблица на биржу. Заголовок с именем биржи нужен и при одной -
+// иначе после появления второй сетки непонятно, чья верхняя.
 function buildGrid() {
-  const t = $('schedGrid');
   const now = new Date();
-  let html = '<tr><th></th>';
-  for (let h = 0; h < 24; h++) html += `<th>${h}</th>`;
-  html += '</tr>';
-  for (const d of ORDER) {
-    html += `<tr><td class="dayname" data-day="${d}" style="cursor:pointer">${DAYS[d]}</td>`;
-    for (let h = 0; h < 24; h++) {
-      const on = sched[d][h] === '1' ? ' on' : '';
-      const cur = (d === now.getDay() && h === now.getHours()) ? ' now' : '';
-      html += `<td><div class="cell${on}${cur}" data-day="${d}" data-hour="${h}"></div></td>`;
-    }
+  $('schedGrid').innerHTML = schedExs.map(e => {
+    const rows = schedBy[e.name] || Array(7).fill('1'.repeat(24));
+    let html = `<div class="ex-h">${e.title}`
+      + (e.todayWindows ? ` <span class="hint" style="text-transform:none">${e.todayWindows}</span>` : '')
+      + '</div><table data-ex="' + e.name + '"><tr><th></th>';
+    for (let h = 0; h < 24; h++) html += `<th>${h}</th>`;
     html += '</tr>';
-  }
-  t.innerHTML = html;
+    for (const d of ORDER) {
+      html += `<tr><td class="dayname" data-day="${d}" style="cursor:pointer">${DAYS[d]}</td>`;
+      for (let h = 0; h < 24; h++) {
+        const on = rows[d][h] === '1' ? ' on' : '';
+        const cur = (d === now.getDay() && h === now.getHours()) ? ' now' : '';
+        html += `<td><div class="cell${on}${cur}" data-day="${d}" data-hour="${h}"></div></td>`;
+      }
+      html += '</tr>';
+    }
+    return html + '</table>';
+  }).join('');
 }
+const cellEx = el => (el.closest('table') || {}).dataset?.ex;
 
 $('schedGrid').addEventListener('mousedown', e => {
   const day = e.target.dataset.day;
   if (day == null) return;
+  const ex = cellEx(e.target);
+  if (!ex) return;
   if (e.target.classList.contains('dayname')) {       // клик по дню - весь день
     const d = +day;
-    const allOn = sched[d] === '1'.repeat(24);
-    sched[d] = (allOn ? '0' : '1').repeat(24);
+    const allOn = schedBy[ex][d] === '1'.repeat(24);
+    schedBy[ex][d] = (allOn ? '0' : '1').repeat(24);
     schedDirty = true;
     buildGrid();
     return;
@@ -458,33 +740,141 @@ $('schedGrid').addEventListener('mousedown', e => {
   if (!e.target.classList.contains('cell')) return;
   e.preventDefault();
   const h = +e.target.dataset.hour;
-  painting = sched[+day][h] === '1' ? '0' : '1';
-  setCell(+day, h, painting);
+  painting = schedBy[ex][+day][h] === '1' ? '0' : '1';
+  setCell(ex, +day, h, painting);
   buildGrid();
 });
 $('schedGrid').addEventListener('mouseover', e => {
   if (painting == null || !e.target.classList.contains('cell')) return;
-  setCell(+e.target.dataset.day, +e.target.dataset.hour, painting);
+  const ex = cellEx(e.target);
+  if (!ex) return;
+  setCell(ex, +e.target.dataset.day, +e.target.dataset.hour, painting);
   e.target.classList.toggle('on', painting === '1');
 });
 document.addEventListener('mouseup', () => { painting = null; });
 
 function fillGrid(pattern) {
-  sched = Array(7).fill(pattern);
+  for (const e of schedExs) schedBy[e.name] = Array(7).fill(pattern);
   schedDirty = true;
   buildGrid();
 }
 $('btnAll').onclick = () => fillGrid('1'.repeat(24));
 $('btnNone').onclick = () => fillGrid('0'.repeat(24));
-$('btnWorkday').onclick = () => fillGrid('0'.repeat(8) + '1'.repeat(15) + '0');
+// Сутки поровну между биржами: при двух это 12/12 со сменой в 08:00 и
+// 20:00. Смысл в том, чтобы одновременно работала ровно одна - тогда и
+// окно браузера одно, и след ровнее.
+$('btnSplit').onclick = () => {
+  const n = schedExs.length;
+  if (!n) return;
+  const per = Math.floor(24 / n);
+  schedExs.forEach((e, i) => {
+    const from = (8 + i * per) % 24;              // первая смена с 08:00
+    let row = '';
+    for (let h = 0; h < 24; h++) {
+      const rel = (h - from + 24) % 24;
+      row += (rel < per || (i === n - 1 && rel < 24 - per * (n - 1))) ? '1' : '0';
+    }
+    schedBy[e.name] = Array(7).fill(row);
+  });
+  schedDirty = true;
+  buildGrid();
+};
 
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
-  'timeframe':    'Переключить таймфрейм',
+  'timeframe':    'Переключить время экспирации',
   'history':      'Открыть историю сделок',
   'scroll':       'Полистать страницу',
 };
+// Биржи и их активы приходят с сервера, поэтому поля ставок, порогов
+// выплаты и выбор для ручной ставки строятся из ответа: добавить биржу
+// или актив можно одним конфигом, панель править не нужно.
+const exs = s => s.exchanges || [];
+const exBy = (s, name) => exs(s).find(e => e.name === name) || exs(s)[0] || null;
+
+let assetsBuilt = null;
+function buildAssetControls(st) {
+  const s = st.settings;
+  const key = exs(s).map(e => e.name + ':' + e.assets.join('+')).join('|');
+  if (assetsBuilt === key) return;
+  assetsBuilt = key;
+  const multi = exs(s).length > 1;
+
+  // Ставка и порог выплаты - у каждой биржи свои. Заголовок биржи
+  // показываем только когда их больше одной: иначе это лишний шум.
+  $('stakeRows').innerHTML = exs(s).map(e =>
+    (multi ? `<div class="ex-h">${e.title}</div>` : '')
+    + e.assets.map(a =>
+      `<div class="row"><span>Ставка ${a}, USDT</span>
+        <input type="number" id="st_${e.name}_${a}" min="1" step="1"
+          data-ex="${e.name}" data-asset="${a}"></div>`).join('')
+    + `<div class="row"><span>Мин. выплата, %</span>
+        <input type="number" id="mp_${e.name}" min="50" max="100" step="1"
+          data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
+            e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>`
+  ).join('');
+  for (const e of exs(s)) {
+    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`]) {
+      CARDS.stakes.push(id);
+      ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
+    }
+  }
+
+  $('mEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
+  $('mEx').style.display = multi ? '' : 'none';
+  // Тот же список для кнопки «Открыть»: смотреть глазами нужно и на ту
+  // биржу, что сейчас не в смене.
+  $('winEx').innerHTML = $('mEx').innerHTML;
+  $('winEx').style.display = multi ? '' : 'none';
+  winExTouched = false;
+  $('commonHead').style.display = multi ? '' : 'none';
+  buildManualAssets(s);
+  $('winEx').addEventListener('change', () => { winExTouched = true; });
+  $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
+  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || s, true));
+  $('tfBox').innerHTML = [10, 30].map(t =>
+    `<label class="chk" style="display:inline-flex;margin-left:8px">
+      <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
+  document.querySelectorAll('.tfBox').forEach(c =>
+    c.addEventListener('change', () => dirty.add('tfBox')));
+}
+
+// Активы в ручной ставке - только те, что торгуются на выбранной бирже.
+function buildManualAssets(s) {
+  const e = exBy(s, $('mEx').value);
+  if (!e) return;
+  const keep = $('mAsset').value;
+  $('mAsset').innerHTML = e.assets.map(a => `<option>${a}</option>`).join('');
+  if (e.assets.includes(keep)) $('mAsset').value = keep;
+}
+
+// Сумма ручной ставки. Значение подставляем по активу - но только когда
+// актив сменили, иначе автообновление раз в 5 секунд затирало бы то, что
+// ты набираешь прямо сейчас.
+const MSTAKE_MIN = 5;
+let mStakeAsset = null;
+// Пока биржу для окна не выбрали руками, она следует за сменой.
+let winExTouched = false;
+function syncManualStake(s, force) {
+  const a = $('mAsset').value;
+  const e = exBy(s, $('mEx').value);
+  if (!a || !e) return;
+  const max = e.stakeLimits[a] ?? 150;
+  $('mStake').max = max;
+  $('mStake').min = MSTAKE_MIN;
+  $('mStakeHint').textContent = `${MSTAKE_MIN}-${max} USDT`;
+  const tag = e.name + '|' + a;
+  if (force || tag !== mStakeAsset) {
+    mStakeAsset = tag;
+    // Стартуем от настроечной ставки актива на этой бирже.
+    $('mStake').value = Math.min(Math.max(e.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
+  } else {
+    const v = +$('mStake').value;
+    if (v > max) $('mStake').value = max;
+  }
+}
+
 let idleBuilt = false;
 function buildIdleActions(all, chosen) {
   if (idleBuilt) return;
@@ -501,12 +891,11 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['stETH', 'stBTC', 'minPay', 'perDay'],
+  stakes: ['perDay'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
-  sil:    ['brkSilence'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
-  sched:  ['schedOn', 'jitter'],
+  sched:  ['schedOn', 'jitter', 'autoWindow'],
 };
 const dirty = new Set();
 Object.values(CARDS).flat().forEach(id => {
@@ -521,16 +910,23 @@ function setChk(id, v) { if (!dirty.has(id)) $(id).checked = v; }
 function clearCard(card) { CARDS[card].forEach(id => dirty.delete(id)); }
 function afterSave(card) { clearCard(card); refresh(); setTimeout(refresh, 700); }
 
+let lastSettings = null;
 async function refresh() {
   let st;
   try { st = await api('state'); }
   catch (e) { $('sub').textContent = 'нет связи с исполнителем'; return; }
   const s = st.settings;
+  lastSettings = s;
 
   $('mode').innerHTML = st.paused
     ? '<span class="pill warn">ПАУЗА</span>'
     : (st.dryRun ? '<span class="pill warn">DRY-RUN</span>' : '<span class="pill ok">БОЕВОЙ</span>');
-  $('modeCard').className = 'card mode-card '
+  // Класс состояния вешаем на ВЕСЬ пульт: правила покраски написаны как
+  // «#ctlCard.live .ctl-mode». Раньше он присваивался внутреннему блоку
+  // через .className, и присваивание стирало ему ctl-sec/ctl-mode - блок
+  // «Режим» терял свою рамку, неон и крупную плашку, а сам #ctlCard
+  // состояние так и не получал. Отсюда и «неон вокруг Режим пропал».
+  $('ctlCard').className = 'card ctl '
     + (st.paused ? 'paused' : (st.dryRun ? 'dry' : 'live'));
   $('modeNote').textContent = st.dryRun
     ? 'Проходит весь путь до кнопки, но не нажимает её.'
@@ -540,48 +936,90 @@ async function refresh() {
   $('btnDry').textContent = st.dryRun ? 'В боевой режим' : 'В dry-run';
   $('btnDry').className = st.dryRun ? 'danger' : '';
 
-  $('slots').textContent = `${st.slots} / ${s.maxOpenBets}`;
-  $('upUsed').textContent = `${st.dirUsed.UP} / ${s.dirLimits.UP}`;
-  $('downUsed').textContent = `${st.dirUsed.DOWN} / ${s.dirLimits.DOWN}`;
+  // Слоты рисуем по биржам: у каждой свой предел, и общая сумма ничего
+  // не говорит - пять занятых на MEXC не мешают ставке на Toobit.
+  $('slotRows').innerHTML = exs(s).map(e =>
+    `<div class="row"><span>${exs(s).length > 1 ? e.title : 'Открыто'}</span>`
+    + `<b class="${e.slots >= e.maxOpenBets ? 'slots-full' : ''}">${e.slots} / ${e.maxOpenBets}</b></div>`
+  ).join('');
+  $('updown').textContent = `${st.dirUsed.UP}/${s.dirLimits.UP} · ${st.dirUsed.DOWN}/${s.dirLimits.DOWN}`;
   $('queue').textContent = st.queue;
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
-  $('errs').textContent = st.consecutiveErrors;
+  sparkline($('todaySpark'), betsByHour(st.bets));
+  // Ошибки занимали строку ради нуля в 99% времени. Теперь плашка, и
+  // только когда есть о чём говорить.
+  $('errPill').textContent = st.consecutiveErrors ? st.consecutiveErrors + ' ошиб.' : '';
+  $('errPill').style.display = st.consecutiveErrors ? '' : 'none';
 
-  // Тишина сигналов: жёлтым с половины порога, красным за порогом -
-  // чтобы «что-то отвалилось» было видно до того, как станет поздно.
+  // ── возраст последнего сигнала ──
+  // Пороги берём от сторожа тишины: жёлтый на половине, красный на самом
+  // пороге, после которого исполнитель уже шлёт алерт. Если сторож
+  // выключен - 30 и 60 минут просто как разумное «давно».
+  const sa = $('sigAge');
   const lim = s.signalSilenceMin || 0;
-  const m = st.silenceMin;
-  const sigCls = (lim && m >= lim) ? 'bad' : (lim && m >= lim / 2) ? 'warn' : 'ok';
-  $('lastSig').innerHTML = `<span class="pill ${sigCls}" title="${st.sinceStart
-    ? 'сигналов не было с запуска' : 'прошло с последнего сигнала'}">${m} мин${st.sinceStart ? '*' : ''}</span>`;
-  setVal('brkSilence', s.signalSilenceMin);
+  const warnAt = lim ? Math.round(lim / 2) : 30, deadAt = lim || 60;
+  const mins = st.silenceMin;
+  sa.textContent = st.sinceStart ? `нет ${fmtAgo(mins)}` : fmtAgo(mins);
+  sa.className = mins >= deadAt ? 'dead' : (mins >= warnAt ? 'stale' : 'fresh');
+  sa.title = st.sinceStart
+    ? 'С запуска исполнителя не пришло ни одного сигнала. '
+      + 'Если это надолго - проверь туннель и адрес хука в Apps Script.'
+    : 'последний сигнал: ' + fmtTime(st.lastSignalAt);
+
   setChk('burstOn', s.burst.enabled);
   setVal('burstWin', s.burst.windowSec);
   setVal('burstMax', s.burst.maxMultiplier);
   $('burstHint').textContent = s.burst.enabled
     ? `Сигналы одного направления за ${s.burst.windowSec} с складываются в одну ставку `
-      + `до ${s.burst.maxMultiplier}x (максимум ${Math.min(s.stakes.ETH * s.burst.maxMultiplier, s.stakeLimits.ETH)} USDT по ETH). `
+      + `до ${s.burst.maxMultiplier}x, но не выше потолка биржи по активу. `
       + 'Ценой этого вход задерживается на окно сбора: узнать, что сигналов три, можно только дав им прийти.'
     : 'Каждый сигнал - своя ставка. Вход мгновенный, но три сигнала подряд '
       + 'растянутся секунд на десять и займут три биржевых слота из пяти.';
 
+  // У каждой биржи своя вкладка, поэтому показываем какие открыты.
+  const tabs = st.openTabs || [];
   $('browserState').innerHTML = st.browserOpen
-    ? '<span class="pill ok">открыт</span>' : '<span class="pill">закрыт</span>';
+    ? `<span class="pill ok" title="${tabs.join(', ')}">${tabs.length > 1 ? tabs.length + ' вкладки' : 'открыт'}</span>`
+    : '<span class="pill">закрыт</span>';
   $('btnOpen').disabled = st.browserOpen || st.busy;
   $('btnClose').disabled = !st.browserOpen || st.busy;
-  $('win').textContent = st.todayWindows || 'круглосуточно';
-  $('activeNow').innerHTML = st.activeNow
-    ? '<span class="pill ok">активен</span>' : '<span class="pill warn">тихие часы</span>';
+  // Кто сейчас в смене. Общий ответ «активен» после разделения часов
+  // перестал что-либо значить: работать может одна биржа из двух.
+  const act = exs(s).filter(e => e.activeNow);
+  if (!winExTouched && act.length) $('winEx').value = act[0].name;
+  $('activeNow').innerHTML = act.length
+    ? act.map(e => `<span class="pill ok">${e.title}</span>`).join(' ')
+    : '<span class="pill warn">никто</span>';
+  $('win').textContent = act.length ? (act[0].todayWindows || 'круглосуточно') : 'смена не идёт';
+  $('win').title = exs(s).map(e => `${e.title}: ${e.todayWindows || 'круглосуточно'}`).join('\n');
 
-  setVal('stETH', s.stakes.ETH); setVal('stBTC', s.stakes.BTC);
-  $('stETH').max = s.stakeLimits.ETH; $('stBTC').max = s.stakeLimits.BTC;
-  $('stakeHint').textContent =
-    `Границы биржи: ETH 1–${s.stakeLimits.ETH}, BTC 1–${s.stakeLimits.BTC} USDT.`;
-  setVal('minPay', s.minPayout); setVal('perDay', s.maxBetsPerDay);
+  buildAssetControls(st);
+  syncManualStake(s, false);
+  for (const e of exs(s)) {
+    for (const a of e.assets) {
+      setVal(`st_${e.name}_${a}`, e.stakes[a]);
+      $(`st_${e.name}_${a}`).max = e.stakeLimits[a];
+    }
+    setVal(`mp_${e.name}`, e.minPayout);
+  }
+  if (!dirty.has('tfBox')) {
+    document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
+  }
+  // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
+  // время экспирации. Последнее важно: общий выключатель ниже биржу
+  // с собственным списком не трогает.
+  $('stakeHint').textContent = exs(s).map(e => {
+    const own = e.execTimings && String(e.execTimings) !== String(s.execTimings);
+    return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
+      + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
+      + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
+      + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '');
+  }).join('. ') + '.';
+  setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
-    `Сколько ставок одной стороны пускаем в окно ${s.slotWindowMin} мин. `
-    + 'Подряд идущие сигналы одной стороны - обычно один заход.';
+    'Сколько ставок одной стороны пускаем по КАЖДОМУ активу, пока они не '
+    + 'истекли. Подряд идущие сигналы одной стороны - обычно один заход.';
 
   setChk('idleOn', s.idleRotation.enabled);
   setChk('humanize', s.humanize);
@@ -593,22 +1031,74 @@ async function refresh() {
     : 'холостых действий ещё не было';
 
   setChk('schedOn', s.schedule.enabled);
+  setChk('autoWindow', s.autoWindow);
   setVal('jitter', s.schedule.jitterMin);
-  if (!schedDirty) { sched = s.schedule.hours.slice(); buildGrid(); }
+  if (!schedDirty) {
+    schedExs = exs(s).map(e => ({ name: e.name, title: e.title, todayWindows: e.todayWindows }));
+    for (const e of exs(s)) schedBy[e.name] = (e.hours || s.schedule.hours).slice();
+    buildGrid();
+  }
 
   $('sub').textContent = `аптайм ${Math.floor(st.uptimeSec / 60)} мин · обновлено `
     + new Date().toLocaleTimeString('ru-RU') + (schedDirty ? ' · есть несохранённые правки расписания' : '');
 
   const tb = $('bets');
-  if (!st.bets || !st.bets.length) {
-    tb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">пока ставок не было</td></tr>';
+  const all = st.bets || [];
+  const rows = all.filter(b => passesFilter(b.status));
+  // Журнал приходит от новых к старым. Сортировка нужна, чтобы собрать
+  // вместе ставки одного актива или все ошибки, не листая полторы сотни
+  // строк; числовые колонки сравниваем как числа, а не как текст.
+  if (sortBy) {
+    const num = ['stake', 'payout_page'].includes(sortBy);
+    rows.sort((x, y) => {
+      const a = x[sortBy] ?? '', b = y[sortBy] ?? '';
+      const r = num ? (parseFloat(a) || 0) - (parseFloat(b) || 0) : String(a).localeCompare(String(b));
+      return r * sortDir;
+    });
+  }
+  $('logCount').textContent = logFilter === 'all'
+    ? `${all.length} строк`
+    : `${rows.length} из ${all.length}`;
+
+  // Сколько входов сегодня НЕ ушло. Ошибка в журнале - это чаще всего
+  // отбитая проверкой ставка (не то время экспирации, не тот актив, форма не
+  // отрисовалась). По одной строке среди полутора сотен это незаметно, а
+  // три подряд означают, что автоматика стоит и надо смотреть логи.
+  const today = new Date().toDateString();
+  const lost = all.filter(b => b.status === 'error'
+    && new Date(b.time).toDateString() === today).length;
+  const lp = $('lostPill');
+  lp.style.display = lost ? '' : 'none';
+  lp.textContent = `сегодня не ушло: ${lost}`;
+  lp.title = 'Ставки, отбитые проверками или ошибками страницы за сегодня. '
+    + 'Нажми «Ошибки» и раскрой строку, чтобы увидеть причину целиком.';
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="9" style="color:var(--muted)">${
+      all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
-    tb.innerHTML = st.bets.map(b => `<tr>
-      <td>${fmtTime(b.time)}</td><td>${b.asset || ''}</td><td>${b.direction || ''}</td>
-      <td>${b.stake || ''}</td><td>${b.payout_page || '—'}</td><td>${b.mode || ''}</td>
-      <td class="${statusClass(b.status)}">${b.status || ''}</td>
-      <td style="color:var(--muted)">${(b.note || '').replace(/^"|"$/g, '').slice(0, 60)}</td>
-    </tr>`).join('');
+    // Клик по строке раскрывает заметку целиком: в колонке она обрезана,
+    // а длинные причины отказа («экспирация не переключилась на 10m, на
+    // странице выбран 30m») начинаются одинаково и различаются в хвосте.
+    tb.innerHTML = rows.map(b => {
+      const note = noteText(b.note);
+      const k = rowKey(b);
+      const open = openRows.has(k);
+      // Журнал теперь во всю ширину, и в колонку помещается заметно
+      // больше: обрезка на 70 символах осталась от узкой карточки.
+      const short = note.length > 110 ? note.slice(0, 110) + '…' : note;
+      const main = `<tr data-k="${esc(k)}"${open ? ' class="open"' : ''}>
+      <td>${fmtTime(b.time)}</td><td>${esc(b.exchange || '')}</td>
+      <td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
+      <td>${esc(b.stake)}</td><td>${esc(b.payout_page) || '—'}</td><td>${esc(b.mode)}</td>
+      <td class="${statusClass(b.status)}">${esc(b.status)}</td>
+      <td style="color:var(--muted)">${esc(short)}</td>
+    </tr>`;
+      if (!open) return main;
+      const tf = b.timing ? ` · ${esc(b.timing)} мин` : '';
+      return main + `<tr class="detail"><td colspan="9">${
+        esc(note) || 'заметки нет'}<div style="margin-top:4px;color:var(--muted);font-size:10.5px">${
+        fmtTime(b.time)}${tf}</div></td></tr>`;
+    }).join('');
   }
 }
 
@@ -624,21 +1114,59 @@ $('btnDry').onclick = async () => {
   await post(st.dryRun ? 'dry-off' : 'dry-on');
   refresh();
 };
+// Ручная ставка обходит лимиты слотов и направления - значит второй клик
+// по кнопке это вторая ставка на реальные деньги, и ничто её не остановит.
+// Кнопку держим выключенной до ответа исполнителя.
+let manualBusy = false;
 $('btnManual').onclick = async () => {
-  const asset = $('mAsset').value, direction = $('mDir').value;
-  if (!confirm(`Поставить ${asset} ${direction}?`)) return;
-  await post('manual', { asset, direction });
-  setTimeout(refresh, 800);
+  if (manualBusy) return;
+  const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
+  const exchange = $('mEx').value;
+  const max = +$('mStake').max || 150;
+  const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
+  $('mStake').value = stake;
+  const exTitle = (exBy(lastSettings || {}, exchange) || {}).title || exchange;
+  if (!confirm(`Поставить ${exTitle} ${asset} ${direction}, экспирация ${timing} минут, ${stake} USDT?`)) return;
+  manualBusy = true;
+  const btn = $('btnManual'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Ставлю…';
+  try {
+    const r = await post('manual', { exchange, asset, direction, timing, stake });
+    if (r && r.error) alert('Не принято: ' + r.error);
+  } catch (e) {
+    alert('Не дошло до исполнителя: ' + e.message);
+  } finally {
+    // Исполнитель отвечает сразу, как только положил ставку в очередь -
+    // то есть за десятки миллисекунд. Разблокируй кнопку по ответу, и
+    // двойной клик всё равно даст две ставки, поэтому держим паузу.
+    setTimeout(() => {
+      manualBusy = false; btn.disabled = false; btn.textContent = label;
+    }, 2500);
+    refresh(); setTimeout(refresh, 800);
+  }
 };
-$('btnOpen').onclick = async () => { $('btnOpen').disabled = true; await post('browser-open'); refresh(); };
+$('btnOpen').onclick = async () => {
+  $('btnOpen').disabled = true;
+  await post('browser-open?ex=' + encodeURIComponent($('winEx').value || ''));
+  refresh();
+};
 $('btnClose').onclick = async () => { $('btnClose').disabled = true; await post('browser-close'); refresh(); };
 
 $('btnSaveStakes').onclick = async () => {
-  await post('settings', {
-    stakes: { ETH: +$('stETH').value, BTC: +$('stBTC').value },
-    minPayout: +$('minPay').value,
-    maxBetsPerDay: +$('perDay').value,
+  // Ставки уходят по биржам: { mexc: {ETH: 150}, toobit: {ETH: 20} }.
+  const stakes = {}, minPayouts = {};
+  document.querySelectorAll('#stakeRows input[data-asset]').forEach(i => {
+    (stakes[i.dataset.ex] = stakes[i.dataset.ex] || {})[i.dataset.asset] = +i.value;
   });
+  document.querySelectorAll('#stakeRows input[id^="mp_"]').forEach(i => {
+    minPayouts[i.dataset.ex] = +i.value;
+  });
+  await post('settings', {
+    stakes, minPayouts,
+    maxBetsPerDay: +$('perDay').value,
+    execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
+  });
+  dirty.delete('tfBox');
   flash('savedStakes'); afterSave('stakes');
 };
 $('btnSaveDir').onclick = async () => {
@@ -665,18 +1193,20 @@ $('btnSaveBurst').onclick = async () => {
   } });
   flash('savedBurst'); afterSave('burst');
 };
-$('btnSaveSil').onclick = async () => {
-  await post('settings', { signalSilenceMin: +$('brkSilence').value });
-  flash('savedSil'); afterSave('sil');
-};
 $('btnSaveSched').onclick = async () => {
+  const schedules = {};
+  for (const e of schedExs) schedules[e.name] = { hours: schedBy[e.name] };
   await post('settings', {
-    schedule: { enabled: $('schedOn').checked, hours: sched, jitterMin: +$('jitter').value },
+    // Общий выключатель и разброс краёв - на все биржи; сетки - у каждой
+    // своя, поэтому уходят отдельным полем.
+    schedule: { enabled: $('schedOn').checked, jitterMin: +$('jitter').value },
+    schedules,
+    autoWindow: $('autoWindow').checked,
   });
   schedDirty = false; flash('savedSched'); afterSave('sched');
 };
 
-buildGrid();
+// До первого ответа сервера бирж мы не знаем - сетку рисует refresh().
 refresh();
 setInterval(refresh, 5000);
 </script>

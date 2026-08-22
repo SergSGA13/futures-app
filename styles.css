@@ -1199,6 +1199,53 @@ html, body {
 
 /* ===== DEV STATS (Last 30 Days · для разработчика) ===== */
 .stats-sub-btn.dev { border-style: dashed; border-color: rgba(255, 209, 102, 0.35); }
+
+/* ===== Ветка MEXC: свой оранжевый акцент (совпадает с DEV_BRANCH_COLORS.MEXC) ===== */
+.stats-sub-btn.mexc {
+  border-color: rgba(247, 147, 26, 0.38);
+  box-shadow: 0 0 16px rgba(247, 147, 26, 0.10);
+}
+.stats-sub-icon.mexc {
+  background: rgba(247, 147, 26, 0.10);
+  border: 1px solid rgba(247, 147, 26, 0.32);
+  box-shadow: 0 0 14px rgba(247, 147, 26, 0.16);
+}
+.mexc-chip {
+  display: inline-block; vertical-align: 1px; margin-left: 6px; padding: 1px 6px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: #F7931A; background: rgba(247, 147, 26, 0.10);
+  border: 1px solid rgba(247, 147, 26, 0.32); border-radius: 5px;
+}
+/* Шапка периода на странице ветки - та же панель, но в оранжевом свечении */
+.mexc-headwrap {
+  border-color: rgba(247, 147, 26, 0.40);
+  box-shadow: 0 0 0 1px rgba(247, 147, 26, 0.10), 0 0 26px rgba(247, 147, 26, 0.12),
+              0 14px 40px rgba(247, 147, 26, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.mexc-headwrap::before {
+  background: linear-gradient(90deg, transparent, #F7931A, #FFB84D, transparent);
+  box-shadow: 0 0 14px rgba(247, 147, 26, 0.55);
+}
+.mexc-title-pill {
+  background: linear-gradient(135deg, rgba(247, 147, 26, 0.18), rgba(255, 184, 77, 0.10));
+  border-color: rgba(247, 147, 26, 0.48);
+  text-shadow: 0 0 12px rgba(247, 147, 26, 0.45);
+  box-shadow: 0 0 18px rgba(247, 147, 26, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.mexc-headwrap .fs-seg {
+  background: rgba(8, 11, 22, 0.62);
+  border-color: rgba(247, 147, 26, 0.30);
+}
+.mexc-period-seg button { min-width: 34px; }
+.mexc-period-seg button.active {
+  background: linear-gradient(135deg, #FFB84D, #F7931A); color: #241100;
+  box-shadow: 0 0 14px rgba(247, 147, 26, 0.45);
+}
+.mexc-headwrap .sig-chart-stat {
+  border-color: rgba(247, 147, 26, 0.30);
+  background: linear-gradient(180deg, rgba(247, 147, 26, 0.09), rgba(255, 184, 77, 0.04));
+  box-shadow: 0 0 18px rgba(247, 147, 26, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
 .dev-badge {
   display: inline-block;
   vertical-align: 2px;

@@ -46,6 +46,7 @@ const navMap = {
   'stats-l30d': 'nav-statistics',
   'stats-l30d-dev': 'nav-statistics',
   'stats-all': 'nav-statistics',
+  'stats-mexc': 'nav-statistics',
   'articles': 'nav-articles',
 };
 const pageTitleKeys = {
@@ -57,6 +58,7 @@ const pageTitleKeys = {
   'stats-l30d': 'title.stats.l30d',
   'stats-l30d-dev': 'title.stats.l30d.dev',
   'stats-all': 'title.stats.all',
+  'stats-mexc': 'title.stats.mexc',
   'article-tilt': 'title.art',
   'article-paradigm': 'title.art',
   'article-what-is': 'title.art',
@@ -85,6 +87,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
+  if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
 
@@ -1159,11 +1162,21 @@ function mexcParseSignal(r) {
     if (v === 'WIN' || v === 'LOSE') { res = v; break; }
   }
   if (!res) return null;
-  const datePart = String(r[0] || '').trim().split(' ')[0];
+  const [datePart, timePart] = String(r[0] || '').trim().split(' ');
   const dk = devDateKey(datePart);
   if (!dk) return null;
   const dir = String(r[2] || '').trim().toUpperCase();
-  return { res, dk, dir: dir === 'UP' ? 'UP' : 'DOWN', pair: sigPairBase(r[1]) };
+  // Время лежит во второй половине той же ячейки A ("dd.mm.yyyy HH:mm:ss").
+  // Раньше оно отбрасывалось, но для разбивок по часам/минутам на странице
+  // ветки MEXC оно нужно - разбираем так же, как devParseSignal.
+  const tp = String(timePart || '').match(/^(\d{1,2}):(\d{1,2})/);
+  const hour = tp ? parseInt(tp[1], 10) : NaN;
+  const minute = tp ? parseInt(tp[2], 10) : NaN;
+  return {
+    res, dk, dir: dir === 'UP' ? 'UP' : 'DOWN', pair: sigPairBase(r[1]),
+    hour: (hour >= 0 && hour <= 23) ? hour : null,
+    minute: (minute >= 0 && minute <= 59) ? minute : null,
+  };
 }
 
 // BLOCKEDsignal отличается от ALLsignal раскладкой: блок [результат,
@@ -4450,6 +4463,197 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
   }
 
   document.getElementById('calcResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ===== СТАТИСТИКА ВЕТКИ MEXC (лист MEXCsignal) =====
+// Отдельный раздел только по группе MEXC: у ветки свои ставки (ETH 150 /
+// BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
+// поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
+// между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
+const MEXC_STATS = { days: 30, charts: {} };
+
+// Все решённые сигналы MEXC за последние N дней (пары НЕ фильтруем: на
+// странице ветки нужен её реальный состав, а не только ETH/BTC).
+async function mexcStatsSignals(days) {
+  const cutoff = cutoffDk(days);
+  const rows = await fetchMexcSignals();
+  if (!rows || rows.length < 2) return [];
+  return rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff);
+}
+
+// Пары в порядке убывания объёма — состав ветки заранее не известен и может
+// меняться, поэтому строим список из самих данных, а не хардкодим ETH/BTC.
+function mexcPairOrder_(sigs) {
+  const cnt = {};
+  for (const s of sigs) cnt[s.pair] = (cnt[s.pair] || 0) + 1;
+  return Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+}
+
+function mexcDestroyCharts_() {
+  for (const k of Object.keys(MEXC_STATS.charts)) {
+    try { MEXC_STATS.charts[k]?.destroy(); } catch (e) { /* уже уничтожен */ }
+    delete MEXC_STATS.charts[k];
+  }
+}
+
+function mexcShow_(cardId, on) {
+  const el = document.getElementById(cardId);
+  if (el) el.style.display = on ? 'block' : 'none';
+}
+
+// Накопленный PNL ветки по её собственным ставкам (devPnlSig(s,'MEXC')).
+function mexcRenderPnlChart_(sigs) {
+  if (typeof Chart === 'undefined') return false;
+  const ctx = document.getElementById('mexcPnlChart')?.getContext('2d');
+  if (!ctx) return false;
+
+  const daily = {};
+  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + devPnlSig(s, 'MEXC');
+  const days = Object.keys(daily).sort();
+  if (days.length < 2) return false;
+
+  let cum = 0;
+  const labels = [], pct = [];
+  for (const dk of days) {
+    cum += daily[dk];
+    labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+    pct.push(Math.round((cum / 5000) * 100));
+  }
+
+  const grad = ctx.createLinearGradient(0, 0, 0, 200);
+  grad.addColorStop(0, 'rgba(247, 147, 26, 0.35)');
+  grad.addColorStop(1, 'rgba(247, 147, 26, 0.0)');
+
+  MEXC_STATS.charts.pnl = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ data: pct, borderColor: '#F7931A', backgroundColor: grad, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+  return true;
+}
+
+function mexcSummaryHtml_(sigs) {
+  let w = 0, l = 0, pnl = 0;
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
+    pnl += devPnlSig(s, 'MEXC');
+  }
+  const dec = w + l;
+  const wr = dec ? (w / dec * 100) : null;
+  const wrTxt = wr == null ? '-' : wr.toFixed(1) + '%';
+  return {
+    html: `Сигналов: <b>${sigs.length}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b>` +
+          ` &nbsp;·&nbsp; WR <b class="${wr == null ? '' : wrClass(wr)}">${wrTxt}</b>` +
+          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>`,
+    wr,
+  };
+}
+
+async function renderMexcStats() {
+  const days = MEXC_STATS.days;
+  const sumEl = document.getElementById('mexcSummary');
+  mexcDestroyCharts_();
+  if (sumEl) { sumEl.className = 'sig-chart-stat'; sumEl.innerHTML = 'Загрузка...'; }
+
+  try {
+    const sigs = await mexcStatsSignals(days);
+
+    if (!sigs.length) {
+      for (const c of ['mexcPnlCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
+      if (sumEl) sumEl.innerHTML = 'Нет данных';
+      mexcShow_('mexcEmpty', true);
+      return;
+    }
+    mexcShow_('mexcEmpty', false);
+
+    // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
+    if (sumEl) {
+      const s = mexcSummaryHtml_(sigs);
+      sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= 60 ? ' sig-wr-good' : s.wr < 45 ? ' sig-wr-bad' : '');
+      sumEl.innerHTML = s.html;
+    }
+
+    // Графики не должны ронять таблицы: если Chart.js не загрузился (CDN
+    // недоступен) или упал на конкретных данных, остальная страница обязана
+    // отрисоваться - таблицы считаются из тех же сигналов и от Chart.js не зависят.
+    try {
+      mexcShow_('mexcPnlCard', mexcRenderPnlChart_(sigs));
+    } catch (e) {
+      console.log('MEXC pnl chart error:', e);
+      mexcShow_('mexcPnlCard', false);
+    }
+    try {
+      MEXC_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('mexcWrDailyChart', sigs, days);
+      mexcShow_('mexcWrDailyCard', !!MEXC_STATS.charts.wr);
+    } catch (e) {
+      console.log('MEXC wr chart error:', e);
+      mexcShow_('mexcWrDailyCard', false);
+    }
+
+    // По парам — состав ветки берём из данных, снизу PNL/WR по ставкам MEXC
+    const pairOrder = mexcPairOrder_(sigs);
+    const pairGroups = devAggregate(sigs, s => s.pair);
+    const pairTable = devBuildTable(pairOrder, pairGroups);
+    const pairEl = document.getElementById('mexcPairsTable');
+    if (pairEl && pairTable) {
+      pairEl.innerHTML = pairTable + devBranchSummaryHtml(pairGroups, 'MEXC') + wrLegendHtml();
+      mexcShow_('mexcPairsCard', true);
+    } else {
+      mexcShow_('mexcPairsCard', false);
+    }
+
+    // По дням недели
+    const dowOrder = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const dowGroups = devAggregate(sigs, s => {
+      const [y, m, d] = s.dk.split('-').map(Number);
+      return dowOrder[(new Date(y, m - 1, d).getDay() + 6) % 7];
+    });
+    const dowTable = devBuildTable(dowOrder, dowGroups);
+    devShowTable('mexcDowTable', 'mexcDowCard', dowTable);
+    mexcShow_('mexcDowCard', !!dowTable);
+
+    // По часам
+    const hourOrder = [];
+    for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
+    const hourGroups = devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`);
+    const hourTable = devBuildTable(hourOrder, hourGroups);
+    devShowTable('mexcHourTable', 'mexcHourCard', hourTable);
+    mexcShow_('mexcHourCard', !!hourTable);
+
+    // По 15-минутным зонам внутри часа
+    const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
+    const tzGroups = devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)]);
+    const tzTable = devBuildTable(tzOrder, tzGroups);
+    devShowTable('mexcTFTable', 'mexcTFCard', tzTable);
+    mexcShow_('mexcTFCard', !!tzTable);
+
+  } catch (e) {
+    console.log('MEXC stats error:', e);
+    if (sumEl) sumEl.innerHTML = 'Ошибка загрузки';
+  }
+}
+
+function initMexcStatsUI() {
+  const seg = document.getElementById('mexcPeriodSeg');
+  if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = '1';
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const days = parseInt(btn.dataset.days, 10);
+    if (!days || days === MEXC_STATS.days) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    MEXC_STATS.days = days;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    renderMexcStats();
+  });
 }
 
 // ===== INIT =====

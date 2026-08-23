@@ -967,6 +967,11 @@ html, body {
   background: linear-gradient(135deg, #FFB84D, #FF7A45); color: #1a1204;
   box-shadow: 0 0 12px rgba(255,153,64,.40);
 }
+/* MEXC 30м - та же семья цветов, но темнее, чтобы не путать с 10м */
+#sigBranchSeg button.active[data-branch="MEXC30"] {
+  background: linear-gradient(135deg, #F7931A, #C25A00); color: #fff;
+  box-shadow: 0 0 12px rgba(247,147,26,.40);
+}
 #sigBranchSeg button.active[data-branch="ALT10m"] {
   background: linear-gradient(135deg, #4EFFA0, #22C3A6); color: #04231a;
   box-shadow: 0 0 12px rgba(78,255,160,.35);

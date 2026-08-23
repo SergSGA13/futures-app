@@ -1181,14 +1181,25 @@ function devParseSignal(r) {
 // хука и минимум раз уже уезжала вправо из-за новых вставленных колонок -
 // как и в BLOCKEDsignal, якоримся на ячейку со значением WIN/LOSE, а не на
 // фиксированный индекс. Дата - единая строка "dd.mm.yyyy HH:mm:ss" в A(0).
+// Индекс колонки результата в строке листа MEXC*/. Ищем якорем по значению,
+// а не по фиксированному номеру: у MEXCsignal и MEXC30signal результат стоит
+// в разных колонках и уже переезжал при вставке новых.
+// Принимаем и «WIN & LOSE» (ничья, PNL 0) - такие строки в листах реально
+// есть, а раньше они молча выпадали из ветки MEXC, хотя из ALLsignal
+// учитывались (см. DEV_RESOLVED).
+// Поиск начинаем с 9, чтобы не зацепить ранние текстовые колонки.
+function mexcResultIdx_(r) {
+  for (let i = 9; i < r.length; i++) {
+    if (DEV_RESOLVED.has(String(r[i] || '').trim())) return i;
+  }
+  return -1;
+}
+
 function mexcParseSignal(r) {
   if (!r) return null;
-  let res = null;
-  for (let i = 9; i < r.length; i++) {
-    const v = String(r[i] || '').trim();
-    if (v === 'WIN' || v === 'LOSE') { res = v; break; }
-  }
-  if (!res) return null;
+  const resIdx = mexcResultIdx_(r);
+  if (resIdx < 0) return null;
+  const res = String(r[resIdx]).trim();
   const [datePart, timePart] = String(r[0] || '').trim().split(' ');
   const dk = devDateKey(datePart);
   if (!dk) return null;
@@ -3598,21 +3609,19 @@ function formatTimerAgo(timeStr) {
 // независимо от того, из какого листа (ALLsignal/MEXCsignal/BLOCKEDsignal)
 // пришла строка.
 async function fetchBranchSignals_(branch) {
-  if (branch === 'MEXC') {
-    const rows = await fetchMexcSignals();
+  // Обе ветки MEXC (10м - MEXCsignal, 30м - MEXC30signal) лежат в листах с
+  // одинаковой раскладкой и разбираются одинаково.
+  if (branch === 'MEXC' || branch === 'MEXC30') {
+    const rows = branch === 'MEXC30' ? await fetchMexc30Signals() : await fetchMexcSignals();
     if (!rows || rows.length < 2) return [];
     return rows.slice(1).map(r => {
-      let resIdx = -1;
-      for (let i = 9; i < r.length; i++) {
-        const v = String(r[i] || '').trim();
-        if (v === 'WIN' || v === 'LOSE') { resIdx = i; break; }
-      }
+      const resIdx = mexcResultIdx_(r);
       if (resIdx < 0) return null;
       const [datePart, timePart] = String(r[0] || '').trim().split(' ');
       const dk = devDateKey(datePart);
       if (!dk) return null;
       const dir = String(r[2] || '').trim().toUpperCase();
-      return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: r[resIdx] };
+      return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: String(r[resIdx]).trim() };
     }).filter(Boolean);
   }
 

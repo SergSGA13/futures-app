@@ -185,6 +185,7 @@ let analL7dRows = null;
 let allSignalRows = null;
 let blockedSignalRows = null;
 let mexcSignalRows = null;
+let mexc30SignalRows = null;
 let monthlyWrChartInstance = null;
 
 // Индексы колонок ALLsignal (0-based). Лист уже минимум дважды правили руками
@@ -220,7 +221,8 @@ async function fetchBlockedSignals() {
   return blockedSignalRows;
 }
 
-// Сигналы ветки MEXC (10м и 30м вместе). Колонки: A Time ("dd.mm.yyyy HH:mm:ss"),
+// Сигналы ветки MEXC с экспирацией 10 минут (30-минутные - в MEXC30signal
+// ниже). Колонки: A Time ("dd.mm.yyyy HH:mm:ss"),
 // B Ticker, C Direction, ... M(12) Result (WIN/LOSE) - добавлена вручную в листе,
 // в исходном наборе колонок хука её нет.
 async function fetchMexcSignals() {
@@ -231,6 +233,31 @@ async function fetchMexcSignals() {
   const text = await res.text();
   mexcSignalRows = parseCSV(text);
   return mexcSignalRows;
+}
+
+// Сигналы MEXC с экспирацией 30 минут - отдельный лист MEXC30signal.
+// Раскладка колонок та же, что у MEXCsignal (пишет тот же хук), поэтому
+// разбираются они общим mexcParseSignal, который ищет результат якорем по
+// WIN/LOSE, а не по фиксированному индексу.
+// Лист может ещё не существовать или быть закрыт - тогда gviz отдаёт не CSV,
+// а страницу ошибки. Такой ответ не должен ронять раздел: кэшируем пустой
+// набор и показываем только то, что реально удалось прочитать.
+async function fetchMexc30Signals() {
+  if (mexc30SignalRows) return mexc30SignalRows;
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=MEXC30signal`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { mexc30SignalRows = []; return mexc30SignalRows; }
+    const text = await res.text();
+    // gviz на несуществующий лист отвечает 200 + HTML-страницей с ошибкой
+    if (/^\s*</.test(text)) { mexc30SignalRows = []; return mexc30SignalRows; }
+    mexc30SignalRows = parseCSV(text);
+  } catch (e) {
+    console.log('MEXC30signal fetch error:', e);
+    mexc30SignalRows = [];
+  }
+  return mexc30SignalRows;
 }
 
 async function fetchAnalL7d() {
@@ -4470,15 +4497,35 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
-const MEXC_STATS = { days: 30, charts: {} };
+const MEXC_STATS = { days: 30, src: 'ALL', charts: {} };
+
+// Источники ветки: 10-минутные сигналы и 30-минутные лежат в разных листах.
+// Экспирация у них разная, поэтому по умолчанию показываем их вместе, но
+// даём переключиться на любой из них по отдельности.
+const MEXC_SOURCES = {
+  '10m': { sheet: 'MEXCsignal',   fetch: fetchMexcSignals },
+  '30m': { sheet: 'MEXC30signal', fetch: fetchMexc30Signals },
+};
 
 // Все решённые сигналы MEXC за последние N дней (пары НЕ фильтруем: на
 // странице ветки нужен её реальный состав, а не только ETH/BTC).
-async function mexcStatsSignals(days) {
+// src: '10m' | '30m' | 'ALL'. Каждый сигнал помечается своим источником,
+// чтобы итог мог показать вклад каждого листа.
+async function mexcStatsSignals(days, src) {
   const cutoff = cutoffDk(days);
-  const rows = await fetchMexcSignals();
-  if (!rows || rows.length < 2) return [];
-  return rows.slice(1).map(mexcParseSignal).filter(s => s && s.dk >= cutoff);
+  const keys = (src === 'ALL' || !src) ? Object.keys(MEXC_SOURCES) : [src];
+
+  const parts = await Promise.all(keys.map(async k => {
+    const rows = await MEXC_SOURCES[k].fetch();
+    if (!rows || rows.length < 2) return [];
+    return rows.slice(1).map(r => {
+      const s = mexcParseSignal(r);
+      if (s) s.src = k;
+      return s;
+    }).filter(s => s && s.dk >= cutoff);
+  }));
+
+  return parts.flat();
 }
 
 // Пары в порядке убывания объёма — состав ветки заранее не известен и может
@@ -4539,7 +4586,7 @@ function mexcRenderPnlChart_(sigs) {
   return true;
 }
 
-function mexcSummaryHtml_(sigs) {
+function mexcSummaryHtml_(sigs, src) {
   let w = 0, l = 0, pnl = 0;
   for (const s of sigs) {
     if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
@@ -4548,10 +4595,20 @@ function mexcSummaryHtml_(sigs) {
   const dec = w + l;
   const wr = dec ? (w / dec * 100) : null;
   const wrTxt = wr == null ? '-' : wr.toFixed(1) + '%';
+
+  // В режиме «Все» показываем, сколько дал каждый лист - иначе не видно,
+  // подхватились ли 30-минутные сигналы вообще.
+  let srcLine = '';
+  if (src === 'ALL' || !src) {
+    const n10 = sigs.filter(s => s.src === '10m').length;
+    const n30 = sigs.filter(s => s.src === '30m').length;
+    srcLine = `<div class="mexc-src-line">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b></div>`;
+  }
+
   return {
     html: `Сигналов: <b>${sigs.length}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b>` +
           ` &nbsp;·&nbsp; WR <b class="${wr == null ? '' : wrClass(wr)}">${wrTxt}</b>` +
-          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>`,
+          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` + srcLine,
     wr,
   };
 }
@@ -4563,7 +4620,7 @@ async function renderMexcStats() {
   if (sumEl) { sumEl.className = 'sig-chart-stat'; sumEl.innerHTML = 'Загрузка...'; }
 
   try {
-    const sigs = await mexcStatsSignals(days);
+    const sigs = await mexcStatsSignals(days, MEXC_STATS.src);
 
     if (!sigs.length) {
       for (const c of ['mexcPnlCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
@@ -4575,7 +4632,7 @@ async function renderMexcStats() {
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
-      const s = mexcSummaryHtml_(sigs);
+      const s = mexcSummaryHtml_(sigs, MEXC_STATS.src);
       sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= 60 ? ' sig-wr-good' : s.wr < 45 ? ' sig-wr-bad' : '');
       sumEl.innerHTML = s.html;
     }
@@ -4642,18 +4699,34 @@ async function renderMexcStats() {
 
 function initMexcStatsUI() {
   const seg = document.getElementById('mexcPeriodSeg');
-  if (!seg || seg.dataset.wired) return;
-  seg.dataset.wired = '1';
-  seg.addEventListener('click', e => {
-    const btn = e.target.closest('button');
-    if (!btn) return;
-    const days = parseInt(btn.dataset.days, 10);
-    if (!days || days === MEXC_STATS.days) return;
-    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-    MEXC_STATS.days = days;
-    if (tg) tg.HapticFeedback?.selectionChanged();
-    renderMexcStats();
-  });
+  if (seg && !seg.dataset.wired) {
+    seg.dataset.wired = '1';
+    seg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const days = parseInt(btn.dataset.days, 10);
+      if (!days || days === MEXC_STATS.days) return;
+      seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      MEXC_STATS.days = days;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+
+  const srcSeg = document.getElementById('mexcSrcSeg');
+  if (srcSeg && !srcSeg.dataset.wired) {
+    srcSeg.dataset.wired = '1';
+    srcSeg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const src = btn.dataset.src;
+      if (!src || src === MEXC_STATS.src) return;
+      srcSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      MEXC_STATS.src = src;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
 }
 
 // ===== INIT =====

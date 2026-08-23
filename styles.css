@@ -1237,9 +1237,22 @@ html, body {
   border-color: rgba(247, 147, 26, 0.30);
 }
 .mexc-period-seg button { min-width: 34px; }
-.mexc-period-seg button.active {
+/* Селектор ".fs-seg button.active" объявлен ниже по файлу с той же
+   специфичностью и перебивал бы оранжевый - поэтому якоримся ещё и на
+   .mexc-headwrap, чтобы вес правила был выше. */
+.mexc-headwrap .fs-seg button.active {
   background: linear-gradient(135deg, #FFB84D, #F7931A); color: #241100;
   box-shadow: 0 0 14px rgba(247, 147, 26, 0.45);
+}
+.mexc-src-seg button { min-width: 34px; }
+.mexc-src-lbl {
+  flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--text-muted); padding-left: 3px;
+}
+/* Вклад каждого листа под общим итогом ветки */
+.mexc-src-line {
+  margin-top: 5px; padding-top: 5px; font-size: 11px;
+  border-top: 1px dashed rgba(247, 147, 26, 0.22); opacity: .85;
 }
 .mexc-headwrap .sig-chart-stat {
   border-color: rgba(247, 147, 26, 0.30);

@@ -3609,20 +3609,24 @@ function formatTimerAgo(timeStr) {
 // независимо от того, из какого листа (ALLsignal/MEXCsignal/BLOCKEDsignal)
 // пришла строка.
 async function fetchBranchSignals_(branch) {
-  // Обе ветки MEXC (10м - MEXCsignal, 30м - MEXC30signal) лежат в листах с
-  // одинаковой раскладкой и разбираются одинаково.
-  if (branch === 'MEXC' || branch === 'MEXC30') {
-    const rows = branch === 'MEXC30' ? await fetchMexc30Signals() : await fetchMexcSignals();
-    if (!rows || rows.length < 2) return [];
-    return rows.slice(1).map(r => {
-      const resIdx = mexcResultIdx_(r);
-      if (resIdx < 0) return null;
-      const [datePart, timePart] = String(r[0] || '').trim().split(' ');
-      const dk = devDateKey(datePart);
-      if (!dk) return null;
-      const dir = String(r[2] || '').trim().toUpperCase();
-      return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: String(r[resIdx]).trim() };
-    }).filter(Boolean);
+  // Ветка MEXC - это оба листа сразу: MEXCsignal (10м) и MEXC30signal (30м).
+  // Раскладка у них одинаковая, поэтому строки разбираются общим кодом, а
+  // порядок задаёт уже сортировка по дате и времени сработки в списке -
+  // сигналы двух листов идут вперемешку по времени, а не блоками.
+  if (branch === 'MEXC') {
+    const sheets = await Promise.all([fetchMexcSignals(), fetchMexc30Signals()]);
+    return sheets.flatMap(rows => {
+      if (!rows || rows.length < 2) return [];
+      return rows.slice(1).map(r => {
+        const resIdx = mexcResultIdx_(r);
+        if (resIdx < 0) return null;
+        const [datePart, timePart] = String(r[0] || '').trim().split(' ');
+        const dk = devDateKey(datePart);
+        if (!dk) return null;
+        const dir = String(r[2] || '').trim().toUpperCase();
+        return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: String(r[resIdx]).trim() };
+      }).filter(Boolean);
+    });
   }
 
   let rows;

@@ -1347,6 +1347,17 @@ function devWrTd(w, l) {
   return `<td class="${wrClass(pct)}">${pct}%</td>`;
 }
 
+// Ячейка «Win». WR считается только по решённым сигналам (ничьи «WIN & LOSE»
+// исключаются), а колонка Total показывает ВСЕ сигналы - поэтому там, где
+// ничьи есть, "Win" и "Total" не сходятся с процентом: например 2 победы,
+// 1 поражение и 5 ничьих дают Total 8, Win 2 и WR 67% (=2/3), что читается
+// как ошибка. Показываем базу расчёта прямо в ячейке - "2/3".
+// Если ничьих нет, база равна Win и ячейка выглядит как раньше.
+function devWinTd(w, l, t) {
+  const dec = w + l;
+  return (t > dec && dec > 0) ? `<td>${w}/${dec}</td>` : `<td>${w}</td>`;
+}
+
 function devBuildTable(order, groups) {
   const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
@@ -1355,19 +1366,26 @@ function devBuildTable(order, groups) {
 
   const tot = { upT: 0, upW: 0, upL: 0, dnT: 0, dnW: 0, dnL: 0 };
   let hasData = false;
+  let hasDraws = false;
   for (const label of order) {
     const o = groups[label];
     if (!o) continue;
     hasData = true;
+    if (o.upT > o.upW + o.upL || o.dnT > o.dnW + o.dnL) hasDraws = true;
     for (const k in tot) tot[k] += o[k];
-    html += `<tr><td>${label}</td><td>${o.upT}</td><td>${o.upW}</td>${devWrTd(o.upW, o.upL)}` +
-            `<td>${o.dnT}</td><td>${o.dnW}</td>${devWrTd(o.dnW, o.dnL)}<td>${o.upT + o.dnT}</td></tr>`;
+    html += `<tr><td>${label}</td><td>${o.upT}</td>${devWinTd(o.upW, o.upL, o.upT)}${devWrTd(o.upW, o.upL)}` +
+            `<td>${o.dnT}</td>${devWinTd(o.dnW, o.dnL, o.dnT)}${devWrTd(o.dnW, o.dnL)}<td>${o.upT + o.dnT}</td></tr>`;
   }
   if (!hasData) return '';
-  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td><td>${tot.upW}</td>${devWrTd(tot.upW, tot.upL)}` +
-          `<td>${tot.dnT}</td><td>${tot.dnW}</td>${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
+  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td>${devWinTd(tot.upW, tot.upL, tot.upT)}${devWrTd(tot.upW, tot.upL)}` +
+          `<td>${tot.dnT}</td>${devWinTd(tot.dnW, tot.dnL, tot.dnT)}${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
-  return `<div class="stats-table-wrap">${html}</div>`;
+
+  // Сноску показываем только когда ничьи реально есть - иначе она лишний шум.
+  const note = hasDraws
+    ? '<div class="anal-draw-note">Total включает ничьи «50/50». В WR они не входят, поэтому Win показан как «побед/решённых».</div>'
+    : '';
+  return `<div class="stats-table-wrap">${html}</div>${note}`;
 }
 
 function devShowTable(tableId, cardId, html) {

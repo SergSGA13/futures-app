@@ -98,13 +98,25 @@
      расписания. min-height:0 нужен, чтобы прокрутка осталась внутри
      таблицы, а не распирала карточку. */
   .duo > .card { margin:0; min-width:0; display:flex; flex-direction:column; }
-  /* flex:1 растягивает таблицу на свободную высоту, но потолок в 420px
-     из общего правила остаётся: со 150 строками карточка иначе уехала бы
-     на несколько экранов вниз. */
-  .duo .tablewrap { flex:1; min-height:0; }
+  /* Внутри пары потолок в 420px снимается: именно он оставлял под
+     журналом пустую полосу до низа расписания - таблица упиралась в
+     max-height и дальше не росла, хотя место было. Высоту ряда задаёт
+     расписание (его содержимое фиксировано), а таблица с flex-basis 0 и
+     своей прокруткой в эту высоту НЕ вкладывается сама: при подсчёте
+     высоты карточки её вклад равен нулю. Поэтому 150 строк журнала
+     по-прежнему не растягивают ряд - они прокручиваются внутри. */
+  .duo .tablewrap { flex:1 1 0; min-height:0; max-height:none; }
   /* Ниже 1240px пара уже не помещается по-честному: складываем в стопку,
-     расписание сверху. */
-  @media (max-width: 1240px) { .duo { grid-template-columns:1fr; } }
+     расписание сверху. В стопке высоту ряда никто не задаёт, и без
+     потолка журнал растянулся бы на несколько экранов - возвращаем его. */
+  @media (max-width: 1240px) {
+    .duo { grid-template-columns:1fr; }
+    /* В стопке высоту ряда никто не задаёт, и flex-basis:0 схлопывал бы
+       таблицу в ноль - карточка журнала выходила в 84 пикселя без единой
+       строки. Здесь таблица снова растёт от содержимого, а потолок
+       возвращает прокрутку. */
+    .duo .tablewrap { flex:0 1 auto; max-height:420px; }
+  }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -491,6 +503,8 @@
       <div class="row"><span>Ставок в день</span>
       <input type="number" id="perDay" min="1" max="500" step="1"></div>
       <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
+      <label class="chk"><input type="checkbox" id="priceOn">
+        Проверять цену входа</label>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
       </div>
@@ -813,9 +827,16 @@ function buildAssetControls(st) {
         <input type="number" id="mp_${e.name}" min="50" max="100" step="1"
           data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
             e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>`
+    // Порог отката: на сколько процентов цена входа может уйти против
+    // сигнала. У каждой биржи свой - на разных инструментах обычное
+    // движение за полминуты отличается в разы.
+    + `<div class="row"><span>Цена хуже сигнала не более, %</span>
+        <input type="number" id="pg_${e.name}" min="0" max="5" step="0.01"
+          data-ex="${e.name}"
+          title="0 - входить только по цене лучше сигнала. Пусто на странице не читается - проверка пропускается"></div>`
   ).join('');
   for (const e of exs(s)) {
-    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`]) {
+    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`, `pg_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -891,7 +912,7 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['perDay'],
+  stakes: ['perDay', 'priceOn'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
@@ -901,6 +922,10 @@ const dirty = new Set();
 Object.values(CARDS).flat().forEach(id => {
   const el = $(id);
   ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add(id)));
+});
+$('priceOn').addEventListener('change', () => {
+  document.querySelectorAll('#stakeRows input[id^="pg_"]')
+    .forEach(i => { i.disabled = !$('priceOn').checked; });
 });
 function setVal(id, v) { if (!dirty.has(id)) $(id).value = v; }
 function setChk(id, v) { if (!dirty.has(id)) $(id).checked = v; }
@@ -1001,6 +1026,8 @@ async function refresh() {
       $(`st_${e.name}_${a}`).max = e.stakeLimits[a];
     }
     setVal(`mp_${e.name}`, e.minPayout);
+    setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
+    $(`pg_${e.name}`).disabled = (s.priceGuard || {}).enabled === false;
   }
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
@@ -1013,8 +1040,20 @@ async function refresh() {
     return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
       + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
       + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
-      + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '');
-  }).join('. ') + '.';
+      + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '')
+      + ((s.priceGuard || {}).enabled !== false
+          ? `, цена входа не хуже сигнала ${(e.priceGuard || {}).maxAdversePct
+              ? `более чем на ${(e.priceGuard || {}).maxAdversePct}%` : 'вовсе'}`
+          : '');
+  }).join('. ') + '.'
+    + ((s.priceGuard || {}).enabled !== false
+        ? ' От сигнала до нажатия проходит от десяти секунд до минуты, и за это'
+          + ' время цена откатывается: с проверкой вход по цене хуже сигнала'
+          + ' отменяется (в журнале skip-price). Если цену на странице прочитать'
+          + ' не удалось, ставка идёт без проверки.'
+        : ' Проверка цены входа выключена: ставка уйдёт по любой цене, какой бы'
+          + ' откат ни случился, пока сигнал шёл до нажатия.');
+  if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
@@ -1161,8 +1200,13 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="mp_"]').forEach(i => {
     minPayouts[i.dataset.ex] = +i.value;
   });
+  const priceGuards = {};
+  document.querySelectorAll('#stakeRows input[id^="pg_"]').forEach(i => {
+    if (i.value !== '') priceGuards[i.dataset.ex] = +i.value;
+  });
   await post('settings', {
-    stakes, minPayouts,
+    stakes, minPayouts, priceGuards,
+    priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });

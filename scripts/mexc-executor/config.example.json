@@ -147,6 +147,14 @@
     "windowSec": 3,
     "maxMultiplier": 3
   },
+  "priceGuard": {
+    "enabled": true,
+    "maxAdversePct": 0.05,
+    "requireBetter": false,
+    "strict": false
+  },
+  "tfMemoMinutes": 90,
+  "payoutSwitchMs": 3500,
   "execTimings": [
     10,
     30

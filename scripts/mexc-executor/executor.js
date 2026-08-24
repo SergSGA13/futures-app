@@ -123,6 +123,13 @@ function exCfg(name) {
     // это подстрока и "ALT10m", и "MEXC_10m", и по вхождению PRO-поток
     // забрал бы чужие сигналы.
     signalTimings: (e.signalTimings || []).map(t => String(t).toLowerCase().trim()),
+    // Проверка цены входа. Между сигналом и нажатием проходит от десяти
+    // секунд до минуты, и за это время цена успевает откатиться - вход
+    // получается хуже того, на который сигнал рассчитан.
+    priceGuard: { ...(CFG.priceGuard || {}), ...(e.priceGuard || {}) },
+    // Где на странице искать текущую цену. Пусто - ищем сами:
+    // в заголовке вкладки, потом самым крупным числом в шапке.
+    priceSelector: e.priceSelector ?? CFG.priceSelector ?? '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -436,9 +443,22 @@ async function pageFor(name) {
   const taken = new Set([...pages.values()]);
   const free = ctx.pages().find(p => !p.isClosed() && !taken.has(p));
   const p = free || await ctx.newPage();
+  watchNav(p);
   pages.set(name, p);
   return p;
 }
+// Счётчик переходов вкладки. Нужен памяти об экспирации: любой переход -
+// это новая сборка приложения, и всё, что мы знали о выбранных чипах,
+// перестаёт быть правдой.
+const navEpoch = new WeakMap();
+function watchNav(p) {
+  if (navEpoch.has(p)) return;
+  navEpoch.set(p, 1);
+  p.on('framenavigated', f => {
+    if (f === p.mainFrame()) navEpoch.set(p, (navEpoch.get(p) || 0) + 1);
+  });
+}
+function pageNav(p) { return p ? (navEpoch.get(p) || 0) : 0; }
 function openExchanges() {
   return [...pages.entries()].filter(([, p]) => p && !p.isClosed()).map(([n]) => n);
 }
@@ -693,14 +713,21 @@ async function dumpPage(tag) {
 
 // Кандидаты на поле суммы: вёрстка вкладок Simple и Pro различается,
 // плейсхолдер зависит от локали и лимитов аккаунта.
+// Селектор поля суммы, который на этой бирже сработал в прошлый раз.
+// Список перебирается по порядку с ожиданием на каждом, и на Toobit
+// подходил только третий: две с половиной секунды каждой ставки уходили
+// на заведомо промахивающиеся первые два.
+const amountHit = new Map();
 function amountSelectors() {
-  return [
+  const list = [
     curEx().selectors.amount,
     'input[placeholder*="USDT"]',
     'input[placeholder*="~"]',
     'input[inputmode="decimal"]',
     'input[type="number"]',
   ].filter(Boolean);
+  const hit = amountHit.get(curEx().name);
+  return hit ? [hit, ...list.filter(s => s !== hit)] : list;
 }
 
 async function findAmount(perTryMs) {
@@ -708,6 +735,7 @@ async function findAmount(perTryMs) {
     const loc = page.locator(sel).first();
     try {
       await loc.waitFor({ state: 'visible', timeout: perTryMs });
+      amountHit.set(curEx().name, sel);
       return { loc, sel };
     } catch (e) { /* следующий */ }
   }
@@ -865,6 +893,70 @@ async function pageAssetOnPage() {
       // Мелкий текст - это лента, а не шапка: такому не верим.
       return bestSize >= 14 ? best : null;
     }, keys);
+  } catch (e) { return null; }
+}
+
+// ── цена на странице ──
+// Нужна, чтобы не входить хуже, чем показывал сигнал. Официального API у
+// событийных фьючерсов нет, поэтому читаем то же, что видит человек.
+// Три источника по убыванию надёжности: селектор из конфига, заголовок
+// вкладки (биржи держат там последнюю цену) и самое крупное число в
+// шапке страницы. Не прочитали - возвращаем null, и проверка цены
+// молча отключается: терять сигналы из-за неё нельзя.
+function parsePrice(t) {
+  if (!t) return null;
+  // 1 234,56 / 1,234.56 / 4321.5 - разделитель тысяч выкидываем, а
+  // десятичную запятую превращаем в точку.
+  const m = String(t).match(/(\d[\d,.   ]{0,15}\d|\d)/);
+  if (!m) return null;
+  let x = m[1].replace(/[   ]/g, '');
+  if (/,\d{1,8}$/.test(x) && !/\.\d/.test(x)) x = x.replace(/\./g, '').replace(',', '.');
+  else x = x.replace(/,/g, '');
+  const v = parseFloat(x);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+async function pagePrice() {
+  const E = curEx();
+  if (E.priceSelector) {
+    try {
+      const loc = page.locator(E.priceSelector).first();
+      if (await loc.count() > 0) {
+        const v = parsePrice((await loc.innerText({ timeout: 1500 })).trim());
+        if (v) return v;
+      }
+    } catch (e) { /* ищем дальше */ }
+  }
+  // Заголовок вкладки: «4321.55 | ETHUSDT | Toobit». Проценты и объёмы
+  // туда не попадают, поэтому первое же число - цена.
+  try {
+    const t = await page.title();
+    // Символ из заголовка убираем: в «ETH-SWAP-USDT» тоже есть цифры не
+    // всегда, но у пар вроде 1000PEPE - есть, и они не цена.
+    const clean = String(t).replace(/[A-Za-z0-9]*(USDT|USD|SWAP)[A-Za-z0-9_/-]*/gi, ' ');
+    const v = parsePrice(clean);
+    if (v) return v;
+  } catch (e) { /* ищем дальше */ }
+  // Последнее: самое крупно набранное число в верхней трети страницы.
+  // Там у всех бирж стоит последняя цена; сумма ставки и таймер мельче
+  // и лежат ниже.
+  try {
+    return await page.evaluate(() => {
+      const num = /^[+-]?[\d][\d  ,.]*$/;
+      let best = null, bestSize = 0;
+      for (const el of document.querySelectorAll('span,div,p,h1,h2,strong,b')) {
+        if (el.children.length) continue;
+        const t = (el.textContent || '').trim();
+        if (!t || t.length > 16 || !num.test(t)) continue;
+        if (!/[.,]\d|\d{4}/.test(t)) continue;     // целое из трёх цифр - не цена
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.top < 0 || r.top > window.innerHeight * 0.55) continue;
+        const size = parseFloat(getComputedStyle(el).fontSize) || 0;
+        if (size < 15 || size <= bestSize) continue;
+        bestSize = size; best = t;
+      }
+      return best;
+    }).then(parsePrice);
   } catch (e) { return null; }
 }
 
@@ -1057,11 +1149,52 @@ async function activeChipByStorage() {
 
 // Какой чип отмечен выбранным сейчас. null - разметка не даёт этого
 // понять ни разметкой, ни видом.
-async function activeChipName() {
+// ── память о выбранной экспирации ──
+// Прочитать выбранный чип на Toobit нечем: ни aria-selected, ни класса,
+// ни отличий по виду. Остаётся доказательство сменой выплат - восемь
+// секунд на каждую ставку, и половина из них проваливалась («страница не
+// отзывается»), потому что доказательство требует, чтобы страница
+// перерисовалась ДВАЖДЫ подряд именно в отведённую секунду.
+//
+// Но состояние чипов меняем ТОЛЬКО МЫ: биржа сама экспирацию не
+// перещёлкивает, ставка её не сбрасывает. Значит, однажды доказанный
+// выбор остаётся верным, пока вкладка не перешла на другой адрес и мы
+// сами не нажали другой чип. Память об этом снимает и секунды, и
+// пропуски: чаще всего нужная экспирация уже стоит с прошлого раза.
+const tfMemo = new WeakMap();
+function rememberTf(tf) {
+  if (page) tfMemo.set(page, { tf, at: Date.now(), nav: pageNav(page), url: page.url() });
+}
+function forgetTf() { if (page) tfMemo.delete(page); }
+function recallTf() {
+  const m = page && tfMemo.get(page);
+  if (!m) return null;
+  // Переход по адресу = новая сборка приложения: чипы отрисовались
+  // заново, и что там выбрано - мы больше не знаем.
+  if (m.nav !== pageNav(page) || m.url !== page.url()) { tfMemo.delete(page); return null; }
+  // Срок годности - на случай, если приложение всё же переставит чип
+  // само: раз в полтора часа доказываем заново, это дешевле веры вслепую.
+  if (Date.now() - m.at > (CFG.tfMemoMinutes ?? 90) * 60000) { tfMemo.delete(page); return null; }
+  return m.tf;
+}
+// Биржи, у которых выбранный чип не читается разметкой. Для них холостое
+// действие «смена экспирации» запрещено: оно уводит страницу в состояние,
+// которое потом нечем прочитать, и следующая ставка тратит на возврат
+// секунды или отменяется совсем.
+const tfBlind = new Set();
+
+// Только разметка: aria-selected и классы. Дёшево и годится для опроса
+// в цикле, в отличие от полной проверки со сравнением стилей.
+async function activeChipMarkup() {
   for (const t of Object.values(EX.timeUnitText)) {
     const c = await visibleChip(new RegExp('^\\s*' + t + '\\s*$'));
     if (c && await chipActive(c)) return t;
   }
+  return null;
+}
+async function activeChipName() {
+  const mark = await activeChipMarkup();
+  if (mark) return mark;
   const byStyle = await activeChipByStyle();
   if (byStyle) return byStyle;
   return await activeChipByStorage();
@@ -1103,31 +1236,55 @@ async function payoutFingerprint() {
 // означают, что страница слушается чипов, а последним нажат наш - значит
 // на нём и стоим. Если хоть одна перемена не случилась, ничего не
 // доказано и ставки не будет.
+// Ждём, пока отпечаток выплат станет ОТЛИЧНЫМ от прежнего. Раньше здесь
+// стояло одно ожидание в секунду и одна проверка: если приложение
+// перерисовывалось чуть медленнее (а под нагрузкой это обычное дело),
+// перемена происходила сразу ПОСЛЕ замера, и доказательство считалось
+// проваленным на ровном месте - отсюда сотня «страница не отзывается».
+async function waitPayoutChange(from, ms) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    await page.waitForTimeout(200);
+    const s = await payoutFingerprint();
+    if (s && s !== from) return s;
+  }
+  return null;
+}
+
 async function proveByPayoutSwitch(tfText) {
-  const others = Object.values(EX.timeUnitText).filter(t => t !== tfText);
-  if (!others.length) return false;
-  const other = others[randInt(0, others.length - 1)];
-  const sig0 = await payoutFingerprint();
+  const all = Object.values(EX.timeUnitText).filter(t => t !== tfText);
+  if (!all.length) return false;
+  const wait = CFG.payoutSwitchMs ?? 3500;
+  // Перебираем чужие экспирации: у двух соседних выплаты могут совпасть
+  // (77% и там, и там), и тогда «ничего не изменилось» значит не то, что
+  // страница мертва, а то, что мы выбрали неудачного соседа. Раньше
+  // проверка на этом сдавалась и ставка пропускалась.
+  const others = all.slice().sort(() => Math.random() - 0.5).slice(0, 2);
+  let sig0 = await payoutFingerprint();
   if (!sig0) return false;
-  if (!(await clickChipByMouse(other).catch(() => false))) return false;
-  await page.waitForTimeout(randInt(800, 1200));
-  const sig1 = await payoutFingerprint();
-  if (!sig1 || sig1 === sig0) {
-    log(`проверка чипов: нажал ${other}, выплаты не изменились - страница не отзывается`);
-    await clickChipByMouse(tfText).catch(() => {});
-    await page.waitForTimeout(randInt(800, 1200));
-    return false;
+  for (const other of others) {
+    forgetTf();
+    if (!(await clickChipByMouse(other).catch(() => false))) continue;
+    const sig1 = await waitPayoutChange(sig0, wait);
+    if (!sig1) {
+      log(`проверка чипов: нажал ${other}, выплаты не изменились за ${wait}мс`);
+      continue;
+    }
+    if (!(await clickChipByMouse(tfText).catch(() => false))) return false;
+    const sig2 = await waitPayoutChange(sig1, wait);
+    if (!sig2) {
+      log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
+      return false;
+    }
+    log(`экспирация ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
+      + `на ${other} и на ${tfText} (выплаты ${sig0} → ${sig1} → ${sig2}) - принимаю`);
+    return true;
   }
-  if (!(await clickChipByMouse(tfText).catch(() => false))) return false;
-  await page.waitForTimeout(randInt(800, 1200));
-  const sig2 = await payoutFingerprint();
-  if (!sig2 || sig2 === sig1) {
-    log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
-    return false;
-  }
-  log(`экспирация ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
-    + `на ${other} и на ${tfText} (выплаты ${sig0} → ${sig1} → ${sig2}) - принимаю`);
-  return true;
+  // Ни один сосед не отозвался - возвращаем свой чип и уходим ни с чем.
+  log('проверка чипов: страница не отозвалась ни на одну чужую экспирацию');
+  await clickChipByMouse(tfText).catch(() => {});
+  await page.waitForTimeout(randInt(600, 1000));
+  return false;
 }
 
 // Выставить экспирацию и УБЕДИТЬСЯ, что она выставилась. Проверка сразу
@@ -1138,7 +1295,19 @@ async function proveByPayoutSwitch(tfText) {
 async function ensureTimeframe(tfText) {
   const re = new RegExp('^\\s*' + tfText + '\\s*$');
   let cur = await activeChipName();
-  if (cur === tfText) return { ok: true, cur, tries: 0 };
+  if (cur === tfText) { rememberTf(tfText); return { ok: true, cur, tries: 0 }; }
+  if (cur == null) {
+    tfBlind.add(EX.name);
+    // Разметка молчит, но мы САМИ ставили эту экспирацию на этой же
+    // вкладке и с тех пор никуда не переходили. Верить своей записи
+    // надёжнее, чем доказывать заново: доказательство стоит секунд
+    // восемь и само иногда не удаётся - а это и был главный источник
+    // «не удалось убедиться, что выбрана экспирация».
+    if (recallTf() === tfText) return { ok: true, cur: tfText, tries: 0, how: 'по памяти' };
+  }
+  // Пока щёлкаем - память недействительна: если нас прервут посреди,
+  // на странице окажется что угодно, и запись об этом соврала бы.
+  forgetTf();
   for (let tries = 1; tries <= 2; tries++) {
     const chip = await visibleChip(re);
     let how = 'мышью';
@@ -1147,16 +1316,23 @@ async function ensureTimeframe(tfText) {
       how = await clickStubborn(chip, `чип ${tfText}`).catch(() => null);
       if (!how) return { ok: false, cur, tries };
     }
+    // В ожидании спрашиваем только разметку: полный activeChipName
+    // каждые 300мс перебирает все чипы, сравнивает стили и лезет в
+    // хранилище - на бирже, где разметка всё равно молчит, эти три
+    // секунды уходили в никуда четырежды за ставку.
     const until = Date.now() + 3000;
     while (Date.now() < until) {
       await page.waitForTimeout(300);
-      cur = await activeChipName();
-      if (cur === tfText) return { ok: true, cur, tries, how };
+      const mark = await activeChipMarkup();
+      if (mark === tfText) { rememberTf(tfText); return { ok: true, cur: mark, tries, how }; }
     }
+    cur = await activeChipName();
+    if (cur === tfText) { rememberTf(tfText); return { ok: true, cur, tries, how }; }
     if (tries === 1) log(`чип ${tfText}: нажал (${how}), а выбран ${cur ?? 'неизвестно'} - пробую ещё раз`);
   }
   // Разметка молчит - пробуем доказать переключение сменой выплат.
   if (cur == null && await proveByPayoutSwitch(tfText)) {
+    rememberTf(tfText);
     return { ok: true, cur: tfText, tries: 2, how: 'по смене выплат' };
   }
   return { ok: false, cur, tries: 2 };
@@ -1270,6 +1446,33 @@ async function placeBet(sig) {
   // основании остановил бы все ставки, если биржа сменит заголовок.
   log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
 
+  // Точка отсчёта для проверки цены. Если сигнал цену не принёс, берём
+  // цену на этот момент: она всё равно на десятки секунд свежее той, по
+  // которой ставка будет нажата, и откат между «панель готова» и
+  // нажатием ловит уже она.
+  const guard = { ...(EX.priceGuard || {}) };
+  let refPrice = null, refFrom = '';
+  if (guard.enabled !== false) {
+    if (sig.price) { refPrice = sig.price; refFrom = 'из сигнала'; }
+    else {
+      refPrice = await pagePrice();
+      if (refPrice) refFrom = 'на начало ставки';
+    }
+    // Цена из сигнала может быть от другого инструмента (перепутанный
+    // поток) или с другим масштабом. Сверяем с ценой страницы: расхождение
+    // в разы значит, что сравнивать их бессмысленно.
+    if (sig.price) {
+      const nowPx = await pagePrice();
+      if (nowPx && (nowPx / sig.price > 1.2 || sig.price / nowPx > 1.2)) {
+        log(`цена из сигнала ${sig.price}, а на странице ${nowPx} - это разные величины, `
+          + 'проверку цены веду от страницы');
+        refPrice = nowPx; refFrom = 'на начало ставки';
+      }
+    }
+    if (refPrice) log(`цена ${refFrom}: ${refPrice}`);
+    else log('цену на странице прочитать не удалось - проверка цены входа пропущена');
+  }
+
   // залогинены ли мы: на странице не должно быть кнопки Log In
   const loginBtn = page.locator(EX.selectors.loginMarker).first();
   if (await loginBtn.count() > 0 && await loginBtn.isVisible().catch(() => false)) {
@@ -1289,7 +1492,10 @@ async function placeBet(sig) {
     throw new Error(`чип экспирации "${tfText}" не найден - смотри ДАМП выше`);
   }
   if (tf.ok) {
-    log(`экспирация ${tfText} выбрана${tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : ''}`);
+    // «по памяти» видно в журнале намеренно: если однажды окажется, что
+    // память врёт, найти это можно будет только по этой пометке.
+    log(`экспирация ${tfText} выбрана`
+      + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
   } else if (tf.cur == null) {
     // Непроверяемый выбор экспирации - ставка вслепую на чужих условиях.
     if (EX.requireTimeframeCheck === false) {
@@ -1395,10 +1601,44 @@ async function placeBet(sig) {
     throw new Error(`перед нажатием на странице ${seenNow}, а сигнал по ${sig.asset} - ставку не делаю`);
   }
 
+  // ── цена входа ──
+  // От сигнала до нажатия проходит от десяти секунд до минуты: пачка
+  // ждёт своё окно, страница собирается, экспирация подтверждается.
+  // За это время цена успевает откатиться, и вход получается хуже того,
+  // на который сигнал рассчитывали. Ставка вверх тем лучше, чем ниже
+  // цена входа; вниз - наоборот. Сравнение стоит один вызов и делается
+  // последним, чтобы цена была самой свежей.
+  let entryPrice = null, advPct = null;
+  if (guard.enabled !== false && refPrice) {
+    entryPrice = await pagePrice();
+    if (entryPrice == null) {
+      if (guard.strict) {
+        log(`пропуск ${sig.asset} ${sig.direction}: цену перед нажатием прочитать не удалось, `
+          + 'а проверка цены обязательна');
+        return { status: 'skip-price-unknown' };
+      }
+      log('цену перед нажатием прочитать не удалось - иду дальше без проверки');
+    } else {
+      // Насколько цена ушла ПРОТИВ нас, в процентах.
+      advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
+      const lim = guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05);
+      const moved = advPct > 0
+        ? `хуже на ${advPct.toFixed(3)}%`
+        : `лучше на ${(-advPct).toFixed(3)}%`;
+      if (advPct > lim) {
+        log(`пропуск ${sig.asset} ${sig.direction}: цена входа ${entryPrice} против ${refPrice} `
+          + `(${refFrom}) - ${moved}, порог ${lim}%`);
+        await shot('price-worse');
+        return { status: 'skip-price', payoutPage: pv, entryPrice, advPct };
+      }
+      log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`);
+    }
+  }
+
   if (state.dryRun) {
     await shot(`dryrun-${sig.asset}-${sig.direction}`);
     log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
-    return { status: 'dry-run', payoutPage: pv };
+    return { status: 'dry-run', payoutPage: pv, entryPrice, advPct };
   }
 
   const posBefore = await openPositionsCount();
@@ -1427,7 +1667,7 @@ async function placeBet(sig) {
     return { status: 'placed-unconfirmed', payoutPage: pv };
   }
   log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-  return { status: 'placed', payoutPage: pv };
+  return { status: 'placed', payoutPage: pv, entryPrice, advPct };
 }
 
 // ── источник: лист MEXCsignal ──
@@ -1510,8 +1750,16 @@ async function pollSheet() {
   for (let i = 0; i < fresh.length; i++) {
     const r = fresh[i];
     // Колонки листа: A Time, B Ticker, C Direction, ... J Payout, K Timing
+    // Цена сигнала, если она в листе есть. Колонку называешь сам:
+    // sheet.priceCol - буква ("D") или номер с нуля. Не задана - точкой
+    // отсчёта для проверки цены станет цена на начало ставки.
+    const pc = (CFG.sheet || {}).priceCol;
+    const pi = typeof pc === 'string' && /^[A-Za-z]$/.test(pc)
+      ? pc.toUpperCase().charCodeAt(0) - 65
+      : (Number.isInteger(pc) ? pc : null);
     const sig = {
       ticker: r[1], direction: r[2], payout: parseFloat(r[9]) || null,
+      price: pi == null ? undefined : r[pi],
       timing: r[10] || 'MEXC _10m',
       receivedAt: parseSheetTime(r[0]) || Date.now(),
       // Номер строки - естественный уникальный ключ: повторный опрос той
@@ -1601,6 +1849,11 @@ function normalizeSignal(sig) {
   if (sig.direction === 'BUY') sig.direction = 'UP';
   if (sig.direction === 'SELL') sig.direction = 'DOWN';
   sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
+  // Цена из сигнала. TradingView шлёт её как {{close}}; поле называют
+  // по-разному, поэтому принимаем любое из привычных имён. Нет цены -
+  // не беда: за точку отсчёта возьмём цену на момент начала ставки.
+  const px = parsePrice(sig.price ?? sig.close ?? sig.entry ?? sig.signalPrice ?? sig.px);
+  if (px) sig.price = px; else delete sig.price;
   return !!(exCfg(ex).urls || {})[sig.asset]
       && (sig.direction === 'UP' || sig.direction === 'DOWN');
 }
@@ -1753,8 +2006,16 @@ async function pump() {
       logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode, status: 'test-mode' });
     } else {
       const r = await placeBet(sig);
+      // Заметка складывается: множитель пачки и, если цена участвовала в
+      // решении, насколько вход отличался от сигнала. Без этого пропуск
+      // по цене выглядел бы в журнале необъяснимым.
+      const notes = [];
+      if (sig.mult > 1) notes.push(`x${sig.mult} из ${sig.burstCount} сигналов`);
+      if (r.advPct != null) {
+        notes.push(`цена ${r.entryPrice} ${r.advPct > 0 ? 'хуже' : 'лучше'} на ${Math.abs(r.advPct).toFixed(3)}%`);
+      }
       logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
-               note: sig.mult > 1 ? `x${sig.mult} из ${sig.burstCount} сигналов` : '' });
+               note: notes.join('; ') });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько
       // сигналов реально упрётся в биржевой лимит.
       // 'placed-unconfirmed' и '-unverified' тоже занимают слот и лимит:
@@ -1779,6 +2040,39 @@ async function pump() {
       log('!! авто-переход в DRY-RUN после серии ошибок');
       await tgAlert('серия ошибок - перешёл в DRY-RUN, ставки остановлены');
     }
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+    else setImmediate(() => afterBetHome(sig));
+  }
+}
+
+// Вернуться на рабочий актив СРАЗУ после ставки, а не когда-нибудь потом
+// с холостым действием. Ставка по BTC оставляла вкладку на BTC, и
+// следующий сигнал по ETH начинался с полной перезагрузки страницы -
+// девятнадцать секунд из сорока, на которые опаздывал вход. Пока сигнала
+// нет, время бесплатное; как только он появился, возврат отменяется и
+// страница достаётся ставке.
+async function afterBetHome(sig) {
+  if (process.env.TEST_MODE === '1') return;
+  if (state.busy || state.queue.length || state.paused) return;
+  if (!browserOpen() || !inActiveHours(null, sig.ex)) return;
+  const E = exCfg(sig.ex);
+  const home = homeUrl(E);
+  if (!home) return;
+  state.busy = true;
+  try {
+    const p = await pageFor(sig.ex);
+    if (p.isClosed() || p.url().startsWith(home)) return;
+    // Пауза не для маскировки, а по делу: подряд идущие сигналы одной
+    // пачки приходят с разбросом в секунды, и уводить страницу под ними
+    // нельзя. idleWait сам прервётся, если в очереди что-то появилось.
+    if (!(await idleWait(randInt(4000, 9000)))) return;
+    if (state.queue.length) return;
+    EX = E; page = p;
+    await restoreHome('после ставки');
+  } catch (e) {
+    log('возврат после ставки не удался: ' + e.message);
   } finally {
     state.busy = false;
     if (state.queue.length) setImmediate(pump);
@@ -1860,6 +2154,17 @@ async function idleAction() {
     if (!names.length) return;
     const name = names[randInt(0, names.length - 1)];
     EX = exCfg(name);
+    // На бирже, где выбранный чип не читается разметкой, «посмотреть
+    // соседнюю экспирацию» - самое дорогое из холостых действий:
+    // вернуться обратно удаётся не всегда, и следующая ставка приходит
+    // на страницу с неизвестной экспирацией. Именно этим объяснялась
+    // половина пропусков Toobit. Такой бирже оставляем остальные три.
+    let act2 = act;
+    if (act2 === 'timeframe' && tfBlind.has(name)) {
+      const rest = pool.filter(a => a !== 'timeframe');
+      if (!rest.length) return;
+      act2 = rest[randInt(0, rest.length - 1)];
+    }
     page = await pageFor(name);
     const home = homeUrl(EX);
     if (!home) return;
@@ -1868,7 +2173,7 @@ async function idleAction() {
       await idleWait(randInt(1500, 3000));
     }
 
-    if (act === 'switch-asset') {
+    if (act2 === 'switch-asset') {
       // Список берём из конфига: захардкоженные ETH/BTC делали вид, что
       // третьего актива не существует, и со SPCX уводили страницу на ETH.
       const all = Object.keys(EX.urls || {});
@@ -1878,7 +2183,7 @@ async function idleAction() {
       await page.goto(EX.urls[other], { waitUntil: 'domcontentloaded', timeout: 15000 });
       await idleWait(randInt(2000, 6000));
 
-    } else if (act === 'history') {
+    } else if (act2 === 'history') {
       const tab = page.locator(EX.selectors.timeUnit)
         .filter({ hasText: /^\s*(Position History|Order History|History|Positions)\s*$/i }).first();
       if (await tab.isVisible().catch(() => false)) {
@@ -1886,13 +2191,13 @@ async function idleAction() {
         await idleWait(randInt(2000, 7000));
       }
 
-    } else if (act === 'scroll') {
+    } else if (act2 === 'scroll') {
       await page.mouse.move(randInt(300, 1000), randInt(200, 700), { steps: randInt(5, 15) });
       await page.mouse.wheel(0, randInt(150, 700));
       await idleWait(randInt(800, 3000));
       await page.mouse.wheel(0, -randInt(150, 700));
 
-    } else if (act === 'timeframe') {
+    } else if (act2 === 'timeframe') {
       // Смотрим соседнюю экспирацию и возвращаемся. Возврат делает
       // restoreHome ниже - раньше он был частью самого действия, и если
       // клик не срабатывал, страница оставалась на чужой экспирации.
@@ -1903,8 +2208,8 @@ async function idleAction() {
         await idleWait(randInt(1200, 4000));
       }
     }
-    state.lastIdle = { act, at: Date.now() };
-    log(`холостое действие: ${act}`);
+    state.lastIdle = { act: act2, at: Date.now() };
+    log(`холостое действие: ${act2}`);
 
     // ── возврат в рабочее состояние ──
     // Холостое действие уводит страницу на другой актив и экспирацию, а
@@ -2076,6 +2381,11 @@ function snapshot() {
           stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
+          priceGuard: {
+            enabled: (e.priceGuard || {}).enabled !== false,
+            maxAdversePct: Math.abs((e.priceGuard || {}).maxAdversePct ?? 0.05),
+            requireBetter: (e.priceGuard || {}).requireBetter === true,
+          },
           execTimings: e.execTimings,
           // Часы у каждой биржи свои: пока работает одна, вторая молчит.
           // Сетки нет - показываем общую, по ней биржа и живёт.
@@ -2108,6 +2418,11 @@ function snapshot() {
       },
       signalSilenceMin: CFG.signalSilenceMin ?? 0,
       autoWindow: CFG.autoWindow !== false,
+      priceGuard: {
+        enabled: (CFG.priceGuard || {}).enabled !== false,
+        maxAdversePct: Math.abs((CFG.priceGuard || {}).maxAdversePct ?? 0.05),
+        requireBetter: (CFG.priceGuard || {}).requireBetter === true,
+      },
       burst: {
         enabled: (CFG.burst || {}).enabled !== false,
         windowSec: (CFG.burst || {}).windowSec ?? 3,
@@ -2172,6 +2487,30 @@ function applySettings(s) {
       const v = clamp(s.minPayouts[n], 50, 100, was);
       if (v !== was) changed.push(`выплата ${exCfg(n).title} ${was}→${v}%`);
       CFG.exchanges[n].minPayout = v;
+      exReset();
+    }
+  }
+  // Порог цены входа: общий выключатель и свой процент у каждой биржи.
+  // На разных инструментах «нормальный» откат разный, поэтому один
+  // процент на всех был бы либо слишком строгим, либо бесполезным.
+  if (s.priceGuard) {
+    CFG.priceGuard = CFG.priceGuard || {};
+    if (s.priceGuard.enabled != null) {
+      const v = !!s.priceGuard.enabled;
+      if (v !== ((CFG.priceGuard.enabled) !== false)) changed.push(`проверка цены ${v ? 'вкл' : 'выкл'}`);
+      CFG.priceGuard.enabled = v;
+    }
+    if (s.priceGuard.requireBetter != null) CFG.priceGuard.requireBetter = !!s.priceGuard.requireBetter;
+    exReset();
+  }
+  if (s.priceGuards) {
+    for (const n of exNames()) {
+      if (s.priceGuards[n] == null) continue;
+      const was = Math.abs((exCfg(n).priceGuard || {}).maxAdversePct ?? 0.05);
+      // Ноль - осмысленное значение: «только строго лучше сигнала».
+      const v = Math.round(clamp(s.priceGuards[n], 0, 5, was) * 1000) / 1000;
+      if (v !== was) changed.push(`цена ${exCfg(n).title} ${was}→${v}%`);
+      CFG.exchanges[n].priceGuard = { ...(CFG.exchanges[n].priceGuard || {}), maxAdversePct: v };
       exReset();
     }
   }
@@ -2474,10 +2813,11 @@ function migrateMode() {
   // с примером через два дня (там появились dirWords и payoutList, а
   // здесь остался устаревший набор), и миграция выдавала конфиг хуже
   // примера.
-  let sample = {};
+  let sample = {}, sampleTop = {};
   try {
-    sample = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8')
-      .replace(/^\uFEFF/, '')).exchanges || {};
+    sampleTop = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8')
+      .replace(/^\uFEFF/, ''));
+    sample = sampleTop.exchanges || {};
   } catch (e) {
     console.log('config.example.json рядом не найден - беру минимальные значения');
   }
@@ -2600,6 +2940,16 @@ function migrateMode() {
   if (!out.exchanges) { out.defaultExchange = 'mexc'; out.exchanges = { mexc, toobit }; }
   // Общее расписание остаётся выключателем для сеток бирж.
   out.schedule = out.schedule || { enabled: false, jitterMin: 20, hours: Array(7).fill('1'.repeat(24)) };
+  // Настройки не про биржу, а про исполнитель целиком: проверка цены
+  // входа, срок памяти об экспирации. Код умеет работать и без них, но в
+  // конфиге их не хватало бы под рукой - и панель не смогла бы их
+  // сохранить обратно.
+  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs']) {
+    if (out[k] === undefined && sampleTop[k] !== undefined) {
+      out[k] = sampleTop[k];
+      added.push(k);
+    }
+  }
 
   const bak = CFG_PATH.replace(/\.json$/, '.pre-exchanges.json');
   fs.copyFileSync(CFG_PATH, bak);
@@ -2743,6 +3093,13 @@ async function diagMode() {
     log(`выплата ${dir} по текущему шаблону: ${v == null ? 'НЕ ПРОЧИТАНА' : v + '%'}`
       + (EX.requirePagePayout && v == null ? ' - с requirePagePayout ставок по этой бирже не будет' : ''));
   }
+  // Цена: по ней отсекается вход хуже сигнала, и если она читается
+  // неверно, отсекаться будет наугад. Показываем и заголовок вкладки -
+  // из него цену берут в первую очередь.
+  const px = await pagePrice();
+  log(`цена на странице: ${px == null ? 'НЕ ПРОЧИТАНА - проверка цены входа будет пропускаться'
+    : px + ' (сверь с тем, что видно на графике)'}`);
+  log('  заголовок вкладки: ' + JSON.stringify(await page.title().catch(() => '')));
   const f = await shot(`diag-${EX.name}-${asset}`);
   log('скриншот: ' + f);
   console.log('\nГотово. Пришли последние строки logs/executor.log и этот скриншот.');

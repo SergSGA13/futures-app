@@ -3879,6 +3879,31 @@ async function sigFetch(u, ms) {
 }
 // tf: '5m' | '15m' — оба значения валидны как есть для Binance interval,
 // для Bybit interval передаётся числом минут ('5'/'15').
+// Токенизированные "акции" ветки MEXC (SPCX и т.п.) торгуются у MEXC как
+// отдельный продукт "event futures" ("https://www.mexc.com/futures/event-futures/SPCX_USDT",
+// см. scripts/mexc-executor/config.example.json) - обычной пары на Binance/
+// Bybit для них не существует, поэтому для таких активов нужен третий,
+// собственный источник свечей.
+// Публичный контрактный kline-эндпоинт MEXC, символ через подчёркивание
+// ("SPCXUSDT" -> "SPCX_USDT"), время в секундах, ответ - колонки, а не строки.
+async function fetchMexcContractCandles(sym, days, tf) {
+  const mexcSym = sym.replace(/USDT$/, '_USDT');
+  const interval = tf === '15m' ? 'Min15' : 'Min5';
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - days * 86400;
+  const u = `https://contract.mexc.com/api/v1/contract/kline/${mexcSym}?interval=${interval}&start=${start}&end=${end}`;
+  const r = await sigFetch(u, 9000);
+  if (!r.ok) throw new Error('mexc contract ' + r.status);
+  const j = await r.json();
+  const d = j && j.data;
+  if (!d || !Array.isArray(d.time) || !d.time.length) throw new Error('mexc contract empty');
+  const out = [];
+  for (let i = 0; i < d.time.length; i++) {
+    out.push({ time: d.time[i], open: +d.open[i], high: +d.high[i], low: +d.low[i], close: +d.close[i] });
+  }
+  return out;
+}
+
 async function fetchSigCandles(sym, days, tf) {
   tf = tf || '5m';
   const bybitInterval = tf === '15m' ? '15' : '5';
@@ -3902,6 +3927,10 @@ async function fetchSigCandles(sym, days, tf) {
       const j = await r.json(); const list = (j.result && j.result.list) || [];
       if (list.length) return list.slice().reverse().map(k => ({ time: Math.floor(+k[0] / 1000), open: +k[1], high: +k[2], low: +k[3], close: +k[4] }));
     }
+  } catch (e) {}
+  // MEXC contract (для активов вроде SPCX, недоступных ни на Binance, ни на Bybit)
+  try {
+    return await fetchMexcContractCandles(sym, days, tf);
   } catch (e) {}
   throw new Error('no klines');
 }
@@ -3989,6 +4018,22 @@ function ensureSignalChart() {
   if (!SIG_CHART.rendered) renderSignalChart(false);
 }
 
+// SPCX сигналы приходят только с ветки MEXC (лист MEXCsignal/MEXC30signal),
+// поэтому кнопка монеты показывается только там. При уходе с MEXC, если
+// SPCX был выбран, откатываем на ETH - иначе график молча пытался бы
+// тянуть свечи по паре, которой в других ветках нет.
+function sigUpdateSpcxVisibility_(branch) {
+  const btn = document.getElementById('sigSpcxBtn');
+  if (!btn) return;
+  const show = branch === 'MEXC';
+  btn.style.display = show ? '' : 'none';
+  if (!show && SIG_CHART.coin === 'SPCX') {
+    SIG_CHART.coin = 'ETH';
+    const seg = document.getElementById('sigAssetSeg');
+    if (seg) seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.coin === 'ETH'));
+  }
+}
+
 function initSignalChartUI() {
   const seg = document.getElementById('sigAssetSeg');
   if (seg) {
@@ -4012,12 +4057,14 @@ function initSignalChartUI() {
         if (branch === SIG_CHART.branch) return;
         SIG_CHART.branch = branch;
         branchSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+        sigUpdateSpcxVisibility_(branch);
         if (tg) tg.HapticFeedback?.selectionChanged?.();
         loadSignalsList();
         renderSignalChart(true);
       });
     });
   }
+  sigUpdateSpcxVisibility_(SIG_CHART.branch);
 
   const dateInput = document.getElementById('sigDateInput');
   if (dateInput) {

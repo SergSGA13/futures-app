@@ -975,6 +975,11 @@ html, body {
   background: linear-gradient(135deg, #F7931A, #E8720C); color: #241100;
   box-shadow: 0 0 12px rgba(247,147,26,.40);
 }
+/* SPCX - жёлтый, чтобы не путать с оранжевым BTC на той же панели */
+#sigAssetSeg button.active[data-coin="SPCX"] {
+  background: linear-gradient(135deg, #FFD166, #E8A93E); color: #241a00;
+  box-shadow: 0 0 12px rgba(255,209,102,.40);
+}
 #sigTfSeg button.active[data-tf="15m"] {
   background: linear-gradient(135deg, #9D50FF, #FF5272);
   box-shadow: 0 0 12px rgba(255,82,114,.30);

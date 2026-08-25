@@ -48,7 +48,10 @@
         "30": "30m"
       },
       "marketClosedText": "Market Closed",
-      "openPositionsLabel": "Open Positions"
+      "openPositionsLabel": "Open Positions",
+      "stakeJitterPct": 8,
+      "chartIntervals": [],
+      "chartAnchor": ""
     },
     "toobit": {
       "title": "Toobit",
@@ -124,7 +127,10 @@
       "dirWords": {
         "UP": "Higher",
         "DOWN": "Lower"
-      }
+      },
+      "stakeJitterPct": 8,
+      "chartIntervals": [],
+      "chartAnchor": ""
     }
   },
   "dirLimits": {
@@ -153,6 +159,7 @@
     "requireBetter": false,
     "strict": false
   },
+  "statsDays": 7,
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "execTimings": [
@@ -179,6 +186,7 @@
     "everyMinFrom": 7,
     "everyMinTo": 26,
     "actions": [
+      "chart",
       "switch-asset",
       "history",
       "scroll",

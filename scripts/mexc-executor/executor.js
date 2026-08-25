@@ -130,6 +130,12 @@ function exCfg(name) {
     // Где на странице искать текущую цену. Пусто - ищем сами:
     // в заголовке вкладки, потом самым крупным числом в шапке.
     priceSelector: e.priceSelector ?? CFG.priceSelector ?? '',
+    // На сколько процентов сумма ставки гуляет вокруг настроенной.
+    stakeJitterPct: e.stakeJitterPct ?? CFG.stakeJitterPct ?? 0,
+    // Подписи интервалов ГРАФИКА (не экспирации) и надпись рядом с ними.
+    // Пусто - холостое действие ограничится курсором и колесом.
+    chartIntervals: e.chartIntervals || CFG.chartIntervals || [],
+    chartAnchor: e.chartAnchor ?? CFG.chartAnchor ?? '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -355,13 +361,24 @@ function log(line) {
   console.log(msg);
   fs.appendFileSync(path.join(LOGS, 'executor.log'), msg + '\n');
 }
-const BETS_HEAD = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,note';
+// lag_ms - сколько прошло от прихода сигнала до записи. Без него
+// «ставка открылась на 40 секунд позже» приходилось вылавливать из
+// текстового лога вручную, а по журналу этого не видно вовсе.
+const BETS_HEAD = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,lag_ms,note';
+const BETS_HEAD_V2 = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,note';
 const BETS_HEAD_OLD = 'time,asset,direction,timing,stake,payout_page,mode,status,note';
 function logBet(rec) {
   const f = path.join(LOGS, 'bets.csv');
   if (!fs.existsSync(f)) fs.writeFileSync(f, BETS_HEAD + '\n');
+  // Задержка считается от прихода сигнала, а не от начала ставки: ждать
+  // окна сбора пачки и собираться странице - тоже часть опоздания.
+  // receivedAt приходит и числом (после acceptSignal), и строкой ISO -
+  // отказы записываются раньше, чем поле нормализуют. Вычитание из строки
+  // давало NaN прямо в столбце.
+  const got = typeof rec.receivedAt === 'number' ? rec.receivedAt : Date.parse(rec.receivedAt);
+  const lag = Number.isFinite(got) ? Math.max(0, Date.now() - got) : '';
   fs.appendFileSync(f, [new Date().toISOString(), rec.ex || defaultEx(), rec.asset, rec.direction,
-    rec.timing, rec.stake, rec.payoutPage ?? '', rec.mode, rec.status,
+    rec.timing, rec.stake, rec.payoutPage ?? '', rec.mode, rec.status, lag,
     JSON.stringify(rec.note || '')].join(',') + '\n');
 }
 
@@ -370,24 +387,32 @@ function logBet(rec) {
 // запятые. Поэтому старый файл переписываем один раз при старте,
 // проставляя всем прежним строкам биржу по умолчанию - иначе история
 // ставок читалась бы со сдвигом колонок.
+// Журнал переезжал дважды: сначала в нём не было биржи, потом задержки.
+// Обе старые формы доводим до нынешней за один проход - иначе панель
+// читала бы заметку не из того столбца.
 function migrateBetsCsv() {
   const f = path.join(LOGS, 'bets.csv');
   if (!fs.existsSync(f)) return;
   const text = fs.readFileSync(f, 'utf8');
   const lines = text.replace(/\n$/, '').split('\n');
-  if (lines[0] !== BETS_HEAD_OLD) return;
+  const from = lines[0];
+  if (from !== BETS_HEAD_OLD && from !== BETS_HEAD_V2) return;
   const def = defaultEx();
   const out = [BETS_HEAD];
+  // Сколько столбцов до заметки было в исходной форме.
+  const keep = from === BETS_HEAD_OLD ? 8 : 9;
   for (const l of lines.slice(1)) {
     if (!l.trim()) continue;
     const c = l.split(',');
-    // Заметка - всё, что после восьмой запятой (в ней бывают свои).
-    const note = c.length > 9 ? c.slice(8).join(',') : (c[8] ?? '');
-    out.push([c[0], def, ...c.slice(1, 8), note].join(','));
+    // Заметка - всё, что после последней «своей» запятой: в самой заметке
+    // запятые тоже бывают.
+    const note = c.length > keep + 1 ? c.slice(keep).join(',') : (c[keep] ?? '');
+    const head = from === BETS_HEAD_OLD ? [c[0], def, ...c.slice(1, 8)] : c.slice(0, 9);
+    out.push([...head, '', note].join(','));   // задержки у старых строк нет
   }
-  fs.copyFileSync(f, f.replace(/\.csv$/, '.pre-exchange.csv'));
+  fs.copyFileSync(f, f.replace(/\.csv$/, '.pre-lag.csv'));
   fs.writeFileSync(f, out.join('\n') + '\n');
-  log(`журнал ставок переведён на формат с биржей: ${out.length - 1} строк, копия старого рядом`);
+  log(`журнал ставок переведён на новый формат: ${out.length - 1} строк, копия старого рядом`);
 }
 
 async function tgAlert(text) {
@@ -404,11 +429,16 @@ async function tgAlert(text) {
 // browserPath - запасной путь к chrome.exe на случай, когда Playwright не
 // находит свой браузер сам (ставился под другого пользователя, лежит в
 // нестандартном месте). Пусто = пусть ищет как обычно.
+// Размер окна выбирается при запуске и держится всю сессию. Ровно
+// 1280x860 изо дня в день - такой же отпечаток, как ровная сумма ставки:
+// у живого человека окно то развёрнуто, то подтянуто под вторую панель.
+const VIEWPORT = { width: randInt(1240, 1440), height: randInt(800, 920) };
 function launchOpts(headless) {
   const o = {
     headless,
-    viewport: { width: 1280, height: 860 },
+    viewport: { ...VIEWPORT },
     args: [
+      `--window-size=${VIEWPORT.width},${VIEWPORT.height + 88}`,
       '--disable-blink-features=AutomationControlled',
       // Chrome тормозит таймеры и отрисовку в фоновом окне, а окно у нас
       // фоновое почти всегда. Из-за этого SPA биржи может собираться
@@ -1006,9 +1036,11 @@ const chipActive = c => c.evaluate(el => {
 // которого лежит нужная подпись и как можно больше остальных. Если у
 // биржи задан timeUnitAnchor («Time Increment»), группа рядом с этой
 // надписью получает предпочтение.
-async function chipScan(want) {
-  const labels = Object.values(EX.timeUnitText);
-  const anchor = EX.timeUnitAnchor || '';
+// only - свой набор подписей вместо экспирации: им пользуется холостое
+// действие с графиком, у которого свои интервалы и свой якорь.
+async function chipScan(want, only) {
+  const labels = only && only.length ? only : Object.values(EX.timeUnitText);
+  const anchor = (only && only.length ? EX.chartAnchor : EX.timeUnitAnchor) || '';
   try {
     return await page.evaluate(({ labels, anchor, want }) => {
       const vis = el => !!(el.offsetWidth || el.offsetHeight);
@@ -1093,7 +1125,13 @@ async function chipScan(want) {
           if (r.width >= 4 && r.height >= 4) box = { x: r.x, y: r.y, w: r.width, h: r.height };
         }
       }
-      return { active, box, labels: Object.keys(styles), anchored: g.anchored };
+      // Текст всей группы - чтобы снаружи можно было проверить, не лежат
+      // ли в ней ЧУЖИЕ подписи. labels перечисляет только те, что искали,
+      // и по ним подмеса не видно: в ряду «5m 10m 30m 1h» при поиске
+      // интервалов графика нашлись бы 5m и 1h, а 10m и 30m - подписи
+      // экспирации - остались бы незамеченными.
+      const text = (g.box.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      return { active, box, labels: Object.keys(styles), anchored: g.anchored, text };
     }, { labels, anchor, want: want || null });
   } catch (e) { return null; }
 }
@@ -1208,8 +1246,8 @@ async function activeChipName() {
 // экспирацию: приложение слушает не click, а нажатие мыши. Ставка при
 // этом уходила на 5 минут - и с выплатой от чужой экспирации.
 // Здесь события те же, что от руки, и проверки перекрытия не мешают.
-async function clickChipByMouse(text) {
-  const r = await chipScan(text);
+async function clickChipByMouse(text, only) {
+  const r = await chipScan(text, only);
   if (!r || !r.box) return false;
   const box = r.box;
   const x = box.x + box.w * (0.3 + Math.random() * 0.4);
@@ -1977,12 +2015,30 @@ function burstCfg() {
 }
 // Ставка с учётом множителя, прижатая к потолку поля ввода на бирже.
 function betStake(sig) {
+  // Считаем ОДИН раз на сигнал и запоминаем. Раньше функция была чистой,
+  // и звать её сколько угодно раз было безопасно; с разбросом каждый
+  // вызов давал бы своё число - в журнал попало бы одно, в поле биржи
+  // другое, и сверить их стало бы невозможно.
+  if (sig._stake != null) return sig._stake;
   // Сумма, названная явно (ручная ставка из панели), важнее настройки:
-  // человек нажал её сам. Границы всё равно биржевые.
-  if (sig.stake) return Math.round(clamp(sig.stake, MANUAL_STAKE_MIN, stakeMax(sig.asset, sig.ex), stakeFor(sig.asset, sig.ex)));
+  // человек нажал её сам, и трогать её разбросом нельзя. Границы всё
+  // равно биржевые.
+  if (sig.stake) {
+    return (sig._stake = Math.round(clamp(sig.stake, MANUAL_STAKE_MIN, stakeMax(sig.asset, sig.ex), stakeFor(sig.asset, sig.ex))));
+  }
   const base = stakeFor(sig.asset, sig.ex);
   const m = Math.max(1, Math.min(sig.mult || 1, burstCfg().max));
-  return Math.min(Math.round(base * m), stakeMax(sig.asset, sig.ex));
+  // Разброс. Ровно 20.00 USDT изо дня в день - самое машинное, что есть
+  // в схеме: живой человек то добавит, то убавит. Процент свой у каждой
+  // биржи; ноль - как было, ровная сумма.
+  const jit = Math.abs(exCfg(sig.ex).stakeJitterPct ?? 0);
+  const k = jit ? 1 + (Math.random() * 2 - 1) * jit / 100 : 1;
+  const want = Math.round(base * m * k);
+  // Границы биржи важнее разброса: единица снизу (меньше не примут) и
+  // потолок поля ввода сверху. Множитель пачки считаем от РОВНОЙ суммы,
+  // чтобы разброс не превращал x3 в x2.6.
+  const top = stakeMax(sig.asset, sig.ex);
+  return (sig._stake = Math.max(1, Math.min(want, top)));
 }
 function enqueueSignal(sig) {
   const B = burstCfg();
@@ -2152,7 +2208,7 @@ async function restoreHome(why) {
 // дрались бы за страницу. Значит, любая его пауза откладывает пришедший
 // сигнал. Поэтому ждём не сплошняком, а поглядывая на очередь: как
 // только там что-то появилось, сворачиваемся и отдаём страницу ставке.
-const IDLE_ACTIONS = ['switch-asset', 'history', 'scroll', 'timeframe'];
+const IDLE_ACTIONS = ['switch-asset', 'history', 'scroll', 'timeframe', 'chart'];
 
 async function idleWait(ms) {
   const until = Date.now() + ms;
@@ -2162,6 +2218,80 @@ async function idleWait(ms) {
   }
   return true;
 }
+
+// Живой человек смотрит на график: водит по нему курсором (за курсором
+// идёт перекрестье с ценой), приближает и отдаляет, иногда переключает
+// интервал. У нас же страница стояла неподвижно между ставками - и
+// каждый раз в одном и том же виде.
+//
+// Интервал графика трогаем ТОЛЬКО если он точно не задевает экспирацию.
+// На Toobit подписи совпадают: «5m» и «30m» есть и там, и там, и промах
+// означал бы ставку на чужие минуты. Поэтому группа интервалов должна
+// быть найдена отдельно от группы экспирации и не содержать ни одной её
+// подписи - иначе ограничиваемся курсором и колесом.
+async function idleChart() {
+  // 1. Полотно графика. У всех бирж он рисуется на canvas, и это самый
+  // надёжный способ найти его, не зная вёрстки.
+  const box = await page.evaluate(() => {
+    let best = null, area = 0;
+    for (const c of document.querySelectorAll('canvas')) {
+      const r = c.getBoundingClientRect();
+      if (r.width < 200 || r.height < 120) continue;
+      if (r.width * r.height <= area) continue;
+      area = r.width * r.height;
+      best = { x: r.x, y: r.y, w: r.width, h: r.height };
+    }
+    return best;
+  }).catch(() => null);
+
+  if (box) {
+    // Перекрестье: ведём курсор по нескольким точкам внутри графика с
+    // остановками, как будто разглядываем свечи.
+    for (let i = 0, n = randInt(2, 4); i < n; i++) {
+      await mouseGlide(page, box.x + rand(box.w * 0.15, box.w * 0.9),
+                             box.y + rand(box.h * 0.2, box.h * 0.8));
+      if (!(await idleWait(randInt(500, 1800)))) return;
+    }
+    // Колесо на графике - это масштаб. Возвращаем как было: оставлять
+    // чужой масштаб перед ставкой незачем.
+    if (Math.random() < 0.5) {
+      const n = randInt(1, 3);
+      await page.mouse.wheel(0, -n * 120);
+      if (!(await idleWait(randInt(700, 2500)))) return;
+      await page.mouse.wheel(0, n * 120);
+    }
+  }
+
+  // 2. Интервал графика - только если он найден отдельно от экспирации.
+  const names = EX.chartIntervals || [];
+  if (!names.length) return;
+  const tfNames = Object.values(EX.timeUnitText).map(t => String(t).toLowerCase());
+  const want = names[randInt(0, names.length - 1)];
+  const grp = await chipScan(want, names).catch(() => null);
+  if (!grp || !grp.box) return;
+  // Подпись экспирации внутри группы интервалов - повод не трогать её
+  // вовсе: промах означал бы ставку на чужие минуты. Ищем по всему
+  // тексту группы, а не по найденным подписям: в ряду «5m 10m 30m 1h»
+  // при поиске интервалов графика нашлись бы только 5m и 1h.
+  const inText = new RegExp('(^|[^a-z0-9])(' + tfNames.map(t =>
+    t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')([^a-z0-9]|$)', 'i');
+  if ((grp.labels || []).some(l => tfNames.includes(String(l).toLowerCase()))
+      || (grp.text && inText.test(grp.text))) {
+    if (!chartWarned.has(EX.name)) {
+      chartWarned.add(EX.name);
+      log(`${EX.title}: рядом с интервалами графика лежат подписи экспирации `
+        + `(${JSON.stringify(grp.text)}) - интервал не трогаю, только курсор`);
+    }
+    return;
+  }
+  const back = names[0];
+  await clickChipByMouse(want, names).catch(() => {});
+  if (!(await idleWait(randInt(2000, 6000)))) return;
+  // Возвращаем привычный интервал: график, оставшийся на случайном
+  // масштабе, - такой же след, как и неподвижный.
+  await clickChipByMouse(back, names).catch(() => {});
+}
+const chartWarned = new Set();
 
 async function idleAction() {
   const I = CFG.idleRotation || {};
@@ -2230,6 +2360,9 @@ async function idleAction() {
       await page.mouse.wheel(0, randInt(150, 700));
       await idleWait(randInt(800, 3000));
       await page.mouse.wheel(0, -randInt(150, 700));
+
+    } else if (act2 === 'chart') {
+      await idleChart();
 
     } else if (act2 === 'timeframe') {
       // Смотрим соседнюю экспирацию и возвращаемся. Возврат делает
@@ -2382,6 +2515,61 @@ function recentBets(n) {
   });
 }
 
+// ── сводка: почему не сыграло ──
+// Три разговора подряд начинались с того, что нужно было прислать лог и
+// я по нему считал причины пропусков руками. Считать их умеет и сам
+// исполнитель, а панель - показать. Результат кешируется по времени
+// изменения файла: журнал перечитывается каждые несколько секунд.
+let statsCache = { key: '', val: null };
+function betStats(days) {
+  const f = path.join(LOGS, 'bets.csv');
+  if (!fs.existsSync(f)) return { days, total: 0, reasons: [], lag: null };
+  const st = fs.statSync(f);
+  const key = `${days}|${st.mtimeMs}|${st.size}`;
+  if (statsCache.key === key) return statsCache.val;
+
+  const since = Date.now() - days * 86400000;
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  const head = (lines.shift() || '').split(',');
+  const iTime = head.indexOf('time');
+  const iStatus = head.indexOf('status');
+  const iLag = head.indexOf('lag_ms');
+  const counts = new Map();
+  const lags = [];
+  let total = 0, placed = 0;
+  // Что считать состоявшейся ставкой: dry-run тоже дошёл до кнопки, и
+  // его задержка так же показательна.
+  const isBet = st => st === 'placed' || st === 'dry-run'
+    || st === 'placed-unconfirmed' || st === 'placed-unverified';
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    const c = l.split(',');
+    const t = Date.parse(c[iTime]);
+    if (!t || t < since) continue;
+    const status = c[iStatus] || '?';
+    // merged и duplicate - служебные строки одного и того же захода, а не
+    // отдельные сигналы: в сводке причин они только мешают.
+    if (status === 'merged' || status === 'duplicate') continue;
+    total++;
+    counts.set(status, (counts.get(status) || 0) + 1);
+    if (isBet(status)) {
+      placed++;
+      const lag = iLag >= 0 ? Number(c[iLag]) : NaN;
+      if (Number.isFinite(lag) && lag > 0) lags.push(lag);
+    }
+  }
+  lags.sort((a, b) => a - b);
+  const at = q => lags.length ? lags[Math.min(lags.length - 1, Math.floor(lags.length * q))] : null;
+  const val = {
+    days, total, placed,
+    reasons: [...counts.entries()].map(([status, n]) => ({ status, n }))
+      .sort((a, b) => b.n - a.n),
+    lag: lags.length ? { n: lags.length, median: at(0.5), p90: at(0.9), max: lags[lags.length - 1] } : null,
+  };
+  statsCache = { key, val };
+  return val;
+}
+
 function snapshot() {
   return {
     dryRun: state.dryRun,
@@ -2415,6 +2603,7 @@ function snapshot() {
           stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
+          stakeJitterPct: e.stakeJitterPct,
           priceGuard: {
             enabled: (e.priceGuard || {}).enabled !== false,
             maxAdversePct: Math.abs((e.priceGuard || {}).maxAdversePct ?? 0.05),
@@ -2470,6 +2659,7 @@ function snapshot() {
         allActions: IDLE_ACTIONS,
       },
     },
+    stats: betStats(CFG.statsDays ?? 7),
     dirUsed: { UP: dirSlots('UP'), DOWN: dirSlots('DOWN') },
     dayNames: DAY_NAMES,
     source: CFG.source || 'webhook',
@@ -2521,6 +2711,19 @@ function applySettings(s) {
       const v = clamp(s.minPayouts[n], 50, 100, was);
       if (v !== was) changed.push(`выплата ${exCfg(n).title} ${was}→${v}%`);
       CFG.exchanges[n].minPayout = v;
+      exReset();
+    }
+  }
+  // Разброс суммы ставки - по биржам: потолки полей ввода разные, и
+  // десять процентов от 20 USDT на Toobit это совсем не то же, что от
+  // 250 на MEXC.
+  if (s.stakeJitters) {
+    for (const n of exNames()) {
+      if (s.stakeJitters[n] == null) continue;
+      const was = exCfg(n).stakeJitterPct;
+      const v = Math.round(clamp(s.stakeJitters[n], 0, 50, was));
+      if (v !== was) changed.push(`разброс суммы ${exCfg(n).title} ${was}→${v}%`);
+      CFG.exchanges[n].stakeJitterPct = v;
       exReset();
     }
   }
@@ -2978,7 +3181,7 @@ function migrateMode() {
   // входа, срок памяти об экспирации. Код умеет работать и без них, но в
   // конфиге их не хватало бы под рукой - и панель не смогла бы их
   // сохранить обратно.
-  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs']) {
+  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs', 'statsDays']) {
     if (out[k] === undefined && sampleTop[k] !== undefined) {
       out[k] = sampleTop[k];
       added.push(k);
@@ -3130,6 +3333,14 @@ async function diagMode() {
   // Цена: по ней отсекается вход хуже сигнала, и если она читается
   // неверно, отсекаться будет наугад. Показываем и заголовок вкладки -
   // из него цену берут в первую очередь.
+  // Холостое действие «график» водит курсором по полотну графика.
+  // Нашлось ли оно вообще - видно только отсюда.
+  const canv = await page.evaluate(() => [...document.querySelectorAll('canvas')]
+    .map(c => { const r = c.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })
+    .filter(r => r.w > 200 && r.h > 120)).catch(() => []);
+  log('  полотно графика: ' + (canv.length
+    ? JSON.stringify(canv) + ' - курсор по графику работает'
+    : 'НЕ НАЙДЕНО - холостое действие «график» ограничится прокруткой'));
   const px = await pagePrice();
   log(`цена на странице: ${px == null ? 'НЕ ПРОЧИТАНА - проверка цены входа будет пропускаться'
     : px + ' (сверь с тем, что видно на графике)'}`);

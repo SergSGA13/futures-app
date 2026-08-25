@@ -117,6 +117,19 @@
        возвращает прокрутку. */
     .duo .tablewrap { flex:0 1 auto; max-height:420px; }
   }
+  /* Полоса причин: плитки в строку, переносятся сами. Ширины плиток
+     разные - подписи статусов от «error» до «skip-payout-unknown». */
+  .statrow { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:9px; }
+  .stat {
+    display:flex; flex-direction:column; gap:2px; min-width:104px;
+    padding:8px 12px; border:1px solid var(--line); border-radius:10px;
+    background:linear-gradient(180deg, rgba(34,232,255,.05), transparent);
+  }
+  .stat b { font-size:17px; font-weight:600; line-height:1.1; }
+  .stat span { font-size:10px; letter-spacing:.6px; color:var(--muted); text-transform:uppercase; }
+  .stat.ok b { color:var(--green); }
+  .stat.bad b { color:var(--red); }
+  .stat.lag b { color:var(--cyan); }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -491,6 +504,15 @@
   </div>
   </div>
 
+  <!-- Сводка причин: три разговора подряд начинались с того, что нужно
+       было выслать лог, чтобы посчитать, из-за чего сигналы не сыграли.
+       Теперь это видно сразу, вместе с задержкой входа. -->
+  <div class="card" id="statsCard">
+  <h2>Почему не сыграло <span class="hint" id="statsDays"></span></h2>
+  <div class="statrow" id="statsReasons"></div>
+  <div class="note" id="statsHint"></div>
+  </div>
+
   <button class="sect-toggle" id="btnSettings">Настройки</button>
   <div id="settingsBox" class="hidden">
     <div class="cards">
@@ -794,12 +816,58 @@ $('btnSplit').onclick = () => {
   buildGrid();
 };
 
+// ── сводка «почему не сыграло» ──
+// Понятные названия причин: skip-payout в журнале уместен, а в сводке
+// нужен ответ на вопрос «куда делись сигналы», а не имя статуса.
+const REASON_NAMES = {
+  'placed': 'открыто', 'dry-run': 'dry-run',
+  'placed-unconfirmed': 'без подтверждения', 'placed-unverified': 'без счётчика',
+  'error': 'ошибки', 'skip-quiet': 'не своя смена',
+  'skip-payout': 'выплата мала', 'skip-payout-unknown': 'выплата не прочлась',
+  'skip-price': 'цена хуже', 'skip-price-unknown': 'цена не прочлась',
+  'skip-expiry': 'экспирация не ясна', 'skip-redirect': 'биржа увела',
+  'skip-slots': 'нет слотов', 'skip-dir-limit': 'лимит направления',
+  'skip-stale': 'сигнал устарел', 'skip-market-closed': 'рынок закрыт',
+  'test-mode': 'тестовый режим',
+};
+const GOOD = ['placed', 'dry-run'];
+const BAD = ['error', 'placed-unconfirmed', 'placed-unverified'];
+const secs = ms => (ms / 1000).toFixed(1).replace('.0', '') + 'с';
+
+function drawStats(x) {
+  if (!x) return;
+  $('statsDays').textContent = `за ${x.days} дн.`;
+  const tiles = x.reasons.map(r => {
+    const cls = GOOD.includes(r.status) ? 'ok' : (BAD.includes(r.status) ? 'bad' : '');
+    return `<div class="stat ${cls}" title="${esc(r.status)}"><b>${r.n}</b>`
+      + `<span>${esc(REASON_NAMES[r.status] || r.status)}</span></div>`;
+  });
+  // Задержка входа отдельной плиткой: именно из-за неё вход приходился
+  // на откат, и следить за ней нужно постоянно, а не по просьбе.
+  if (x.lag) {
+    tiles.push(`<div class="stat lag" title="от прихода сигнала до записи в журнал">`
+      + `<b>${secs(x.lag.median)}</b><span>вход, медиана</span></div>`);
+    tiles.push(`<div class="stat lag" title="девять входов из десяти быстрее">`
+      + `<b>${secs(x.lag.p90)}</b><span>вход, p90</span></div>`);
+  }
+  $('statsReasons').innerHTML = tiles.length
+    ? tiles.join('')
+    : '<span class="hint">за этот срок в журнале пусто</span>';
+  const done = x.reasons.filter(r => GOOD.includes(r.status)).reduce((n, r) => n + r.n, 0);
+  $('statsHint').textContent = x.total
+    ? `Из ${x.total} сигналов сыграло ${done}. Наведи на плитку - под ней имя статуса из журнала.`
+      + (x.lag ? ` Задержка считается от прихода сигнала: три секунды из неё - окно сбора пачки,`
+        + ` остальное - сборка страницы и проверки. Худший вход за срок: ${secs(x.lag.max)}.` : '')
+    : 'Журнал пуст.';
+}
+
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
   'timeframe':    'Переключить время экспирации',
   'history':      'Открыть историю сделок',
   'scroll':       'Полистать страницу',
+  'chart':        'Поводить курсором по графику',
 };
 // Биржи и их активы приходят с сервера, поэтому поля ставок, порогов
 // выплаты и выбор для ручной ставки строятся из ответа: добавить биржу
@@ -834,9 +902,14 @@ function buildAssetControls(st) {
         <input type="number" id="pg_${e.name}" min="0" max="5" step="0.01"
           data-ex="${e.name}"
           title="0 - входить только по цене лучше сигнала. Пусто на странице не читается - проверка пропускается"></div>`
+    // Ровная сумма изо дня в день - самый заметный след автомата.
+    + `<div class="row"><span>Разброс суммы, %</span>
+        <input type="number" id="sj_${e.name}" min="0" max="50" step="1"
+          data-ex="${e.name}"
+          title="Сумма гуляет вокруг настроенной на столько процентов. 0 - ровно как задано"></div>`
   ).join('');
   for (const e of exs(s)) {
-    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`, `pg_${e.name}`]) {
+    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`, `pg_${e.name}`, `sj_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -1027,6 +1100,7 @@ async function refresh() {
     }
     setVal(`mp_${e.name}`, e.minPayout);
     setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
+    setVal(`sj_${e.name}`, e.stakeJitterPct ?? 0);
     $(`pg_${e.name}`).disabled = (s.priceGuard || {}).enabled === false;
   }
   if (!dirty.has('tfBox')) {
@@ -1064,6 +1138,7 @@ async function refresh() {
   setChk('humanize', s.humanize);
   setVal('idleFrom', s.idleRotation.everyMinFrom);
   setVal('idleTo', s.idleRotation.everyMinTo);
+  drawStats(st.stats);
   buildIdleActions(s.idleRotation.allActions, s.idleRotation.actions);
   $('lastIdle').textContent = st.lastIdle
     ? `последнее: ${ACT_NAMES[st.lastIdle.act] || st.lastIdle.act} в ${fmtTime(st.lastIdle.at)}`
@@ -1200,12 +1275,15 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="mp_"]').forEach(i => {
     minPayouts[i.dataset.ex] = +i.value;
   });
-  const priceGuards = {};
+  const priceGuards = {}, stakeJitters = {};
   document.querySelectorAll('#stakeRows input[id^="pg_"]').forEach(i => {
     if (i.value !== '') priceGuards[i.dataset.ex] = +i.value;
   });
+  document.querySelectorAll('#stakeRows input[id^="sj_"]').forEach(i => {
+    if (i.value !== '') stakeJitters[i.dataset.ex] = +i.value;
+  });
   await post('settings', {
-    stakes, minPayouts, priceGuards,
+    stakes, minPayouts, priceGuards, stakeJitters,
     priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),

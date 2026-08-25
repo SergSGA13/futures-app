@@ -298,11 +298,14 @@ function inActiveHours(when, ex) {
   const jit = CFG.schedule.jitterMin ?? 0;
   if (!jit) return true;
   // Начало блока: просыпаемся не ровно в :00, а на несколько минут позже
+  // Имя биржи входит в подпись: иначе обе смены начинались бы на одной и
+  // той же минуте, и пересменка выглядела бы как переключение рубильника.
+  const who = ex || defaultEx();
   const prevActive = hour === 0 ? activeAt(grid, day - 1, 23) : activeAt(grid, day, hour - 1);
-  if (!prevActive && min < edgeJitter(`s${day}-${hour}`, jit)) return false;
+  if (!prevActive && min < edgeJitter(`s${who}${day}-${hour}`, jit)) return false;
   // Конец блока: заканчиваем чуть раньше :00
   const nextActive = hour === 23 ? activeAt(grid, day + 1, 0) : activeAt(grid, day, hour + 1);
-  if (!nextActive && min >= 60 - edgeJitter(`e${day}-${hour}`, jit)) return false;
+  if (!nextActive && min >= 60 - edgeJitter(`e${who}${day}-${hour}`, jit)) return false;
   return true;
 }
 // Работает ли ХОТЬ ОДНА биржа прямо сейчас. По этому вопросу решаются
@@ -1359,315 +1362,345 @@ async function placeBet(sig) {
   // лишние секунды на десятиминутной ставке, мигающее окно и повторная
   // сборка SPA на ровном месте. Проверка стоит полторы секунды и в
   // обычном случае экономит десять.
-  let ready = null;
-  if (page.url().startsWith(url)) {
-    ready = await findAmount(1500);
-    if (ready) log('страница уже открыта, перезагрузка не нужна');
-  }
-  if (!ready) {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-    // Биржа может увести с заданного адреса на «последний символ»: так
-    // делает Toobit, если адрес задан параметром (?symbol=...), а не
-    // путём. Первый заход мог прийтись на ещё не проснувшееся приложение,
-    // поэтому повторяем - к этому моменту оно уже загружено и роутер
-    // обычно слушается. Если и это не помогло, скажем прямо в отказе.
-    if (!page.url().startsWith(url)) {
-      log(`биржа увела с ${url} на ${page.url()} - повторяю переход`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+  // Биржа умеет увести со своего же адреса САМА, и не сразу: страница
+  // открылась на SPCX, прошли проверки, а к моменту нажатия в адресе уже
+  // BTC. Раньше это была ошибка - сигнал терялся целиком, да ещё и
+  // приближал автопереход в DRY-RUN по серии ошибок. Теперь уехавшая
+  // страница просто возвращается на место, и вся ставка играется заново:
+  // адрес, актив, экспирация, выплата, сумма. Двух заходов достаточно -
+  // если биржа уводит и во второй раз, дело не в случайности.
+  let forceLoad = false;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let ready = null;
+    // На втором заходе короткий путь запрещён: раз страница уже уехала
+    // сама, верить тому, что на ней открыто, нельзя - только полная
+    // загрузка своего адреса.
+    if (!forceLoad && page.url().startsWith(url)) {
+      ready = await findAmount(1500);
+      if (ready) log('страница уже открыта, перезагрузка не нужна');
+    }
+    if (!ready) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-      if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
+      // Биржа может увести с заданного адреса на «последний символ»: так
+      // делает Toobit, если адрес задан параметром (?symbol=...), а не
+      // путём. Первый заход мог прийтись на ещё не проснувшееся приложение,
+      // поэтому повторяем - к этому моменту оно уже загружено и роутер
+      // обычно слушается. Если и это не помогло, скажем прямо в отказе.
+      if (!page.url().startsWith(url)) {
+        log(`биржа увела с ${url} на ${page.url()} - повторяю переход`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+        await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+        if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
+      }
+      ready = await waitForPanel();
     }
-    ready = await waitForPanel();
-  }
-  if (!ready) {
-    // Не сдаёмся с первого раза: панель биржи иногда собирается дольше
-    // отведённого, и по дампу видно, что поле на странице УЖЕ есть.
-    // Перезагрузка дешевле проигранного сигнала.
-    log('панель не собралась за ' + (CFG.panelTimeoutMs ?? 40000) + 'мс - перезагружаю страницу и пробую ещё раз');
-    await shot('panel-not-ready-1');
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
-    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-    ready = await waitForPanel();
-  }
-  if (!ready) {
-    await shot('panel-not-ready');
-    await dumpPage('panel-not-ready');
-    throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
-  }
-  log('панель готова, поле суммы: ' + ready.sel);
+    if (!ready) {
+      // Не сдаёмся с первого раза: панель биржи иногда собирается дольше
+      // отведённого, и по дампу видно, что поле на странице УЖЕ есть.
+      // Перезагрузка дешевле проигранного сигнала.
+      log('панель не собралась за ' + (CFG.panelTimeoutMs ?? 40000) + 'мс - перезагружаю страницу и пробую ещё раз');
+      await shot('panel-not-ready-1');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+      ready = await waitForPanel();
+    }
+    if (!ready) {
+      await shot('panel-not-ready');
+      await dumpPage('panel-not-ready');
+      throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
+    }
+    log('панель готова, поле суммы: ' + ready.sel);
 
-  // Ставка не на тот актив - самая дорогая из возможных ошибок, и
-  // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
-  // пока SPA договорит: сразу после goto заголовок ещё прежний.
-  const settleAsset = async () => {
-    let seen = await pageAsset();
-    if (!seen || seen === sig.asset) return seen;
-    const until = Date.now() + (CFG.assetSettleMs ?? 6000);
-    while (Date.now() < until && seen && seen !== sig.asset) {
-      await page.waitForTimeout(400);
-      seen = await pageAsset();
-    }
-    return seen;
-  };
-  let seen = await settleAsset();
-  // Заголовок врёт, но панель показывает нужный символ - значит мы на
-  // месте, и ждать нечего. Ровно этот случай ронял ставки на Toobit:
-  // после переключения с BTC на ETH в title ещё висел BTC.
-  if (seen && seen !== sig.asset) {
-    const onPage = await pageAssetOnPage();
-    if (onPage === sig.asset) {
-      log(`заголовок отстал (в title ${seen}), но панель показывает ${onPage} - работаю`);
-      seen = onPage;
-    }
-  }
-  // Ни заголовок, ни панель не подтвердили актив. Одна перезагрузка:
-  // адрес мы задавали сами, он и есть источник правды, а перезагрузка
-  // заставляет SPA переписать всё остальное.
-  if (seen && seen !== sig.asset && page.url().startsWith(url)) {
-    log(`заголовок отстал: адрес ${sig.asset}, а в title ещё ${seen} - перезагружаю страницу`);
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
-    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
-    ready = (await waitForPanel()) || ready;
-    seen = await settleAsset();
-    if (seen && seen !== sig.asset && (await pageAssetOnPage()) === sig.asset) {
-      log(`после перезагрузки заголовок всё ещё ${seen}, но панель показывает ${sig.asset} - работаю`);
-      seen = sig.asset;
-    }
-  }
-  if (seen && seen !== sig.asset) {
-    await shot('wrong-asset');
-    const drifted = !page.url().startsWith(url);
-    throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset}`
-      + ` (адрес ${page.url()}) - ставку не делаю`
-      + (drifted ? `; биржа не пустила на ${url} - проверь URL актива в конфиге` : ''));
-  }
-  // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
-  // основании остановил бы все ставки, если биржа сменит заголовок.
-  log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
-
-  // Точка отсчёта для проверки цены. Если сигнал цену не принёс, берём
-  // цену на этот момент: она всё равно на десятки секунд свежее той, по
-  // которой ставка будет нажата, и откат между «панель готова» и
-  // нажатием ловит уже она.
-  const guard = { ...(EX.priceGuard || {}) };
-  let refPrice = null, refFrom = '';
-  if (guard.enabled !== false) {
-    if (sig.price) { refPrice = sig.price; refFrom = 'из сигнала'; }
-    else {
-      refPrice = await pagePrice();
-      if (refPrice) refFrom = 'на начало ставки';
-    }
-    // Цена из сигнала может быть от другого инструмента (перепутанный
-    // поток) или с другим масштабом. Сверяем с ценой страницы: расхождение
-    // в разы значит, что сравнивать их бессмысленно.
-    if (sig.price) {
-      const nowPx = await pagePrice();
-      if (nowPx && (nowPx / sig.price > 1.2 || sig.price / nowPx > 1.2)) {
-        log(`цена из сигнала ${sig.price}, а на странице ${nowPx} - это разные величины, `
-          + 'проверку цены веду от страницы');
-        refPrice = nowPx; refFrom = 'на начало ставки';
+    // Ставка не на тот актив - самая дорогая из возможных ошибок, и
+    // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
+    // пока SPA договорит: сразу после goto заголовок ещё прежний.
+    const settleAsset = async () => {
+      let seen = await pageAsset();
+      if (!seen || seen === sig.asset) return seen;
+      const until = Date.now() + (CFG.assetSettleMs ?? 6000);
+      while (Date.now() < until && seen && seen !== sig.asset) {
+        await page.waitForTimeout(400);
+        seen = await pageAsset();
+      }
+      return seen;
+    };
+    let seen = await settleAsset();
+    // Заголовок врёт, но панель показывает нужный символ - значит мы на
+    // месте, и ждать нечего. Ровно этот случай ронял ставки на Toobit:
+    // после переключения с BTC на ETH в title ещё висел BTC.
+    if (seen && seen !== sig.asset) {
+      const onPage = await pageAssetOnPage();
+      if (onPage === sig.asset) {
+        log(`заголовок отстал (в title ${seen}), но панель показывает ${onPage} - работаю`);
+        seen = onPage;
       }
     }
-    if (refPrice) log(`цена ${refFrom}: ${refPrice}`);
-    else log('цену на странице прочитать не удалось - проверка цены входа пропущена');
-  }
+    // Ни заголовок, ни панель не подтвердили актив. Одна перезагрузка:
+    // адрес мы задавали сами, он и есть источник правды, а перезагрузка
+    // заставляет SPA переписать всё остальное.
+    if (seen && seen !== sig.asset && page.url().startsWith(url)) {
+      log(`заголовок отстал: адрес ${sig.asset}, а в title ещё ${seen} - перезагружаю страницу`);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
+      await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+      ready = (await waitForPanel()) || ready;
+      seen = await settleAsset();
+      if (seen && seen !== sig.asset && (await pageAssetOnPage()) === sig.asset) {
+        log(`после перезагрузки заголовок всё ещё ${seen}, но панель показывает ${sig.asset} - работаю`);
+        seen = sig.asset;
+      }
+    }
+    if (seen && seen !== sig.asset) {
+      await shot('wrong-asset');
+      const drifted = !page.url().startsWith(url);
+      throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset}`
+        + ` (адрес ${page.url()}) - ставку не делаю`
+        + (drifted ? `; биржа не пустила на ${url} - проверь URL актива в конфиге` : ''));
+    }
+    // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
+    // основании остановил бы все ставки, если биржа сменит заголовок.
+    log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
+    // Отметка переходов: если к моменту нажатия она изменилась, значит
+    // страницу увели ПОСЛЕ всех проверок, и увели не мы.
+    const navAt = pageNav(page);
 
-  // залогинены ли мы: на странице не должно быть кнопки Log In
-  const loginBtn = page.locator(EX.selectors.loginMarker).first();
-  if (await loginBtn.count() > 0 && await loginBtn.isVisible().catch(() => false)) {
-    await shot('not-logged-in');
-    throw new Error('НЕ ЗАЛОГИНЕН - выполни: node executor.js login');
-  }
+    // Точка отсчёта для проверки цены. Если сигнал цену не принёс, берём
+    // цену на этот момент: она всё равно на десятки секунд свежее той, по
+    // которой ставка будет нажата, и откат между «панель готова» и
+    // нажатием ловит уже она.
+    const guard = { ...(EX.priceGuard || {}) };
+    let refPrice = null, refFrom = '';
+    if (guard.enabled !== false) {
+      if (sig.price) { refPrice = sig.price; refFrom = 'из сигнала'; }
+      else {
+        refPrice = await pagePrice();
+        if (refPrice) refFrom = 'на начало ставки';
+      }
+      // Цена из сигнала может быть от другого инструмента (перепутанный
+      // поток) или с другим масштабом. Сверяем с ценой страницы: расхождение
+      // в разы значит, что сравнивать их бессмысленно.
+      if (sig.price) {
+        const nowPx = await pagePrice();
+        if (nowPx && (nowPx / sig.price > 1.2 || sig.price / nowPx > 1.2)) {
+          log(`цена из сигнала ${sig.price}, а на странице ${nowPx} - это разные величины, `
+            + 'проверку цены веду от страницы');
+          refPrice = nowPx; refFrom = 'на начало ставки';
+        }
+      }
+      if (refPrice) log(`цена ${refFrom}: ${refPrice}`);
+      else log('цену на странице прочитать не удалось - проверка цены входа пропущена');
+    }
 
-  // ── время экспирации ──
-  // Экспирация НЕ подтверждается ничем, кроме выбранного чипа, поэтому
-  // ошибиться тут значит открыть ставку не на те минуты - и прочитать
-  // выплату чужой экспирации.
-  const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
-  const tf = await ensureTimeframe(tfText);
-  if (tf.missing) {
-    await shot('no-expiry');
-    await dumpPage('no-expiry');
-    throw new Error(`чип экспирации "${tfText}" не найден - смотри ДАМП выше`);
-  }
-  if (tf.ok) {
-    // «по памяти» видно в журнале намеренно: если однажды окажется, что
-    // память врёт, найти это можно будет только по этой пометке.
-    log(`экспирация ${tfText} выбрана`
-      + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
-  } else if (tf.cur == null) {
-    // Непроверяемый выбор экспирации - ставка вслепую на чужих условиях.
-    if (EX.requireTimeframeCheck === false) {
-      log(`экспирация ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
+    // залогинены ли мы: на странице не должно быть кнопки Log In
+    const loginBtn = page.locator(EX.selectors.loginMarker).first();
+    if (await loginBtn.count() > 0 && await loginBtn.isVisible().catch(() => false)) {
+      await shot('not-logged-in');
+      throw new Error('НЕ ЗАЛОГИНЕН - выполни: node executor.js login');
+    }
+
+    // ── время экспирации ──
+    // Экспирация НЕ подтверждается ничем, кроме выбранного чипа, поэтому
+    // ошибиться тут значит открыть ставку не на те минуты - и прочитать
+    // выплату чужой экспирации.
+    const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
+    const tf = await ensureTimeframe(tfText);
+    if (tf.missing) {
+      await shot('no-expiry');
+      await dumpPage('no-expiry');
+      throw new Error(`чип экспирации "${tfText}" не найден - смотри ДАМП выше`);
+    }
+    if (tf.ok) {
+      // «по памяти» видно в журнале намеренно: если однажды окажется, что
+      // память врёт, найти это можно будет только по этой пометке.
+      log(`экспирация ${tfText} выбрана`
+        + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
+    } else if (tf.cur == null) {
+      // Непроверяемый выбор экспирации - ставка вслепую на чужих условиях.
+      if (EX.requireTimeframeCheck === false) {
+        log(`экспирация ${tfText}: проверить выбор нечем, но проверка отключена в конфиге - ставлю`);
+      } else {
+        log(`пропуск ${sig.asset} ${sig.direction}: не удалось убедиться, что выбрана экспирация ${tfText}`
+          + ' - ставка на чужой экспирации хуже пропущенной');
+        await shot('expiry-unverified');
+        await dumpPage('expiry-unverified');
+        return { status: 'skip-expiry' };
+      }
     } else {
-      log(`пропуск ${sig.asset} ${sig.direction}: не удалось убедиться, что выбрана экспирация ${tfText}`
-        + ' - ставка на чужой экспирации хуже пропущенной');
-      await shot('expiry-unverified');
-      await dumpPage('expiry-unverified');
-      return { status: 'skip-expiry' };
+      await shot('expiry-mismatch');
+      throw new Error(`экспирация не переключилась на ${tfText}, на странице выбрана ${tf.cur}`);
     }
-  } else {
-    await shot('expiry-mismatch');
-    throw new Error(`экспирация не переключилась на ${tfText}, на странице выбрана ${tf.cur}`);
-  }
 
-  // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
-  // выходных вместо кнопок Up/Down висит «Market Closed». Без этой
-  // проверки ставка падала бы в ошибку «кнопка не найдена» с дампом -
-  // то есть штатная ситуация выглядела бы как поломка селекторов.
-  const closed = await page.locator('button, div[role=button]')
-    .filter({ hasText: new RegExp(EX.marketClosedText, 'i') })
-    .count().catch(() => 0);
-  if (closed > 0) {
-    log(`пропуск ${sig.asset}: рынок закрыт`);
-    await shot('market-closed');
-    return { status: 'skip-market-closed' };
-  }
-
-  // ── выплата ──
-  // На MEXC это страховка: сигнал уже отобран по payout источником, а на
-  // странице он мог сползти. На Toobit это единственная проверка вообще -
-  // туда сигналы приходят без выплаты, и ставить, не прочитав её со
-  // страницы, значит ставить вслепую. Отсюда requirePagePayout: не
-  // прочитали - не ставим.
-  const pv = await pagePayout(sig.direction);
-  const need = EX.minPayout;
-  const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
-  if (pv == null) {
-    if (EX.requirePagePayout) {
-      log(`пропуск ${sig.asset} ${sig.direction}: выплату на странице ${EX.title} прочитать не удалось, `
-        + `а она обязательна (нужно ${cmp} ${need}%) - смотри ДАМП ниже`);
-      await shot('payout-unknown');
-      await dumpPage('payout-unknown');
-      return { status: 'skip-payout-unknown' };
+    // Рынок может быть закрыт: у SPCX торги идут не круглосуточно, и на
+    // выходных вместо кнопок Up/Down висит «Market Closed». Без этой
+    // проверки ставка падала бы в ошибку «кнопка не найдена» с дампом -
+    // то есть штатная ситуация выглядела бы как поломка селекторов.
+    const closed = await page.locator('button, div[role=button]')
+      .filter({ hasText: new RegExp(EX.marketClosedText, 'i') })
+      .count().catch(() => 0);
+    if (closed > 0) {
+      log(`пропуск ${sig.asset}: рынок закрыт`);
+      await shot('market-closed');
+      return { status: 'skip-market-closed' };
     }
-    log('выплату на странице прочитать не удалось - иду дальше, порог проверял источник сигнала');
-  } else if (EX.minPayoutStrict ? pv <= need : pv < need) {
-    // Раньше этот исход писался только в bets.csv, и в логе ставка
-    // просто обрывалась после «панель готова» - выглядело как зависание.
-    log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`);
-    await shot('payout-low');
-    return { status: 'skip-payout', payoutPage: pv };
-  } else {
-    log(`выплата на странице ${pv}% (нужно ${cmp} ${need}%)`);
-  }
 
-  // Поле суммы уже найдено при ожидании панели
-  const amount = ready.loc;
-  await humanFill(amount, betStake(sig));
-  await page.waitForTimeout(randInt(250, 700));
-
-  // кнопка Up / Down
-  const btnSel = sig.direction === 'UP' ? EX.selectors.up : EX.selectors.down;
-  const dirWord = EX.dirWords[sig.direction] || (sig.direction === 'UP' ? 'Up' : 'Down');
-  // Сначала ТОЧНОЕ совпадение по тексту. По диагностике на странице
-  // ровно одна кнопка "Up" и одна "Down", а :has-text() ищет подстроку
-  // и поймал бы, например, "Upgrade", появись такая кнопка позже.
-  // Если точного нет - откатываемся на селектор из конфига.
-  let btn = page.locator('button').filter({ hasText: wordRe(dirWord) }).first();
-  if (await btn.count() === 0) btn = page.locator(btnSel).first();
-  // Третий заход: элемент с таким текстом, каким бы тегом он ни был. На
-  // Toobit «кнопки» Up/Down - обычные div, и в списке кнопок страницы их
-  // нет вовсе; getByText находит самый глубокий узел с точным текстом.
-  if (await btn.count() === 0) {
-    btn = page.getByText(wordRe(dirWord)).first();
-    if (await btn.count() > 0) log(`кнопка ${dirWord} найдена по тексту, а не по селектору`);
-  }
-  if (await btn.count() === 0) {
-    await shot('no-button');
-    await dumpPage('no-button');
-    throw new Error('кнопка не найдена: ' + btnSel + ' - смотри ДАМП выше');
-  }
-
-  // ── последняя проверка перед нажатием ──
-  // Между началом ставки и кликом страницу могли увести: расписание
-  // открывает вкладки, холостое действие бродит по бирже. Locator суммы
-  // остаётся привязан к своей странице, а кнопка направления ищется
-  // заново - и жать её можно было уже на чужой вкладке. Ровно так сигнал
-  // по SPCX открыл позицию по BTC.
-  if (page !== myPage) {
-    log('!! вкладка подменилась во время ставки - возвращаю свою');
-    page = myPage;
-  }
-  if (!page.url().startsWith(url)) {
-    await shot('page-drifted');
-    throw new Error(`перед нажатием страница уехала на ${page.url()}`
-      + ` вместо ${url} - ставку не делаю`);
-  }
-  const seenNow = await pageAsset();
-  if (seenNow && seenNow !== sig.asset) {
-    await shot('page-drifted');
-    throw new Error(`перед нажатием на странице ${seenNow}, а сигнал по ${sig.asset} - ставку не делаю`);
-  }
-
-  // ── цена входа ──
-  // От сигнала до нажатия проходит от десяти секунд до минуты: пачка
-  // ждёт своё окно, страница собирается, экспирация подтверждается.
-  // За это время цена успевает откатиться, и вход получается хуже того,
-  // на который сигнал рассчитывали. Ставка вверх тем лучше, чем ниже
-  // цена входа; вниз - наоборот. Сравнение стоит один вызов и делается
-  // последним, чтобы цена была самой свежей.
-  let entryPrice = null, advPct = null;
-  if (guard.enabled !== false && refPrice) {
-    entryPrice = await pagePrice();
-    if (entryPrice == null) {
-      if (guard.strict) {
-        log(`пропуск ${sig.asset} ${sig.direction}: цену перед нажатием прочитать не удалось, `
-          + 'а проверка цены обязательна');
-        return { status: 'skip-price-unknown' };
+    // ── выплата ──
+    // На MEXC это страховка: сигнал уже отобран по payout источником, а на
+    // странице он мог сползти. На Toobit это единственная проверка вообще -
+    // туда сигналы приходят без выплаты, и ставить, не прочитав её со
+    // страницы, значит ставить вслепую. Отсюда requirePagePayout: не
+    // прочитали - не ставим.
+    const pv = await pagePayout(sig.direction);
+    const need = EX.minPayout;
+    const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
+    if (pv == null) {
+      if (EX.requirePagePayout) {
+        log(`пропуск ${sig.asset} ${sig.direction}: выплату на странице ${EX.title} прочитать не удалось, `
+          + `а она обязательна (нужно ${cmp} ${need}%) - смотри ДАМП ниже`);
+        await shot('payout-unknown');
+        await dumpPage('payout-unknown');
+        return { status: 'skip-payout-unknown' };
       }
-      log('цену перед нажатием прочитать не удалось - иду дальше без проверки');
+      log('выплату на странице прочитать не удалось - иду дальше, порог проверял источник сигнала');
+    } else if (EX.minPayoutStrict ? pv <= need : pv < need) {
+      // Раньше этот исход писался только в bets.csv, и в логе ставка
+      // просто обрывалась после «панель готова» - выглядело как зависание.
+      log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`);
+      await shot('payout-low');
+      return { status: 'skip-payout', payoutPage: pv };
     } else {
-      // Насколько цена ушла ПРОТИВ нас, в процентах.
-      advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
-      const lim = guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05);
-      const moved = advPct > 0
-        ? `хуже на ${advPct.toFixed(3)}%`
-        : `лучше на ${(-advPct).toFixed(3)}%`;
-      if (advPct > lim) {
-        log(`пропуск ${sig.asset} ${sig.direction}: цена входа ${entryPrice} против ${refPrice} `
-          + `(${refFrom}) - ${moved}, порог ${lim}%`);
-        await shot('price-worse');
-        return { status: 'skip-price', payoutPage: pv, entryPrice, advPct };
-      }
-      log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`);
+      log(`выплата на странице ${pv}% (нужно ${cmp} ${need}%)`);
     }
-  }
 
-  if (state.dryRun) {
-    await shot(`dryrun-${sig.asset}-${sig.direction}`);
-    log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
-    return { status: 'dry-run', payoutPage: pv, entryPrice, advPct };
-  }
+    // Поле суммы уже найдено при ожидании панели
+    const amount = ready.loc;
+    await humanFill(amount, betStake(sig));
+    await page.waitForTimeout(randInt(250, 700));
 
-  const posBefore = await openPositionsCount();
-  await humanClick(btn);
-  await page.waitForTimeout(randInt(500, 900));
-  // возможное окно подтверждения
-  if (EX.selectors.confirm) {
-    const c = page.locator(EX.selectors.confirm).first();
-    if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
-  }
+    // кнопка Up / Down
+    const btnSel = sig.direction === 'UP' ? EX.selectors.up : EX.selectors.down;
+    const dirWord = EX.dirWords[sig.direction] || (sig.direction === 'UP' ? 'Up' : 'Down');
+    // Сначала ТОЧНОЕ совпадение по тексту. По диагностике на странице
+    // ровно одна кнопка "Up" и одна "Down", а :has-text() ищет подстроку
+    // и поймал бы, например, "Upgrade", появись такая кнопка позже.
+    // Если точного нет - откатываемся на селектор из конфига.
+    let btn = page.locator('button').filter({ hasText: wordRe(dirWord) }).first();
+    if (await btn.count() === 0) btn = page.locator(btnSel).first();
+    // Третий заход: элемент с таким текстом, каким бы тегом он ни был. На
+    // Toobit «кнопки» Up/Down - обычные div, и в списке кнопок страницы их
+    // нет вовсе; getByText находит самый глубокий узел с точным текстом.
+    if (await btn.count() === 0) {
+      btn = page.getByText(wordRe(dirWord)).first();
+      if (await btn.count() > 0) log(`кнопка ${dirWord} найдена по тексту, а не по селектору`);
+    }
+    if (await btn.count() === 0) {
+      await shot('no-button');
+      await dumpPage('no-button');
+      throw new Error('кнопка не найдена: ' + btnSel + ' - смотри ДАМП выше');
+    }
 
-  // Клик сам по себе не доказывает, что ставка открылась: он мог не
-  // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
-  // ставку размещённой только когда выросло число открытых позиций.
-  const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
-  await shot(`bet-${sig.asset}-${sig.direction}`);
+    // ── последняя проверка перед нажатием ──
+    // Между началом ставки и кликом страницу могли увести: расписание
+    // открывает вкладки, холостое действие бродит по бирже. Locator суммы
+    // остаётся привязан к своей странице, а кнопка направления ищется
+    // заново - и жать её можно было уже на чужой вкладке. Ровно так сигнал
+    // по SPCX открыл позицию по BTC.
+    if (page !== myPage) {
+      log('!! вкладка подменилась во время ставки - возвращаю свою');
+      page = myPage;
+    }
+    const seenNow = await pageAsset();
+    const drift = !page.url().startsWith(url)
+      ? `адрес стал ${page.url()} вместо ${url}`
+      : (seenNow && seenNow !== sig.asset ? `на странице ${seenNow}, а сигнал по ${sig.asset}` : null);
+    if (drift) {
+      const moves = pageNav(page) - navAt;
+      await shot('page-drifted');
+      if (attempt < 2) {
+        log(`страница уехала сама (${drift}; переходов после проверок: ${moves})`
+          + ' - возвращаю и играю ставку заново');
+        forceLoad = true;
+        continue;
+      }
+      // Второй раз подряд - это не случайность. Чаще всего так биржа
+      // говорит, что инструмент сейчас не торгуется и она увела на
+      // соседний. Отказ, а НЕ ошибка: серия ошибок загоняет исполнитель
+      // в DRY-RUN, а тут виновата биржа, а не поломка.
+      log(`пропуск ${sig.asset} ${sig.direction}: биржа дважды увела со своего адреса (${drift})`
+        + ` - похоже, ${sig.asset} сейчас не торгуется`);
+      await dumpPage('page-drifted');
+      return { status: 'skip-redirect', payoutPage: pv, note: drift };
+    }
 
-  if (posBefore == null) {
-    log(`ставка отправлена за ${Date.now() - t0}мс, счётчик позиций прочитать не удалось`);
-    return { status: 'placed-unverified', payoutPage: pv };
+    // ── цена входа ──
+    // От сигнала до нажатия проходит от десяти секунд до минуты: пачка
+    // ждёт своё окно, страница собирается, экспирация подтверждается.
+    // За это время цена успевает откатиться, и вход получается хуже того,
+    // на который сигнал рассчитывали. Ставка вверх тем лучше, чем ниже
+    // цена входа; вниз - наоборот. Сравнение стоит один вызов и делается
+    // последним, чтобы цена была самой свежей.
+    let entryPrice = null, advPct = null;
+    if (guard.enabled !== false && refPrice) {
+      entryPrice = await pagePrice();
+      if (entryPrice == null) {
+        if (guard.strict) {
+          log(`пропуск ${sig.asset} ${sig.direction}: цену перед нажатием прочитать не удалось, `
+            + 'а проверка цены обязательна');
+          return { status: 'skip-price-unknown' };
+        }
+        log('цену перед нажатием прочитать не удалось - иду дальше без проверки');
+      } else {
+        // Насколько цена ушла ПРОТИВ нас, в процентах.
+        advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
+        const lim = guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05);
+        const moved = advPct > 0
+          ? `хуже на ${advPct.toFixed(3)}%`
+          : `лучше на ${(-advPct).toFixed(3)}%`;
+        if (advPct > lim) {
+          log(`пропуск ${sig.asset} ${sig.direction}: цена входа ${entryPrice} против ${refPrice} `
+            + `(${refFrom}) - ${moved}, порог ${lim}%`);
+          await shot('price-worse');
+          return { status: 'skip-price', payoutPage: pv, entryPrice, advPct };
+        }
+        log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`);
+      }
+    }
+
+    if (state.dryRun) {
+      await shot(`dryrun-${sig.asset}-${sig.direction}`);
+      log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
+      return { status: 'dry-run', payoutPage: pv, entryPrice, advPct };
+    }
+
+    const posBefore = await openPositionsCount();
+    await humanClick(btn);
+    await page.waitForTimeout(randInt(500, 900));
+    // возможное окно подтверждения
+    if (EX.selectors.confirm) {
+      const c = page.locator(EX.selectors.confirm).first();
+      if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
+    }
+
+    // Клик сам по себе не доказывает, что ставка открылась: он мог не
+    // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
+    // ставку размещённой только когда выросло число открытых позиций.
+    const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
+    await shot(`bet-${sig.asset}-${sig.direction}`);
+
+    if (posBefore == null) {
+      log(`ставка отправлена за ${Date.now() - t0}мс, счётчик позиций прочитать не удалось`);
+      return { status: 'placed-unverified', payoutPage: pv };
+    }
+    if (posAfter == null) {
+      log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
+      await dumpPage('not-confirmed');
+      await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
+      return { status: 'placed-unconfirmed', payoutPage: pv };
+    }
+    log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
+    return { status: 'placed', payoutPage: pv, entryPrice, advPct };
   }
-  if (posAfter == null) {
-    log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
-    await dumpPage('not-confirmed');
-    await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
-    return { status: 'placed-unconfirmed', payoutPage: pv };
-  }
-  log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-  return { status: 'placed', payoutPage: pv, entryPrice, advPct };
+  // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.
+  throw new Error('ставка не доиграна');
 }
 
 // ── источник: лист MEXCsignal ──
@@ -2014,6 +2047,7 @@ async function pump() {
       if (r.advPct != null) {
         notes.push(`цена ${r.entryPrice} ${r.advPct > 0 ? 'хуже' : 'лучше'} на ${Math.abs(r.advPct).toFixed(3)}%`);
       }
+      if (r.note) notes.push(r.note);
       logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
                note: notes.join('; ') });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько

@@ -413,6 +413,11 @@
       <div id="slotRows"></div>
       <div class="row"><span>UP / DOWN</span><b id="updown">—</b></div>
       <div class="row"><span>Очередь</span><b id="queue">—</b></div>
+      <!-- Строка появляется, только если хоть одна биржа будится вне
+           смены: иначе это вечный ноль на видном месте. -->
+      <div class="row" id="wakeRow" style="display:none">
+        <span title="сколько раз сегодня биржа открывалась вне своих часов">Пробуждений</span>
+        <b id="wakes">—</b></div>
       <div class="row spark-row"><span>Сегодня</span>
         <span class="spark" id="todaySpark"></span><b id="today">—</b></div>
     </div>
@@ -907,9 +912,17 @@ function buildAssetControls(st) {
         <input type="number" id="sj_${e.name}" min="0" max="50" step="1"
           data-ex="${e.name}"
           title="Сумма гуляет вокруг настроенной на столько процентов. 0 - ровно как задано"></div>`
+    // Щёлка в воротах расписания: биржа открывается под сигнал даже в
+    // тихие часы, но считанное число раз в сутки.
+    + `<div class="row"><label class="chk"><input type="checkbox" id="wk_${e.name}"
+          data-ex="${e.name}"> Будить вне смены</label>
+        <input type="number" id="wn_${e.name}" min="0" max="50" step="1"
+          data-ex="${e.name}" style="width:74px"
+          title="Сколько раз в сутки биржа может открыться вне своих часов"></div>`
   ).join('');
   for (const e of exs(s)) {
-    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`, `pg_${e.name}`, `sj_${e.name}`]) {
+    for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`,
+                      `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -996,6 +1009,13 @@ Object.values(CARDS).flat().forEach(id => {
   const el = $(id);
   ['input', 'change'].forEach(ev => el.addEventListener(ev, () => dirty.add(id)));
 });
+// Поле «сколько раз в сутки» без галочки бессмысленно - гасим сразу,
+// не дожидаясь сохранения.
+document.getElementById('stakeRows').addEventListener('change', e => {
+  const id = e.target && e.target.id;
+  if (!id || !id.startsWith('wk_')) return;
+  $('wn_' + e.target.dataset.ex).disabled = !e.target.checked;
+});
 $('priceOn').addEventListener('change', () => {
   document.querySelectorAll('#stakeRows input[id^="pg_"]')
     .forEach(i => { i.disabled = !$('priceOn').checked; });
@@ -1042,6 +1062,11 @@ async function refresh() {
   ).join('');
   $('updown').textContent = `${st.dirUsed.UP}/${s.dirLimits.UP} · ${st.dirUsed.DOWN}/${s.dirLimits.DOWN}`;
   $('queue').textContent = st.queue;
+  // Пробуждения: общий предел - сумма по биржам, которым это разрешено.
+  const wakeMax = exs(s).filter(e => (e.wake || {}).enabled)
+    .reduce((n, e) => n + e.wake.maxPerDay, 0);
+  $('wakeRow').style.display = wakeMax ? '' : 'none';
+  if (wakeMax) $('wakes').textContent = `${st.wakesToday ?? 0} / ${wakeMax}`;
   $('today').textContent = `${st.betsToday} / ${s.maxBetsPerDay}`;
   sparkline($('todaySpark'), betsByHour(st.bets));
   // Ошибки занимали строку ради нуля в 99% времени. Теперь плашка, и
@@ -1101,6 +1126,9 @@ async function refresh() {
     setVal(`mp_${e.name}`, e.minPayout);
     setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
     setVal(`sj_${e.name}`, e.stakeJitterPct ?? 0);
+    setChk(`wk_${e.name}`, (e.wake || {}).enabled);
+    setVal(`wn_${e.name}`, (e.wake || {}).maxPerDay);
+    $(`wn_${e.name}`).disabled = !(e.wake || {}).enabled;
     $(`pg_${e.name}`).disabled = (s.priceGuard || {}).enabled === false;
   }
   if (!dirty.has('tfBox')) {
@@ -1115,6 +1143,9 @@ async function refresh() {
       + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
       + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
       + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '')
+      + ((e.wake || {}).enabled
+          ? `, вне смены будится до ${e.wake.maxPerDay} раз в сутки с паузой ${e.wake.minGapMin} мин`
+          : '')
       + ((s.priceGuard || {}).enabled !== false
           ? `, цена входа не хуже сигнала ${(e.priceGuard || {}).maxAdversePct
               ? `более чем на ${(e.priceGuard || {}).maxAdversePct}%` : 'вовсе'}`
@@ -1282,8 +1313,15 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="sj_"]').forEach(i => {
     if (i.value !== '') stakeJitters[i.dataset.ex] = +i.value;
   });
+  const wakes = {};
+  document.querySelectorAll('#stakeRows input[id^="wk_"]').forEach(i => {
+    wakes[i.dataset.ex] = { enabled: i.checked };
+  });
+  document.querySelectorAll('#stakeRows input[id^="wn_"]').forEach(i => {
+    if (i.value !== '') (wakes[i.dataset.ex] = wakes[i.dataset.ex] || {}).maxPerDay = +i.value;
+  });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes,
     priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),

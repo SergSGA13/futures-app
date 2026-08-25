@@ -51,7 +51,12 @@
       "openPositionsLabel": "Open Positions",
       "stakeJitterPct": 8,
       "chartIntervals": [],
-      "chartAnchor": ""
+      "chartAnchor": "",
+      "wakeOnSignal": {
+        "enabled": false,
+        "maxPerDay": 6,
+        "minGapMin": 20
+      }
     },
     "toobit": {
       "title": "Toobit",
@@ -130,7 +135,12 @@
       },
       "stakeJitterPct": 8,
       "chartIntervals": [],
-      "chartAnchor": ""
+      "chartAnchor": "",
+      "wakeOnSignal": {
+        "enabled": false,
+        "maxPerDay": 6,
+        "minGapMin": 20
+      }
     }
   },
   "dirLimits": {

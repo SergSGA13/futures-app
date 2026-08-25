@@ -132,6 +132,9 @@ function exCfg(name) {
     priceSelector: e.priceSelector ?? CFG.priceSelector ?? '',
     // На сколько процентов сумма ставки гуляет вокруг настроенной.
     stakeJitterPct: e.stakeJitterPct ?? CFG.stakeJitterPct ?? 0,
+    // Пробуждение вне смены: сигнал приходит в тихие часы, а биржа
+    // всё равно открывается и ставка играется по обычным правилам.
+    wakeOnSignal: { ...(CFG.wakeOnSignal || {}), ...(e.wakeOnSignal || {}) },
     // Подписи интервалов ГРАФИКА (не экспирации) и надпись рядом с ними.
     // Пусто - холостое действие ограничится курсором и колесом.
     chartIntervals: e.chartIntervals || CFG.chartIntervals || [],
@@ -170,6 +173,7 @@ const state = {
   silenceAlerted: false,               // алерт о тишине уже отправлен
   windowManual: false,                 // окно открыто руками из панели
   windowAt: null,                      // когда окно открылось/закрылось само
+  wakes: [],                           // времена пробуждений биржи вне смены
 };
 
 // ── состояние на диске ──
@@ -180,7 +184,7 @@ const state = {
 // в stakeLimits, а нижняя граница общая.
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
-const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows'];
+const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes'];
 function saveState() {
   try {
     const o = {};
@@ -199,8 +203,10 @@ function loadState() {
     if (!sameDay) {
       state.day = new Date().toDateString();
       state.betsToday = 0;
+      state.wakes = [];
     }
     if (!Array.isArray(state.placed)) state.placed = [];
+    if (!Array.isArray(state.wakes)) state.wakes = [];
     log(`состояние восстановлено: ставок сегодня ${state.betsToday}, слотов ${openSlots()}`);
   } catch (e) { log('состояние не прочиталось: ' + e.message); }
 }
@@ -339,7 +345,9 @@ function todayWindows(ex) {
       start = null;
     }
   }
-  return out.length ? out.join(', ') : 'сегодня выходной';
+  // «выходной» без слова «сегодня»: подпись подставляют в готовые фразы,
+  // которые это слово уже сказали - выходило «сегодня сегодня выходной».
+  return out.length ? out.join(', ') : 'выходной';
 }
 
 // Настройки, изменённые с панели, переживают перезапуск: пишем их в тот
@@ -1929,6 +1937,47 @@ function normalizeSignal(sig) {
       && (sig.direction === 'UP' || sig.direction === 'DOWN');
 }
 
+// ── пробуждение вне смены ──
+// Расписание задумывалось как жёсткие ворота: вне смены сигналы
+// отклоняются. Но половина отказов приходилась именно на них, и часть из
+// них - хорошие сигналы с высокой выплатой. Пробуждение оставляет ворота
+// на месте, но даёт им щёлку: биржа открывается ПОД КОНКРЕТНЫЙ сигнал,
+// проходит все обычные проверки (актив, экспирация, выплата, цена) и,
+// если всё сошлось, ставит - а потом закрывается обратно по расписанию.
+//
+// Щёлка узкая намеренно. Аккаунт, который просыпается на каждый сигнал
+// круглые сутки, - это ровно тот след, ради которого расписание и
+// заводили: смысла в нём тогда не остаётся вовсе. Поэтому пробуждений
+// считанное число в сутки и между ними обязательная пауза.
+function wakesToday() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  return (state.wakes || []).filter(t => t >= start.getTime());
+}
+function wakeCheck(ex) {
+  const W = exCfg(ex).wakeOnSignal || {};
+  if (W.enabled !== true) return { ok: false };
+  const max = Math.max(0, Math.round(W.maxPerDay ?? 6));
+  const done = wakesToday();
+  if (done.length >= max) {
+    return { ok: false, why: `пробуждений сегодня уже ${done.length}/${max}` };
+  }
+  const gapMin = Math.max(0, W.minGapMin ?? 20);
+  const last = done.length ? Math.max(...done) : 0;
+  const waited = (Date.now() - last) / 60000;
+  if (last && waited < gapMin) {
+    return { ok: false, why: `прошлое пробуждение ${waited.toFixed(0)} мин назад, нужно ${gapMin}` };
+  }
+  return { ok: true, left: max - done.length, max };
+}
+function markWake(ex) {
+  state.wakes = [...wakesToday(), Date.now()];
+  saveState();
+  const W = exCfg(ex).wakeOnSignal || {};
+  const max = Math.max(0, Math.round(W.maxPerDay ?? 6));
+  log(`${exCfg(ex).title}: пробуждение вне смены ${state.wakes.length}/${max} за сутки`
+    + ' - открываю биржу под сигнал');
+}
+
 // Возвращает 'queued' | 'merged' | причину отказа.
 function acceptSignal(sig, src) {
   const mode = state.dryRun ? 'DRY' : 'LIVE';
@@ -1944,8 +1993,16 @@ function acceptSignal(sig, src) {
       `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
   }
   if (!inActiveHours(null, sig.ex)) {
-    return skip('quiet-hours', 'skip-quiet',
-      `${exCfg(sig.ex).title}: тихие часы (сегодня ${todayWindows(sig.ex)})`);
+    // Пробуждение проверяем ДО отказа: может быть, эту ставку всё-таки
+    // стоит сыграть. Счётчик тратится не здесь, а перед самой ставкой -
+    // иначе пачка из трёх сигналов сожгла бы три пробуждения на одну.
+    const w = wakeCheck(sig.ex);
+    if (!w.ok) {
+      return skip('quiet-hours', 'skip-quiet',
+        `${exCfg(sig.ex).title}: тихие часы (сегодня ${todayWindows(sig.ex)})`
+        + (w.why ? `; ${w.why}` : ''));
+    }
+    sig.wake = true;
   }
   if (state.paused) {
     return skip('paused', null, 'исполнитель на паузе');
@@ -2094,6 +2151,12 @@ async function pump() {
     } else if (process.env.TEST_MODE === '1') {
       logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode, status: 'test-mode' });
     } else {
+      // Пробуждение тратится ровно на ту ставку, что сейчас пойдёт: пачка
+      // уже собрана в один сигнал, отказ по свежести остался позади.
+      if (sig.wake) {
+        markWake(sig.ex);
+        if (!browserOpen()) log('биржа спала - холодный старт займёт лишние секунды');
+      }
       const r = await placeBet(sig);
       // Заметка складывается: множитель пачки и, если цена участвовала в
       // решении, насколько вход отличался от сигнала. Без этого пропуск
@@ -2145,6 +2208,10 @@ async function pump() {
 // страница достаётся ставке.
 async function afterBetHome(sig) {
   if (process.env.TEST_MODE === '1') return;
+  // Ставка по пробуждению: вкладку всё равно закроет расписание, и
+  // возвращать её на рабочий актив незачем - это лишняя минута жизни
+  // окна там, где биржа должна спать.
+  if (sig.wake) return;
   if (state.busy || state.queue.length || state.paused) return;
   if (!browserOpen() || !inActiveHours(null, sig.ex)) return;
   const E = exCfg(sig.ex);
@@ -2604,6 +2671,11 @@ function snapshot() {
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           stakeJitterPct: e.stakeJitterPct,
+          wake: {
+            enabled: (e.wakeOnSignal || {}).enabled === true,
+            maxPerDay: Math.max(0, Math.round((e.wakeOnSignal || {}).maxPerDay ?? 6)),
+            minGapMin: Math.max(0, (e.wakeOnSignal || {}).minGapMin ?? 20),
+          },
           priceGuard: {
             enabled: (e.priceGuard || {}).enabled !== false,
             maxAdversePct: Math.abs((e.priceGuard || {}).maxAdversePct ?? 0.05),
@@ -2659,6 +2731,7 @@ function snapshot() {
         allActions: IDLE_ACTIONS,
       },
     },
+    wakesToday: wakesToday().length,
     stats: betStats(CFG.statsDays ?? 7),
     dirUsed: { UP: dirSlots('UP'), DOWN: dirSlots('DOWN') },
     dayNames: DAY_NAMES,
@@ -2711,6 +2784,35 @@ function applySettings(s) {
       const v = clamp(s.minPayouts[n], 50, 100, was);
       if (v !== was) changed.push(`выплата ${exCfg(n).title} ${was}→${v}%`);
       CFG.exchanges[n].minPayout = v;
+      exReset();
+    }
+  }
+  // Пробуждение вне смены - по биржам: у каждой свои часы, и щёлка в
+  // ночных воротах нужна не обязательно обеим.
+  if (s.wakes) {
+    for (const n of exNames()) {
+      const w = s.wakes[n];
+      if (w == null) continue;
+      const cur = exCfg(n).wakeOnSignal || {};
+      const next = { ...cur };
+      if (w.enabled != null) {
+        next.enabled = !!w.enabled;
+        if (next.enabled !== (cur.enabled === true)) {
+          changed.push(`пробуждение ${exCfg(n).title} ${next.enabled ? 'вкл' : 'выкл'}`);
+        }
+      }
+      if (w.maxPerDay != null) {
+        const v = Math.round(clamp(w.maxPerDay, 0, 50, cur.maxPerDay ?? 6));
+        if (v !== (cur.maxPerDay ?? 6)) changed.push(`пробуждений в сутки ${exCfg(n).title} ${cur.maxPerDay ?? 6}→${v}`);
+        next.maxPerDay = v;
+      }
+      // Паузу панель не спрашивает, но в конфиге она должна быть видна:
+      // иначе правило «не чаще чем раз в двадцать минут» существует
+      // только в коде, и найти его, читая config.json, невозможно.
+      next.minGapMin = w.minGapMin != null
+        ? Math.round(clamp(w.minGapMin, 0, 720, cur.minGapMin ?? 20))
+        : (cur.minGapMin ?? 20);
+      CFG.exchanges[n].wakeOnSignal = next;
       exReset();
     }
   }

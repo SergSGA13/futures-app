@@ -742,6 +742,10 @@ async function dumpPage(tag) {
     log(`  строки с Payout: ` + JSON.stringify(info.payoutText));
     log(`  выплата в контексте: ` + JSON.stringify(info.payoutBlocks));
     log(`  похожее на Up/Down (${info.dirLike.length}): ` + JSON.stringify(info.dirLike));
+    // Символы, которые биржа показывает прямо сейчас: по ним видно,
+    // торгуется ли вообще нужный инструмент, или его в этот час нет.
+    const syms = await pageSymbols();
+    log(`  символы на странице (${syms.length}): ` + JSON.stringify(syms.slice(0, 30)));
     if (page.frames().length > 1) {
       log('  фреймы: ' + JSON.stringify(page.frames().map(f => f.url()).slice(0, 6)));
     }
@@ -999,6 +1003,102 @@ async function pagePrice() {
       return best;
     }).then(parsePrice);
   } catch (e) { return null; }
+}
+
+// Какие символы биржа вообще показывает прямо сейчас. Нужно, когда она
+// уводит с адреса актива: одно дело - сломанный адрес в конфиге, и совсем
+// другое - инструмент, которого в этот час на бирже просто нет. По логу
+// эти два случая неразличимы, а лечатся по-разному.
+async function pageSymbols(openList) {
+  const read = () => page.evaluate(() => {
+      const re = /^[A-Z0-9]{2,10}\s*[_/-]?\s*USDT$/;
+      const out = new Set();
+      for (const el of document.querySelectorAll('*')) {
+        if (el.children.length) continue;
+        if (!(el.offsetWidth || el.offsetHeight)) continue;
+        const t = (el.textContent || '').trim().toUpperCase();
+        if (t.length <= 16 && re.test(t)) out.add(t);
+        if (out.size >= 40) break;
+      }
+      return [...out];
+  });
+  try {
+    let syms = await read();
+    // Список символов обычно свёрнут, и в свёрнутом виде на странице
+    // виден ровно один символ - текущий. Такой перечень ничего не
+    // объясняет, поэтому раскрываем список и читаем ещё раз. Делается
+    // это только когда ставка уже отменена, так что состояние страницы
+    // портить не жалко.
+    if (openList && syms.length < 3) {
+      const cur = await pageAssetOnPage();
+      if (cur) {
+        const head = page.getByText(new RegExp('^' + cur + '\\s*[_/-]?\\s*USDT$', 'i')).first();
+        if (await head.count() > 0 && await head.isVisible().catch(() => false)) {
+          await head.click({ timeout: 3000 }).catch(() => {});
+          await page.waitForTimeout(900);
+          const more = await read();
+          if (more.length > syms.length) syms = more;
+          await page.keyboard.press('Escape').catch(() => {});
+        }
+      }
+    }
+    return syms;
+  } catch (e) { return []; }
+}
+
+// Переключить актив ТАК ЖЕ, КАК ЧЕЛОВЕК: через выбор символа на самой
+// странице, а не адресом. Нужно, когда приложение биржи игнорирует путь и
+// восстанавливает последний просмотренный символ - тогда сколько ни грузи
+// адрес SPCX, на экране остаётся BTC. Человек в этом случае просто
+// открывает список символов и выбирает нужный.
+//
+// Кликаем ТОЛЬКО по элементу, весь текст которого - искомый символ и
+// ничего больше. Иначе на торговой странице легко попасть в ленту чужих
+// сделок или в строку открытой позиции.
+// Активы, до которых доходит только выбор на странице. Ключ - биржа и
+// актив: на одной бирже адрес актива может работать, на другой нет.
+const uiAsset = new Set();
+async function switchAssetOnPage(asset) {
+  const re = new RegExp('^' + asset + '\\s*[_/-]?\\s*USDT$', 'i');
+  const exact = new RegExp('^' + asset + '$', 'i');
+  const pick = async () => {
+    for (const rx of [re, exact]) {
+      const loc = page.getByText(rx);
+      const n = Math.min(await loc.count().catch(() => 0), 12);
+      for (let i = 0; i < n; i++) {
+        const c = loc.nth(i);
+        if (!(await c.isVisible().catch(() => false))) continue;
+        const box = await c.boundingBox().catch(() => null);
+        if (!box || box.width < 8 || box.height < 8) continue;
+        return c;
+      }
+    }
+    return null;
+  };
+
+  // Список символов может быть уже раскрыт - тогда выбираем сразу.
+  let target = await pick();
+  if (!target) {
+    // Не раскрыт: жмём на текущий символ в шапке, чтобы список появился.
+    const cur = await pageAssetOnPage();
+    if (cur) {
+      const head = page.getByText(new RegExp('^' + cur + '\\s*[_/-]?\\s*USDT$', 'i')).first();
+      if (await head.count() > 0 && await head.isVisible().catch(() => false)) {
+        await humanClick(head).catch(() => {});
+        await page.waitForTimeout(randInt(700, 1300));
+        target = await pick();
+      }
+    }
+  }
+  if (!target) return false;
+  await humanClick(target).catch(() => {});
+  // Ждём, пока приложение перерисуется под новый символ.
+  const until = Date.now() + 6000;
+  while (Date.now() < until) {
+    await page.waitForTimeout(400);
+    if ((await pageAssetOnPage()) === asset || (await pageAsset()) === asset) return true;
+  }
+  return false;
 }
 
 // Берём первый ВИДИМЫЙ чип, а не первый попавшийся: селектор широкий
@@ -1415,13 +1515,23 @@ async function placeBet(sig) {
   // страница просто возвращается на место, и вся ставка играется заново:
   // адрес, актив, экспирация, выплата, сумма. Двух заходов достаточно -
   // если биржа уводит и во второй раз, дело не в случайности.
-  let forceLoad = false;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // Способ начать заход: null - обычный, 'load' - непременно перегрузить
+  // адрес, 'ui' - перегрузить И выбрать актив на самой странице. Третий
+  // нужен там, где приложение биржи игнорирует путь и восстанавливает
+  // последний просмотренный символ: сколько ни грузи адрес SPCX, на
+  // экране остаётся BTC, и помогает только выбор символа руками.
+  // Если этому активу адрес уже не помогал, начинаем сразу с выбора на
+  // странице. Иначе каждая ставка по нему тратила бы два заведомо
+  // провальных захода - секунд тридцать, которых у десятиминутной свечи
+  // просто нет.
+  const uiKey = `${sig.ex}|${sig.asset}`;
+  let recover = uiAsset.has(uiKey) ? 'ui' : null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
     let ready = null;
-    // На втором заходе короткий путь запрещён: раз страница уже уехала
-    // сама, верить тому, что на ней открыто, нельзя - только полная
-    // загрузка своего адреса.
-    if (!forceLoad && page.url().startsWith(url)) {
+    // После первого промаха короткий путь запрещён: раз страница уже
+    // уехала сама, верить тому, что на ней открыто, нельзя - только
+    // полная загрузка своего адреса.
+    if (!recover && page.url().startsWith(url)) {
       ready = await findAmount(1500);
       if (ready) log('страница уже открыта, перезагрузка не нужна');
     }
@@ -1440,6 +1550,33 @@ async function placeBet(sig) {
         if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
       }
       ready = await waitForPanel();
+      if (recover === 'ui') {
+        // Может, в этот раз адрес и сработал: проверяем, прежде чем лезть
+        // в список символов. Заодно так снимается память, если биржа
+        // починилась.
+        //
+        // Смотрим ДВАЖДЫ с паузой: приложение уводит символ не мгновенно,
+        // и по одному взгляду сразу после загрузки страница честно
+        // показывает нужный актив - а через секунду уже чужой. Поверив
+        // одному взгляду, мы пропустили бы выбор на странице и уехали в
+        // отказ на третьем заходе.
+        await page.waitForTimeout(700);
+        const first = (await pageAsset()) || (await pageAssetOnPage());
+        await page.waitForTimeout(1600);
+        const second = (await pageAsset()) || (await pageAssetOnPage());
+        const already = first === sig.asset && second === sig.asset ? sig.asset : second;
+        if (already === sig.asset) {
+          if (uiAsset.delete(uiKey)) log(`${sig.asset} открылся по адресу - выбор на странице больше не нужен`);
+        } else {
+          log(`выбираю ${sig.asset} на самой странице - адресом биржа не слушается`);
+          const ok = await switchAssetOnPage(sig.asset).catch(() => false);
+          log(ok ? `${sig.asset} выбран на странице` : `выбрать ${sig.asset} на странице не удалось`);
+          if (ok) {
+            uiAsset.add(uiKey);
+            ready = (await findAmount(2500)) || ready;
+          }
+        }
+      }
     }
     if (!ready) {
       // Не сдаёмся с первого раза: панель биржи иногда собирается дольше
@@ -1498,10 +1635,24 @@ async function placeBet(sig) {
     }
     if (seen && seen !== sig.asset) {
       await shot('wrong-asset');
-      const drifted = !page.url().startsWith(url);
-      throw new Error(`страница показывает ${seen}, а сигнал по ${sig.asset}`
-        + ` (адрес ${page.url()}) - ставку не делаю`
-        + (drifted ? `; биржа не пустила на ${url} - проверь URL актива в конфиге` : ''));
+      // Не тот актив - это ровно тот же промах, что и уехавший адрес, просто
+      // замеченный раньше. Значит и лечится так же: перезагрузкой, а потом
+      // выбором символа на самой странице.
+      if (attempt < 3) {
+        recover = attempt === 1 ? 'load' : 'ui';
+        log(`страница показывает ${seen}, а сигнал по ${sig.asset} - `
+          + (recover === 'ui' ? 'пробую выбрать актив на самой странице'
+                              : 'перезагружаю и играю ставку заново'));
+        continue;
+      }
+      const syms = await pageSymbols(true);
+      await dumpPage('wrong-asset');
+      log(`пропуск ${sig.asset} ${sig.direction}: биржа не пустила на ${sig.asset}`
+        + ` - на странице ${seen}. Символы, которые она сейчас показывает: `
+        + (syms.length ? syms.join(', ') : 'прочитать не удалось')
+        + `. Если ${sig.asset} среди них нет, инструмент сейчас не торгуется;`
+        + ' если есть - проверь URL актива в конфиге.');
+      return { status: 'skip-redirect', note: `страница показывает ${seen} вместо ${sig.asset}` };
     }
     // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
     // основании остановил бы все ставки, если биржа сменит заголовок.
@@ -1661,18 +1812,24 @@ async function placeBet(sig) {
     if (drift) {
       const moves = pageNav(page) - navAt;
       await shot('page-drifted');
-      if (attempt < 2) {
-        log(`страница уехала сама (${drift}; переходов после проверок: ${moves})`
-          + ' - возвращаю и играю ставку заново');
-        forceLoad = true;
+      if (attempt < 3) {
+        recover = attempt === 1 ? 'load' : 'ui';
+        log(`страница уехала сама (${drift}; переходов после проверок: ${moves}) - `
+          + (recover === 'ui' ? 'пробую выбрать актив на самой странице'
+                              : 'возвращаю и играю ставку заново'));
         continue;
       }
-      // Второй раз подряд - это не случайность. Чаще всего так биржа
-      // говорит, что инструмент сейчас не торгуется и она увела на
-      // соседний. Отказ, а НЕ ошибка: серия ошибок загоняет исполнитель
-      // в DRY-RUN, а тут виновата биржа, а не поломка.
-      log(`пропуск ${sig.asset} ${sig.direction}: биржа дважды увела со своего адреса (${drift})`
-        + ` - похоже, ${sig.asset} сейчас не торгуется`);
+      // Три захода подряд - это не случайность. Либо инструмент сейчас не
+      // торгуется и биржа уводит на соседний, либо в конфиге не тот адрес.
+      // Различить помогает список символов, которые биржа показывает.
+      // Отказ, а НЕ ошибка: серия ошибок загоняет исполнитель в DRY-RUN,
+      // а тут виновата биржа, а не поломка.
+      const syms = await pageSymbols(true);
+      log(`пропуск ${sig.asset} ${sig.direction}: биржа трижды увела со своего адреса (${drift}).`
+        + ' Символы, которые она сейчас показывает: '
+        + (syms.length ? syms.join(', ') : 'прочитать не удалось')
+        + `. Если ${sig.asset} среди них нет, инструмент сейчас не торгуется;`
+        + ' если есть - проверь URL актива в конфиге.');
       await dumpPage('page-drifted');
       return { status: 'skip-redirect', payoutPage: pv, note: drift };
     }
@@ -3443,6 +3600,11 @@ async function diagMode() {
   log('  полотно графика: ' + (canv.length
     ? JSON.stringify(canv) + ' - курсор по графику работает'
     : 'НЕ НАЙДЕНО - холостое действие «график» ограничится прокруткой'));
+  const syms = await pageSymbols(true);
+  log(`символы, доступные на бирже сейчас (${syms.length}): `
+    + (syms.length ? syms.slice(0, 30).join(', ') : 'прочитать не удалось')
+    + ` | нужный актив ${asset}: `
+    + (syms.some(x => x.startsWith(asset.toUpperCase())) ? 'ЕСТЬ' : 'НЕ ВИДНО'));
   const px = await pagePrice();
   log(`цена на странице: ${px == null ? 'НЕ ПРОЧИТАНА - проверка цены входа будет пропускаться'
     : px + ' (сверь с тем, что видно на графике)'}`);

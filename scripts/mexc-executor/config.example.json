@@ -41,7 +41,10 @@
       "urls": {
         "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
         "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
-        "SPCX": "https://www.mexc.com/futures/event-futures/SPCX_USDT"
+        "SPCX": "https://www.mexc.com/futures/event-futures/SPCXSTOCK_USDT"
+      },
+      "symbols": {
+        "SPCX": "SPCXSTOCK"
       },
       "timeUnitText": {
         "10": "10m",

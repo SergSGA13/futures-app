@@ -132,6 +132,12 @@ function exCfg(name) {
     priceSelector: e.priceSelector ?? CFG.priceSelector ?? '',
     // На сколько процентов сумма ставки гуляет вокруг настроенной.
     stakeJitterPct: e.stakeJitterPct ?? CFG.stakeJitterPct ?? 0,
+    // Как актив называется НА БИРЖЕ, если это не то же, что ключ в urls.
+    // У MEXC акции подписаны иначе: ключ SPCX, а символ SPCXSTOCK_USDT.
+    // Без этой пары проверка актива искала бы в заголовке «SPCX_USDT» и
+    // не находила ничего - то есть ставка отбивалась бы даже на верной
+    // странице.
+    symbols: { ...(CFG.symbols || {}), ...(e.symbols || {}) },
     // Пробуждение вне смены: сигнал приходит в тихие часы, а биржа
     // всё равно открывается и ставка играется по обычным правилам.
     wakeOnSignal: { ...(CFG.wakeOnSignal || {}), ...(e.wakeOnSignal || {}) },
@@ -903,11 +909,25 @@ async function pagePayout(direction) {
 // url тут не свидетель: он уже говорит BTC, когда на экране ещё ETH.
 // Заголовок биржа переписывает вместе с контрактом.
 // null - определить не удалось (нет символа или их несколько).
+// Пары «ключ актива - символ на бирже», длинные символы первыми: иначе
+// короткий совпал бы как начало длинного (SPCX внутри SPCXSTOCK).
+function assetSymbols(E) {
+  const ex = E || curEx();
+  return Object.keys(ex.urls || {})
+    .map(k => [k, (ex.symbols || {})[k] || k])
+    .sort((a, b) => b[1].length - a[1].length);
+}
+function symbolOf(asset, E) {
+  const ex = E || curEx();
+  return (ex.symbols || {})[asset] || asset;
+}
+const symbolRe = sym => new RegExp(sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  + '\\s*[_/-]?\\s*USDT', 'i');
+
 async function pageAsset() {
   const t = await page.title().catch(() => '');
-  const keys = Object.keys(curEx().urls || {}).sort((a, b) => b.length - a.length);
-  const hit = keys.filter(k => new RegExp(k + '\\s*[_/-]?\\s*USDT', 'i').test(t));
-  return hit.length === 1 ? hit[0] : null;
+  const hit = assetSymbols().filter(([, sym]) => symbolRe(sym).test(t));
+  return hit.length === 1 ? hit[0][0] : null;
 }
 
 // Актив, который показывает САМА ПАНЕЛЬ, а не заголовок вкладки.
@@ -919,25 +939,25 @@ async function pageAsset() {
 // ставку, когда заголовок ещё не обновился. Отказ по-прежнему выносит
 // проверка заголовка.
 async function pageAssetOnPage() {
-  const keys = Object.keys(curEx().urls || {}).sort((a, b) => b.length - a.length);
-  if (!keys.length) return null;
+  const pairs = assetSymbols();
+  if (!pairs.length) return null;
   try {
-    return await page.evaluate(ks => {
+    return await page.evaluate(ps => {
       const vis = el => !!(el.offsetWidth || el.offsetHeight);
       let best = null, bestSize = 0;
       for (const el of document.querySelectorAll('*')) {
         if (!vis(el) || el.children.length > 1) continue;
         const t = (el.innerText || '').trim();
         if (!t || t.length > 24) continue;
-        for (const k of ks) {
-          if (!new RegExp('^' + k + '\\s*[-_/]?\\s*USDT', 'i').test(t)) continue;
+        for (const [key, sym] of ps) {
+          if (!new RegExp('^' + sym + '\\s*[-_/]?\\s*USDT', 'i').test(t)) continue;
           const size = parseFloat(getComputedStyle(el).fontSize) || 0;
-          if (size > bestSize) { bestSize = size; best = k; }
+          if (size > bestSize) { bestSize = size; best = key; }
         }
       }
       // Мелкий текст - это лента, а не шапка: такому не верим.
       return bestSize >= 14 ? best : null;
-    }, keys);
+    }, pairs);
   } catch (e) { return null; }
 }
 
@@ -1032,7 +1052,8 @@ async function pageSymbols(openList) {
     if (openList && syms.length < 3) {
       const cur = await pageAssetOnPage();
       if (cur) {
-        const head = page.getByText(new RegExp('^' + cur + '\\s*[_/-]?\\s*USDT$', 'i')).first();
+        const head = page.getByText(new RegExp('^' + symbolOf(cur)
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[_/-]?\\s*USDT$', 'i')).first();
         if (await head.count() > 0 && await head.isVisible().catch(() => false)) {
           await head.click({ timeout: 3000 }).catch(() => {});
           await page.waitForTimeout(900);
@@ -1059,8 +1080,12 @@ async function pageSymbols(openList) {
 // актив: на одной бирже адрес актива может работать, на другой нет.
 const uiAsset = new Set();
 async function switchAssetOnPage(asset) {
-  const re = new RegExp('^' + asset + '\\s*[_/-]?\\s*USDT$', 'i');
-  const exact = new RegExp('^' + asset + '$', 'i');
+  // В списке символов написано то, как актив зовётся НА БИРЖЕ, а не наш
+  // ключ: искать «SPCX» там, где написано «SPCXSTOCK_USDT», бесполезно.
+  const sym = symbolOf(asset);
+  const esc = sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('^' + esc + '\\s*[_/-]?\\s*USDT$', 'i');
+  const exact = new RegExp('^' + esc + '$', 'i');
   const pick = async () => {
     for (const rx of [re, exact]) {
       const loc = page.getByText(rx);
@@ -1082,7 +1107,8 @@ async function switchAssetOnPage(asset) {
     // Не раскрыт: жмём на текущий символ в шапке, чтобы список появился.
     const cur = await pageAssetOnPage();
     if (cur) {
-      const head = page.getByText(new RegExp('^' + cur + '\\s*[_/-]?\\s*USDT$', 'i')).first();
+      const head = page.getByText(new RegExp('^' + symbolOf(cur)
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[_/-]?\\s*USDT$', 'i')).first();
       if (await head.count() > 0 && await head.isVisible().catch(() => false)) {
         await humanClick(head).catch(() => {});
         await page.waitForTimeout(randInt(700, 1300));
@@ -3329,6 +3355,15 @@ function migrateMode() {
     mexc: {
       // Источник перешёл на именные метки потока.
       signalTimings: [JSON.stringify(['MEXC _10m', 'MEXC _30m', 'MEXC_10m', 'MEXC_30m'])],
+      // У MEXC акции подписаны иначе: символ SPCX там называется
+      // SPCXSTOCK_USDT. Такого символа, как SPCX_USDT, биржа не знает и
+      // молча открывает свой по умолчанию - BTC. Отсюда полтора месяца
+      // «страница показывает BTC, а сигнал по SPCX».
+      urls: [JSON.stringify({
+        BTC: 'https://www.mexc.com/futures/event-futures/BTC_USDT',
+        ETH: 'https://www.mexc.com/futures/event-futures/ETH_USDT',
+        SPCX: 'https://www.mexc.com/futures/event-futures/SPCX_USDT',
+      })],
     },
     toobit: {
       // Искал процент ПОСЛЕ слова направления, а на Toobit подпись стоит

@@ -378,7 +378,8 @@ function log(line) {
 // lag_ms - сколько прошло от прихода сигнала до записи. Без него
 // «ставка открылась на 40 секунд позже» приходилось вылавливать из
 // текстового лога вручную, а по журналу этого не видно вовсе.
-const BETS_HEAD = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,lag_ms,note';
+const BETS_HEAD = 'time,exchange,asset,direction,timing,tag,stake,payout_page,mode,status,lag_ms,note';
+const BETS_HEAD_V3 = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,lag_ms,note';
 const BETS_HEAD_V2 = 'time,exchange,asset,direction,timing,stake,payout_page,mode,status,note';
 const BETS_HEAD_OLD = 'time,asset,direction,timing,stake,payout_page,mode,status,note';
 function logBet(rec) {
@@ -391,8 +392,10 @@ function logBet(rec) {
   // давало NaN прямо в столбце.
   const got = typeof rec.receivedAt === 'number' ? rec.receivedAt : Date.parse(rec.receivedAt);
   const lag = Number.isFinite(got) ? Math.max(0, Date.now() - got) : '';
+  // Метку чистим от запятых: она уедет в свой столбец, а не разорвёт строку.
+  const tag = String(rec.tag || '').replace(/[,\r\n]/g, ' ').trim();
   fs.appendFileSync(f, [new Date().toISOString(), rec.ex || defaultEx(), rec.asset, rec.direction,
-    rec.timing, rec.stake, rec.payoutPage ?? '', rec.mode, rec.status, lag,
+    rec.timing, tag, rec.stake, rec.payoutPage ?? '', rec.mode, rec.status, lag,
     JSON.stringify(rec.note || '')].join(',') + '\n');
 }
 
@@ -404,29 +407,38 @@ function logBet(rec) {
 // Журнал переезжал дважды: сначала в нём не было биржи, потом задержки.
 // Обе старые формы доводим до нынешней за один проход - иначе панель
 // читала бы заметку не из того столбца.
+// Журнал переезжал трижды: в нём не было биржи, потом задержки, потом
+// метки потока. Разбираем строку по ЕЁ ЖЕ шапке и собираем заново по
+// нынешней - тогда любой прошлый формат доходит за один проход, и
+// следующий переезд не потребует считать столбцы руками.
+const BETS_HEADS_OLD = [BETS_HEAD_OLD, BETS_HEAD_V2, BETS_HEAD_V3];
 function migrateBetsCsv() {
   const f = path.join(LOGS, 'bets.csv');
   if (!fs.existsSync(f)) return;
   const text = fs.readFileSync(f, 'utf8');
   const lines = text.replace(/\n$/, '').split('\n');
   const from = lines[0];
-  if (from !== BETS_HEAD_OLD && from !== BETS_HEAD_V2) return;
+  if (from === BETS_HEAD || !BETS_HEADS_OLD.includes(from)) return;
+  const cols = from.split(',');
+  const noteAt = cols.length - 1;          // заметка всегда последняя
+  const want = BETS_HEAD.split(',');
   const def = defaultEx();
   const out = [BETS_HEAD];
-  // Сколько столбцов до заметки было в исходной форме.
-  const keep = from === BETS_HEAD_OLD ? 8 : 9;
   for (const l of lines.slice(1)) {
     if (!l.trim()) continue;
     const c = l.split(',');
-    // Заметка - всё, что после последней «своей» запятой: в самой заметке
-    // запятые тоже бывают.
-    const note = c.length > keep + 1 ? c.slice(keep).join(',') : (c[keep] ?? '');
-    const head = from === BETS_HEAD_OLD ? [c[0], def, ...c.slice(1, 8)] : c.slice(0, 9);
-    out.push([...head, '', note].join(','));   // задержки у старых строк нет
+    const rec = {};
+    cols.forEach((h, i) => { rec[h] = c[i]; });
+    // В самой заметке запятые бывают: всё, что после её столбца, - тоже она.
+    rec.note = c.length > cols.length ? c.slice(noteAt).join(',') : (c[noteAt] ?? '');
+    if (!rec.exchange) rec.exchange = def;
+    out.push(want.map(h => rec[h] ?? '').join(','));
   }
-  fs.copyFileSync(f, f.replace(/\.csv$/, '.pre-lag.csv'));
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const bak = f.replace(/\.csv$/, `.pre-${stamp}.csv`);
+  fs.copyFileSync(f, bak);
   fs.writeFileSync(f, out.join('\n') + '\n');
-  log(`журнал ставок переведён на новый формат: ${out.length - 1} строк, копия старого рядом`);
+  log(`журнал ставок переведён на новый формат: ${out.length - 1} строк, копия рядом (${path.basename(bak)})`);
 }
 
 async function tgAlert(text) {
@@ -972,13 +984,19 @@ function parsePrice(t) {
   if (!t) return null;
   // 1 234,56 / 1,234.56 / 4321.5 - разделитель тысяч выкидываем, а
   // десятичную запятую превращаем в точку.
-  const m = String(t).match(/(\d[\d,.   ]{0,15}\d|\d)/);
+  const m = String(t).match(/(\d[\d,.   ]{0,15}\d|\d)\s*([KMBkmbКМкм])?/);
   if (!m) return null;
   let x = m[1].replace(/[   ]/g, '');
   if (/,\d{1,8}$/.test(x) && !/\.\d/.test(x)) x = x.replace(/\./g, '').replace(',', '.');
   else x = x.replace(/,/g, '');
-  const v = parseFloat(x);
-  return Number.isFinite(v) && v > 0 ? v : null;
+  let v = parseFloat(x);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  // Хвост K/M/B: биржи пишут цену в заголовке вкладки сокращённо, и
+  // «80.141K» без множителя читалось как 80.141 - в тысячу раз мимо.
+  // Отсюда в журнале «цена лучше на 99921%».
+  const mult = { k: 1e3, к: 1e3, m: 1e6, м: 1e6, b: 1e9 }[(m[2] || '').toLowerCase()];
+  if (mult) v *= mult;
+  return v;
 }
 async function pagePrice() {
   const E = curEx();
@@ -1243,20 +1261,38 @@ async function chipScan(want, only) {
         if (odd.length === 1) active = odd[0][0];
       }
 
-      // Координаты нужного чипа: поднимаемся, только пока цель мала.
-      let box = null;
-      if (want) {
-        const hitItem = g.inside.find(x => x.t === want);
-        if (hitItem) {
-          let hit = hitItem.el;
-          for (let i = 0; i < 3 && hit.parentElement && hit !== g.box; i++) {
-            const r = hit.getBoundingClientRect();
-            if (r.width >= 24 && r.height >= 16) break;
-            hit = hit.parentElement;
-          }
-          hit.scrollIntoView({ block: 'center', inline: 'center' });
+      // Координаты чипов: поднимаемся, только пока цель мала. Считаем
+      // сразу ДЛЯ ВСЕХ подписей группы, а не только для нужной: иначе,
+      // чтобы нажать соседнюю экспирацию, пришлось бы искать группу
+      // заново - и найтись могла бы ЧУЖАЯ. Ровно так проверка и срывалась
+      // на Toobit: «30m» есть и у интервалов графика, и у экспирации,
+      // клик уходил в график, выплаты не менялись.
+      const boxFor = (label) => {
+        const hitItem = g.inside.find(x => x.t === label);
+        if (!hitItem) return null;
+        let hit = hitItem.el;
+        for (let i = 0; i < 3 && hit.parentElement && hit !== g.box; i++) {
           const r = hit.getBoundingClientRect();
+          if (r.width >= 24 && r.height >= 16) break;
+          hit = hit.parentElement;
+        }
+        const r = hit.getBoundingClientRect();
+        return r.width >= 4 && r.height >= 4
+          ? { x: r.x, y: r.y, w: r.width, h: r.height, el: hit } : null;
+      };
+      let box = null;
+      const boxes = {};
+      for (const label of Object.keys(styles)) {
+        const b = boxFor(label);
+        if (b) { delete b.el; boxes[label] = b; }
+      }
+      if (want) {
+        const b = boxFor(want);
+        if (b) {
+          b.el.scrollIntoView({ block: 'center', inline: 'center' });
+          const r = b.el.getBoundingClientRect();
           if (r.width >= 4 && r.height >= 4) box = { x: r.x, y: r.y, w: r.width, h: r.height };
+          delete b.el;
         }
       }
       // Текст всей группы - чтобы снаружи можно было проверить, не лежат
@@ -1265,7 +1301,7 @@ async function chipScan(want, only) {
       // интервалов графика нашлись бы 5m и 1h, а 10m и 30m - подписи
       // экспирации - остались бы незамеченными.
       const text = (g.box.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 300);
-      return { active, box, labels: Object.keys(styles), anchored: g.anchored, text };
+      return { active, box, boxes, labels: Object.keys(styles), anchored: g.anchored, text };
     }, { labels, anchor, want: want || null });
   } catch (e) { return null; }
 }
@@ -1380,10 +1416,8 @@ async function activeChipName() {
 // экспирацию: приложение слушает не click, а нажатие мыши. Ставка при
 // этом уходила на 5 минут - и с выплатой от чужой экспирации.
 // Здесь события те же, что от руки, и проверки перекрытия не мешают.
-async function clickChipByMouse(text, only) {
-  const r = await chipScan(text, only);
-  if (!r || !r.box) return false;
-  const box = r.box;
+async function clickBox(box) {
+  if (!box) return false;
   const x = box.x + box.w * (0.3 + Math.random() * 0.4);
   const y = box.y + box.h * (0.3 + Math.random() * 0.4);
   await mouseGlide(page, x, y);
@@ -1393,13 +1427,28 @@ async function clickChipByMouse(text, only) {
   await page.mouse.up();
   return true;
 }
+async function clickChipByMouse(text, only) {
+  const r = await chipScan(text, only);
+  return r && r.box ? clickBox(r.box) : false;
+}
 
 // Отпечаток выплат страницы: все проценты по порядку. Меняется вместе с
 // экспирацией - у каждой экспирации своя ставка возврата.
 async function payoutFingerprint() {
   try {
-    const body = await page.evaluate(() => document.body.innerText);
-    const all = [...String(body).matchAll(/([0-9]{1,3}(?:[.,][0-9]+)?)\s*%/g)]
+    const body = String(await page.evaluate(() => document.body.innerText));
+    // Если биржа описала, как выглядит строка выплаты, берём ТОЛЬКО её.
+    // Общий сбор процентов притаскивал в отпечаток кучу постороннего:
+    // «42,58,72,81,72,72,0» - и менялись там всего две цифры из семи, а
+    // остальные пять могли сдвинуться от чего угодно на странице и
+    // испортить сравнение в обе стороны.
+    const L = curEx().payoutList;
+    if (L && L.re) {
+      const own = [...body.matchAll(new RegExp(L.re, 'gi'))]
+        .map(m => m[1]).filter(v => +v >= 10 && +v <= 500);
+      if (own.length) return own.join(',');
+    }
+    const all = [...body.matchAll(/([0-9]{1,3}(?:[.,][0-9]+)?)\s*%/g)]
       .map(m => m[1]).slice(0, 8);
     return all.length ? all.join(',') : null;
   } catch (e) { return null; }
@@ -1427,25 +1476,34 @@ async function waitPayoutChange(from, ms) {
 }
 
 async function proveByPayoutSwitch(tfText) {
-  const all = Object.values(EX.timeUnitText).filter(t => t !== tfText);
-  if (!all.length) return false;
   const wait = CFG.payoutSwitchMs ?? 3500;
-  // Перебираем чужие экспирации: у двух соседних выплаты могут совпасть
-  // (77% и там, и там), и тогда «ничего не изменилось» значит не то, что
-  // страница мертва, а то, что мы выбрали неудачного соседа. Раньше
-  // проверка на этом сдавалась и ставка пропускалась.
-  const others = all.slice().sort(() => Math.random() - 0.5).slice(0, 2);
+  // Группу ищем ОДИН раз и по нашей подписи, а соседей берём из неё же.
+  // Раньше каждый клик искал группу заново по своей подписи, и «30m»
+  // находился среди интервалов ГРАФИКА - там он тоже есть. Клик уходил в
+  // график, выплаты не менялись, проверка честно сдавалась: 119 срывов из
+  // 144 пришлись именно на «30m», а на «10m», которого у графика нет, -
+  // всего 25.
+  const grp = await chipScan(tfText).catch(() => null);
+  if (!grp || !grp.boxes || !grp.boxes[tfText]) return false;
+  const others = Object.keys(grp.boxes).filter(t => t !== tfText);
+  if (!others.length) {
+    log(`проверка чипов: кроме ${tfText} в группе экспираций больше ничего нет`);
+    return false;
+  }
   let sig0 = await payoutFingerprint();
   if (!sig0) return false;
-  for (const other of others) {
+  // Перебираем ВСЕХ соседей: у двух соседних экспираций выплаты могут
+  // совпасть, и тогда «ничего не изменилось» значит не то, что страница
+  // мертва, а то, что сосед оказался неудачным.
+  for (const other of others.sort(() => Math.random() - 0.5)) {
     forgetTf();
-    if (!(await clickChipByMouse(other).catch(() => false))) continue;
+    if (!(await clickBox(grp.boxes[other]).catch(() => false))) continue;
     const sig1 = await waitPayoutChange(sig0, wait);
     if (!sig1) {
-      log(`проверка чипов: нажал ${other}, выплаты не изменились за ${wait}мс`);
+      log(`проверка чипов: нажал ${other} в ряду экспираций, выплаты не изменились за ${wait}мс`);
       continue;
     }
-    if (!(await clickChipByMouse(tfText).catch(() => false))) return false;
+    if (!(await clickBox(grp.boxes[tfText]).catch(() => false))) return false;
     const sig2 = await waitPayoutChange(sig1, wait);
     if (!sig2) {
       log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
@@ -1457,7 +1515,7 @@ async function proveByPayoutSwitch(tfText) {
   }
   // Ни один сосед не отозвался - возвращаем свой чип и уходим ни с чем.
   log('проверка чипов: страница не отозвалась ни на одну чужую экспирацию');
-  await clickChipByMouse(tfText).catch(() => {});
+  await clickBox(grp.boxes[tfText]).catch(() => {});
   await page.waitForTimeout(randInt(600, 1000));
   return false;
 }
@@ -1877,6 +1935,15 @@ async function placeBet(sig) {
           return { status: 'skip-price-unknown' };
         }
         log('цену перед нажатием прочитать не удалось - иду дальше без проверки');
+      } else if (entryPrice / refPrice > 1.2 || refPrice / entryPrice > 1.2) {
+        // Две цены одной страницы, снятые с разницей в секунды, не могут
+        // отличаться в разы. Значит одно из чтений - мусор: заголовок ещё
+        // не прорисовался или поймалось чужое число. Сравнивать их
+        // нельзя - отсюда в журнале взялось «цена лучше на 99921%».
+        // Ставку из-за этого не отменяем: виновата проверка, а не сигнал.
+        log(`цена входа ${entryPrice}, а точка отсчёта ${refPrice} (${refFrom}) - `
+          + 'это разные величины, проверку цены пропускаю');
+        entryPrice = null;
       } else {
         // Насколько цена ушла ПРОТИВ нас, в процентах.
         advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
@@ -2110,7 +2177,12 @@ function normalizeSignal(sig) {
   sig.direction = String(sig.direction || '').toUpperCase();
   if (sig.direction === 'BUY') sig.direction = 'UP';
   if (sig.direction === 'SELL') sig.direction = 'DOWN';
-  sig.timing = /30/.test(String(sig.timing ?? '')) ? 30 : 10;
+  // Метку потока запоминаем ДО того, как timing превратится в число:
+  // в журнале «10» и «30» не отвечают на вопрос, из какой ветки пришёл
+  // сигнал, а разбираться приходится именно по ней.
+  const rawTag = String(sig.timing ?? '').trim();
+  if (rawTag) sig.tag = rawTag;
+  sig.timing = /30/.test(rawTag) ? 30 : 10;
   // Цена из сигнала. TradingView шлёт её как {{close}}; поле называют
   // по-разному, поэтому принимаем любое из привычных имён. Нет цены -
   // не беда: за точку отсчёта возьмём цену на момент начала ставки.
@@ -3635,6 +3707,30 @@ async function diagMode() {
   log('  полотно графика: ' + (canv.length
     ? JSON.stringify(canv) + ' - курсор по графику работает'
     : 'НЕ НАЙДЕНО - холостое действие «график» ограничится прокруткой'));
+  // Своя память приложения: если биржа хранит выбранную экспирацию в
+  // localStorage, читать её оттуда надёжнее и мгновеннее, чем доказывать
+  // сменой выплат. Показываем ключи целиком - по ним и настраивается
+  // чтение, если нужный найдётся.
+  try {
+    const store = await page.evaluate(() => {
+      const out = [];
+      for (const [name, st] of [['local', localStorage], ['session', sessionStorage]]) {
+        try {
+          for (let i = 0; i < st.length && out.length < 60; i++) {
+            const k = st.key(i);
+            const v = String(st.getItem(k) ?? '');
+            out.push(`${name}:${k}=${v.length > 90 ? v.slice(0, 90) + '…' : v}`);
+          }
+        } catch (e) { /* хранилище закрыто */ }
+      }
+      return out;
+    });
+    const hot = store.filter(x => /(time|increment|period|duration|expir|minute|interval|10|30)/i.test(x));
+    log(`память приложения (${store.length} ключей), похожее на экспирацию (${hot.length}):`);
+    for (const x of hot.slice(0, 15)) log('    ' + x);
+    if (!hot.length && store.length) log('    ничего похожего; все ключи: ' + JSON.stringify(store.slice(0, 20)));
+  } catch (e) { log('память приложения прочитать не удалось: ' + e.message); }
+
   const syms = await pageSymbols(true);
   log(`символы, доступные на бирже сейчас (${syms.length}): `
     + (syms.length ? syms.slice(0, 30).join(', ') : 'прочитать не удалось')

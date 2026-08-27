@@ -71,7 +71,7 @@
      открывают и с телефона через туннель. Прокрутка внутри таблицы -
      чтобы ехала она, а не вся страница. */
   .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; max-height:420px; overflow-y:auto; }
-  .tablewrap table { min-width:560px; }
+  .tablewrap table { min-width:620px; }
   /* Шапка таблицы не уезжает при прокрутке журнала */
   .tablewrap thead th { position:sticky; top:0; background:var(--card); z-index:1; }
 
@@ -130,6 +130,9 @@
   .stat.ok b { color:var(--green); }
   .stat.bad b { color:var(--red); }
   .stat.lag b { color:var(--cyan); }
+  /* Метка потока - данные, а не текст: моноширинный и чуть мельче, чтобы
+     колонка не распирала журнал. */
+  #bets td.tag { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -499,11 +502,12 @@
   <table>
   <thead><tr id="logHead">
         <th data-c="time">Время</th><th data-c="exchange">Биржа</th>
+        <th data-c="tag" title="метка потока из сигнала">Поток</th>
         <th data-c="asset">Актив</th><th data-c="direction">Напр.</th>
         <th data-c="stake">Сумма</th><th data-c="payout_page">Payout</th><th data-c="mode">Реж.</th>
         <th data-c="status">Статус</th><th>Заметка</th>
       </tr></thead>
-  <tbody id="bets"><tr><td colspan="9" style="color:var(--muted)">пусто</td></tr></tbody>
+  <tbody id="bets"><tr><td colspan="10" style="color:var(--muted)">пусто</td></tr></tbody>
   </table>
   </div>
   </div>
@@ -1218,7 +1222,7 @@ async function refresh() {
   lp.title = 'Ставки, отбитые проверками или ошибками страницы за сегодня. '
     + 'Нажми «Ошибки» и раскрой строку, чтобы увидеть причину целиком.';
   if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="9" style="color:var(--muted)">${
+    tb.innerHTML = `<tr><td colspan="10" style="color:var(--muted)">${
       all.length ? 'под фильтр ничего не попало' : 'пока ставок не было'}</td></tr>`;
   } else {
     // Клик по строке раскрывает заметку целиком: в колонке она обрезана,
@@ -1233,6 +1237,7 @@ async function refresh() {
       const short = note.length > 110 ? note.slice(0, 110) + '…' : note;
       const main = `<tr data-k="${esc(k)}"${open ? ' class="open"' : ''}>
       <td>${fmtTime(b.time)}</td><td>${esc(b.exchange || '')}</td>
+      <td class="tag">${esc(b.tag || '') || '—'}</td>
       <td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
       <td>${esc(b.stake)}</td><td>${esc(b.payout_page) || '—'}</td><td>${esc(b.mode)}</td>
       <td class="${statusClass(b.status)}">${esc(b.status)}</td>
@@ -1240,7 +1245,7 @@ async function refresh() {
     </tr>`;
       if (!open) return main;
       const tf = b.timing ? ` · ${esc(b.timing)} мин` : '';
-      return main + `<tr class="detail"><td colspan="9">${
+      return main + `<tr class="detail"><td colspan="10">${
         esc(note) || 'заметки нет'}<div style="margin-top:4px;color:var(--muted);font-size:10.5px">${
         fmtTime(b.time)}${tf}</div></td></tr>`;
     }).join('');

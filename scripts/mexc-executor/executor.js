@@ -3249,6 +3249,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Подложка панели. Файл кладут рядом с panel.html под именем
+  // panel-bg с любым из привычных расширений; нет файла - панель рисует
+  // фон сама, и ничего не ломается. Секрет тут не спрашиваем: это
+  // картинка, а не управление, и требовать его значило бы усложнять
+  // адрес в стилях без единой выгоды. ──
+  if (req.method === 'GET' && /^\/panel-bg(\?|$)/.test(req.url)) {
+    const kinds = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                    '.webp': 'image/webp', '.avif': 'image/avif' };
+    const hit = Object.keys(kinds).map(e => path.join(ROOT, 'panel-bg' + e)).find(fs.existsSync);
+    if (!hit) { res.writeHead(404); res.end('нет файла panel-bg'); return; }
+    res.writeHead(200, {
+      'Content-Type': kinds[path.extname(hit).toLowerCase()],
+      // Подложку меняют редко, а грузится она на каждом обновлении
+      // панели - раз в несколько секунд.
+      'Cache-Control': 'public, max-age=86400',
+    });
+    res.end(fs.readFileSync(hit));
+    return;
+  }
+
   const am = req.url.match(/^\/api\/([^/?]+)\/([a-z-]+)/);
   if (am) {
     if (am[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }

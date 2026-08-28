@@ -10,10 +10,25 @@
        Зелёный и красный остаются семантикой (открылось / ошибка) -
        их трогать нельзя, по ним читают журнал. */
     --cyan:#22E8FF; --violet:#9D50FF;
-    --bg:#05060E; --card:#0B0E1E; --card2:#0E1226;
+    --bg:#05060E; --card:rgba(11,14,30,.86); --card2:#0E1226;
+    /* Глухой тон карточки - для тех мест, где сквозь него ничего
+       просвечивать не должно: липкая шапка журнала, выпадающие списки.
+       Сама карточка полупрозрачна, иначе подложки под ней не видно. */
+    --card-solid:#0B0E1E;
     --line:rgba(34,232,255,.18);
     --text:#E8EAFF; --muted:#7B84B0;
     --green:#4EFFA0; --red:#FF5272; --yellow:#FFD166; --blue:#66A3FF;
+    /* Краски журнала. Проверены валидатором палитр на тёмной подложке
+       #0B0E1E: все четыре вместе дают ΔE 9.8 при дальтонизме (порог 8) и
+       проходят по контрасту. Синий и фиолетовый взяты те же, что уже
+       живут в панели: затемнённые варианты, формально более «правильные»
+       по светлоте, различались ХУЖЕ - ΔE падал до 5.7.
+       Зелёный и красный тут не участвуют: они заняты статусом. */
+    --a-btc:#E8862F;      /* BTC - амбер */
+    --a-eth:#1FB183;      /* ETH - бирюза */
+    --a-rest:#98A4C8;     /* прочие активы - холодное серебро, без краски */
+    --dir-up:#66A3FF;     /* UP - синий */
+    --dir-down:#9D50FF;   /* DOWN - фиолетовый */
     --mono: ui-monospace,'SF Mono','Cascadia Mono','Roboto Mono',Menlo,Consolas,monospace;
     --glow: 0 0 8px rgba(34,232,255,.55), 0 0 22px rgba(34,232,255,.22);
   }
@@ -27,10 +42,26 @@
      был бы выше них по стеку и всё закрыл. */
   html::before, html::after { content:''; position:fixed; inset:0; pointer-events:none; z-index:0; }
   html::before {
-    background:
+    /* Своя подложка - первым слоем. Файл panel-bg.(jpg|png|webp) кладут
+       рядом с panel.html; нет файла - слой просто не рисуется, и остаются
+       свечения ниже, то есть панель выглядит как раньше. Затемнение и
+       обесцвечивание обязательны: под текстом лежит фотография, и без
+       них журнал читался бы поверх её светлых пятен. */
+    background-image:
       radial-gradient(ellipse 55% 40% at 12% 0%, rgba(34,232,255,.13), transparent 60%),
       radial-gradient(ellipse 50% 40% at 92% 8%, rgba(157,80,255,.11), transparent 62%),
-      radial-gradient(ellipse 70% 45% at 50% 105%, rgba(157,80,255,.10), transparent 65%);
+      radial-gradient(ellipse 70% 45% at 50% 105%, rgba(157,80,255,.10), transparent 65%),
+      linear-gradient(180deg,
+        rgba(5,6,14,.34) 0,
+        rgba(5,6,14,.62) 90px,
+        rgba(5,6,14,.80) 260px,
+        rgba(5,6,14,.86) 100%),
+      url('/panel-bg');
+    background-size: auto, auto, auto, auto, cover;
+    background-position: center, center, center, center, center;
+    background-repeat: no-repeat;
+    /* Не background-attachment:fixed - на мобильных он либо дёргается,
+       либо игнорируется; сам слой и так прибит position:fixed. */
   }
   html::after {
     background-image:
@@ -38,8 +69,9 @@
       linear-gradient(90deg, rgba(34,232,255,.05) 1px, transparent 1px),
       repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
     background-size:44px 44px, 44px 44px, 100% 3px;
-    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 35%, #000 25%, transparent 100%);
-            mask-image:radial-gradient(ellipse 80% 70% at 50% 35%, #000 25%, transparent 100%);
+    opacity:.55;   /* поверх фотографии сетка в полную силу её замыливала */
+    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 55%, #000 25%, transparent 100%);
+            mask-image:radial-gradient(ellipse 80% 70% at 50% 55%, #000 25%, transparent 100%);
     animation:gridDrift 24s linear infinite;
   }
   @keyframes gridDrift { to { background-position:0 44px, 44px 0, 0 0; } }
@@ -73,7 +105,7 @@
   .tablewrap { overflow-x:auto; -webkit-overflow-scrolling:touch; max-height:420px; overflow-y:auto; }
   .tablewrap table { min-width:620px; }
   /* Шапка таблицы не уезжает при прокрутке журнала */
-  .tablewrap thead th { position:sticky; top:0; background:var(--card); z-index:1; }
+  .tablewrap thead th { position:sticky; top:0; background:var(--card-solid); z-index:1; }
 
   /* Заголовок сворачиваемой секции. Настройки правят раз в месяц, а
      место они занимали столько же, сколько мониторинг. */
@@ -133,6 +165,16 @@
   /* Метка потока - данные, а не текст: моноширинный и чуть мельче, чтобы
      колонка не распирала журнал. */
   #bets td.tag { font-family:var(--mono); font-size:10.5px; color:var(--muted); white-space:nowrap; }
+  /* Актив и направление - краской. Название и слово UP/DOWN остаются на
+     месте: цвет тут второй признак, а не единственный, иначе строку было
+     бы не прочесть ни в чёрно-белой печати, ни при дальтонизме. */
+  #bets td.asset { font-weight:600; }
+  #bets td.asset.btc  { color:var(--a-btc); }
+  #bets td.asset.eth  { color:var(--a-eth); }
+  #bets td.asset.rest { color:var(--a-rest); }
+  #bets td.dir { font-weight:600; letter-spacing:.4px; }
+  #bets td.dir.up   { color:var(--dir-up); }
+  #bets td.dir.down { color:var(--dir-down); }
   #logFilter button { padding:5px 11px; font-size:10.5px; }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
@@ -147,6 +189,7 @@
   .card {
     position:relative;
     background:linear-gradient(180deg, rgba(34,232,255,.05), transparent 42%), var(--card);
+    -webkit-backdrop-filter:blur(9px); backdrop-filter:blur(9px);
     border:1px solid var(--line); border-radius:12px; padding:12px 13px;
     box-shadow:
       inset 0 1px 0 rgba(34,232,255,.10),
@@ -349,7 +392,14 @@
   input[type=checkbox] { accent-color:var(--cyan); width:15px; height:15px; cursor:pointer; }
   /* Пояснения читают глазами, а не сканируют: строка во всю ширину
      панели уводит взгляд, поэтому ограничиваем длину. */
-  .note { color:var(--muted); font-size:10.5px; margin-top:7px; line-height:1.45; max-width:78ch; }
+  /* Подсказка занимает всю ширину своего блока. Потолок в 78ch сжимал её
+     вдвое уже блока в широких карточках - «Почему не сыграло», «Часы
+     работы», - и под текстом зияла пустота. Колонки тут пробовались и не
+     подошли: короткая подсказка заполняла две из четырёх, а правая
+     половина оставалась голой - то же самое, только хуже. */
+  .note {
+    color:var(--muted); font-size:11px; margin-top:7px; line-height:1.55;
+  }
   .hint { color:var(--muted); font-size:11px; }
 
   /* недельная сетка часов */
@@ -701,6 +751,15 @@ function fmtAgo(min) {
   const h = Math.floor(min / 60);
   return h + ' ч ' + (min % 60) + ' мин';
 }
+
+// BTC и ETH - своя краска у каждого, остальные активы одной нейтралью.
+// Цветов в панели и без того много: зелёный и красный держит статус,
+// синий и фиолетовый - направление. Пятая и шестая краска в тесной
+// таблице читались бы как рябь, а не как признак.
+const assetClass = (a) => {
+  const x = String(a || '').toUpperCase();
+  return x === 'BTC' ? 'btc' : x === 'ETH' ? 'eth' : 'rest';
+};
 
 const statusClass = (s) =>
   s === 'placed' ? 's-placed' :
@@ -1238,7 +1297,8 @@ async function refresh() {
       const main = `<tr data-k="${esc(k)}"${open ? ' class="open"' : ''}>
       <td>${fmtTime(b.time)}</td><td>${esc(b.exchange || '')}</td>
       <td class="tag">${esc(b.tag || '') || '—'}</td>
-      <td>${esc(b.asset)}</td><td>${esc(b.direction)}</td>
+      <td class="asset ${assetClass(b.asset)}">${esc(b.asset)}</td>
+      <td class="dir ${String(b.direction || '').toLowerCase() === 'up' ? 'up' : 'down'}">${esc(b.direction)}</td>
       <td>${esc(b.stake)}</td><td>${esc(b.payout_page) || '—'}</td><td>${esc(b.mode)}</td>
       <td class="${statusClass(b.status)}">${esc(b.status)}</td>
       <td style="color:var(--muted)">${esc(short)}</td>

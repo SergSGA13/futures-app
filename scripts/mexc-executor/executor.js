@@ -2371,7 +2371,11 @@ function enqueueSignal(sig) {
     g.count++;
     log(`пачка ${k}: сигнал ${g.count} присоединён к текущей`);
     logBet({ ...sig, stake: stakeFor(sig.asset, sig.ex), mode: state.dryRun ? 'DRY' : 'LIVE',
-             status: 'merged', note: `в пачку с ${new Date(g.sig.receivedAt).toISOString().slice(11, 19)}` });
+             // Время МЕСТНОЕ, как и весь остальной журнал. В UTC запись
+             // «в пачку с 17:55:04» стояла рядом со строкой 19:55:07, и
+             // выглядело это так, будто сигнал приклеили к двухчасовой
+             // давности пачке.
+             status: 'merged', note: `в пачку с ${new Date(g.sig.receivedAt).toLocaleTimeString('ru-RU', { hour12: false })}` });
     return 'merged';
   }
   const ng = { sig, count: 1 };

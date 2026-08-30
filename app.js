@@ -1206,14 +1206,19 @@ function mexcParseSignal(r) {
   const dir = String(r[2] || '').trim().toUpperCase();
   // Время лежит во второй половине той же ячейки A ("dd.mm.yyyy HH:mm:ss").
   // Раньше оно отбрасывалось, но для разбивок по часам/минутам на странице
-  // ветки MEXC оно нужно - разбираем так же, как devParseSignal.
-  const tp = String(timePart || '').match(/^(\d{1,2}):(\d{1,2})/);
+  // ветки MEXC оно нужно - разбираем так же, как devParseSignal. Секунды
+  // отдельно нужны для симуляции лимита слотов (см. mexcApplySlotLimit_) -
+  // сигналы по разным парам иногда приходят в одну минуту, и без секунд
+  // порядок их обработки было бы не восстановить.
+  const tp = String(timePart || '').match(/^(\d{1,2}):(\d{1,2}):(\d{1,2})/);
   const hour = tp ? parseInt(tp[1], 10) : NaN;
   const minute = tp ? parseInt(tp[2], 10) : NaN;
+  const second = tp ? parseInt(tp[3], 10) : 0;
   return {
     res, dk, dir: dir === 'UP' ? 'UP' : 'DOWN', pair: sigPairBase(r[1]),
     hour: (hour >= 0 && hour <= 23) ? hour : null,
     minute: (minute >= 0 && minute <= 59) ? minute : null,
+    second: (second >= 0 && second <= 59) ? second : 0,
   };
 }
 
@@ -4575,7 +4580,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
-const MEXC_STATS = { days: 30, src: 'ALL', charts: {} };
+const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, charts: {} };
 
 // Источники ветки: 10-минутные сигналы и 30-минутные лежат в разных листах.
 // Экспирация у них разная, поэтому по умолчанию показываем их вместе, но
@@ -4585,15 +4590,16 @@ const MEXC_SOURCES = {
   '30m': { sheet: 'MEXC30signal', fetch: fetchMexc30Signals },
 };
 
-// Все решённые сигналы MEXC за последние N дней (пары НЕ фильтруем: на
-// странице ветки нужен её реальный состав, а не только ETH/BTC).
-// src: '10m' | '30m' | 'ALL'. Каждый сигнал помечается своим источником,
-// чтобы итог мог показать вклад каждого листа.
-async function mexcStatsSignals(days, src) {
+// Все решённые сигналы MEXC за последние N дней, ОБА листа сразу (пары не
+// фильтруем: на странице ветки нужен её реальный состав, а не только
+// ETH/BTC). Каждый сигнал помечается своим источником (10м/30м) - и для
+// отображения вклада каждого листа, и потому что лимит слотов ниже должен
+// считаться по объединённому потоку: 10- и 30-минутные ставки делят один
+// и тот же пул из 5 слотов биржи MEXC, так что фильтрация по одному листу
+// должна происходить ПОСЛЕ симуляции лимита, а не до неё.
+async function mexcStatsSignals(days) {
   const cutoff = cutoffDk(days);
-  const keys = (src === 'ALL' || !src) ? Object.keys(MEXC_SOURCES) : [src];
-
-  const parts = await Promise.all(keys.map(async k => {
+  const parts = await Promise.all(Object.keys(MEXC_SOURCES).map(async k => {
     const rows = await MEXC_SOURCES[k].fetch();
     if (!rows || rows.length < 2) return [];
     return rows.slice(1).map(r => {
@@ -4604,6 +4610,45 @@ async function mexcStatsSignals(days, src) {
   }));
 
   return parts.flat();
+}
+
+// ===== ЛИМИТ СЛОТОВ БИРЖИ (не больше 5 ставок одновременно) =====
+// Отражает реальное ограничение исполнителя (scripts/mexc-executor/
+// executor.js: openSlots()/slotUntil()) - биржа MEXC держит не больше 5
+// открытых ставок разом, слот занят на время экспирации плюс минутный
+// запас (тот же запас, что и в исполнителе - расчёт на бирже происходит
+// не мгновенно). 10- и 30-минутные ставки конкурируют за один и тот же
+// пул из 5 слотов, поэтому вход в симуляцию - всегда полный список сигналов
+// обеих экспираций, а не отфильтрованный по одной из них.
+// Приближение: окно считается от начала выбранного периода (сигнал из
+// прошлого дня, ещё занимающий слот на границе периода, не учитывается) -
+// для статистики за 7/30/90 дней это не имеет значения.
+const MEXC_SLOT_MARGIN_MIN = 1;
+const MEXC_SLOTS_MAX = 5;
+
+function mexcSignalTs_(s) {
+  const [y, m, d] = s.dk.split('-').map(Number);
+  return new Date(y, m - 1, d, s.hour || 0, s.minute || 0, s.second || 0).getTime();
+}
+
+// Возвращает только сигналы, которые реально получили бы слот. Обрабатываем
+// в хронологическом порядке; сигнал, пришедший при уже занятых пяти слотах,
+// в реальности не исполнился бы - в статистику он не входит.
+function mexcApplySlotLimit_(sigs) {
+  const sorted = sigs.slice().sort((a, b) => mexcSignalTs_(a) - mexcSignalTs_(b));
+  const openUntil = [];
+  const kept = [];
+  for (const s of sorted) {
+    const ts = mexcSignalTs_(s);
+    for (let i = openUntil.length - 1; i >= 0; i--) {
+      if (openUntil[i] <= ts) openUntil.splice(i, 1);
+    }
+    if (openUntil.length >= MEXC_SLOTS_MAX) continue;
+    const durMin = s.src === '30m' ? 30 : 10;
+    openUntil.push(ts + (durMin + MEXC_SLOT_MARGIN_MIN) * 60000);
+    kept.push(s);
+  }
+  return kept;
 }
 
 // Пары в порядке убывания объёма — состав ветки заранее не известен и может
@@ -4664,7 +4709,7 @@ function mexcRenderPnlChart_(sigs) {
   return true;
 }
 
-function mexcSummaryHtml_(sigs, src) {
+function mexcSummaryHtml_(sigs, src, slotExcluded) {
   let w = 0, l = 0, pnl = 0;
   for (const s of sigs) {
     if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
@@ -4683,10 +4728,16 @@ function mexcSummaryHtml_(sigs, src) {
     srcLine = `<div class="mexc-src-line">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b></div>`;
   }
 
+  // При включённом лимите слотов показываем, сколько сигналов реально
+  // исключено - иначе непонятно, работает фильтр или нет.
+  const slotLine = slotExcluded != null
+    ? `<div class="mexc-src-line">Без слота (лимит 5): <b class="wr-red">${slotExcluded}</b></div>`
+    : '';
+
   return {
     html: `Сигналов: <b>${sigs.length}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b>` +
           ` &nbsp;·&nbsp; WR <b class="${wr == null ? '' : wrClass(wr)}">${wrTxt}</b>` +
-          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` + srcLine,
+          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` + srcLine + slotLine,
     wr,
   };
 }
@@ -4698,7 +4749,17 @@ async function renderMexcStats() {
   if (sumEl) { sumEl.className = 'sig-chart-stat'; sumEl.innerHTML = 'Загрузка...'; }
 
   try {
-    const sigs = await mexcStatsSignals(days, MEXC_STATS.src);
+    // Лимит слотов считается по ОБЪЕДИНЁННОМУ потоку 10м+30м, до того как
+    // список сузится до выбранного в «Экспирации» листа - иначе 30-минутные
+    // ставки перестанут занимать слоты для 10-минутных и наоборот.
+    let sigs = await mexcStatsSignals(days);
+    let slotExcluded = null;
+    if (MEXC_STATS.slotFilter) {
+      const before = sigs.length;
+      sigs = mexcApplySlotLimit_(sigs);
+      slotExcluded = before - sigs.length;
+    }
+    if (MEXC_STATS.src && MEXC_STATS.src !== 'ALL') sigs = sigs.filter(s => s.src === MEXC_STATS.src);
 
     if (!sigs.length) {
       for (const c of ['mexcPnlCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
@@ -4710,7 +4771,7 @@ async function renderMexcStats() {
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
-      const s = mexcSummaryHtml_(sigs, MEXC_STATS.src);
+      const s = mexcSummaryHtml_(sigs, MEXC_STATS.src, slotExcluded);
       sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= 60 ? ' sig-wr-good' : s.wr < 45 ? ' sig-wr-bad' : '');
       sumEl.innerHTML = s.html;
     }
@@ -4801,6 +4862,21 @@ function initMexcStatsUI() {
       if (!src || src === MEXC_STATS.src) return;
       srcSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
       MEXC_STATS.src = src;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+
+  const slotSeg = document.getElementById('mexcSlotSeg');
+  if (slotSeg && !slotSeg.dataset.wired) {
+    slotSeg.dataset.wired = '1';
+    slotSeg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const on = btn.dataset.slot === 'on';
+      if (on === MEXC_STATS.slotFilter) return;
+      slotSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      MEXC_STATS.slotFilter = on;
       if (tg) tg.HapticFeedback?.selectionChanged();
       renderMexcStats();
     });

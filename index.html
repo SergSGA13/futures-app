@@ -739,6 +739,17 @@
               <button data-src="30m">30м</button>
             </div>
           </div>
+          <!-- Лимит слотов биржи: одновременно не больше 5 открытых ставок,
+               10м и 30м делят один пул - переключатель просто вкл/выкл -->
+          <div class="sig-head2">
+            <span class="mexc-src-lbl" data-i18n="mexc.slot">Лимит слотов</span>
+            <span class="sig-div"></span>
+            <div class="fs-seg compact mexc-slot-seg" id="mexcSlotSeg">
+              <button class="active" data-slot="off" data-i18n="mexc.slot.off">Выкл</button>
+              <button data-slot="on" data-i18n="mexc.slot.on">5 ставок</button>
+            </div>
+          </div>
+          <p class="mexc-slot-note" data-i18n="mexc.slot.note">Учитывает лимит биржи - не больше 5 ставок одновременно (10м и 30м делят один пул). Сигналы, которые не получили бы слот, исключаются из статистики.</p>
           <div class="sig-chart-stat" id="mexcSummary"></div>
         </div>
 

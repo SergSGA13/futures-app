@@ -41,14 +41,25 @@
       "urls": {
         "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
         "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
-        "SPCX": "https://www.mexc.com/futures/event-futures/SPCX_USDT"
+        "SPCX": "https://www.mexc.com/futures/event-futures/SPCXSTOCK_USDT"
+      },
+      "symbols": {
+        "SPCX": "SPCXSTOCK"
       },
       "timeUnitText": {
         "10": "10m",
         "30": "30m"
       },
       "marketClosedText": "Market Closed",
-      "openPositionsLabel": "Open Positions"
+      "openPositionsLabel": "Open Positions",
+      "stakeJitterPct": 8,
+      "chartIntervals": [],
+      "chartAnchor": "",
+      "wakeOnSignal": {
+        "enabled": false,
+        "maxPerDay": 6,
+        "minGapMin": 20
+      }
     },
     "toobit": {
       "title": "Toobit",
@@ -124,6 +135,14 @@
       "dirWords": {
         "UP": "Higher",
         "DOWN": "Lower"
+      },
+      "stakeJitterPct": 8,
+      "chartIntervals": [],
+      "chartAnchor": "",
+      "wakeOnSignal": {
+        "enabled": false,
+        "maxPerDay": 6,
+        "minGapMin": 20
       }
     }
   },
@@ -147,6 +166,16 @@
     "windowSec": 3,
     "maxMultiplier": 3
   },
+  "priceGuard": {
+    "enabled": true,
+    "maxAdversePct": 0.05,
+    "requireBetter": false,
+    "strict": false
+  },
+  "statsDays": 7,
+  "tfMemoMinutes": 90,
+  "payoutSwitchMs": 3500,
+  "payoutDriftPts": 5,
   "execTimings": [
     10,
     30
@@ -171,6 +200,7 @@
     "everyMinFrom": 7,
     "everyMinTo": 26,
     "actions": [
+      "chart",
       "switch-asset",
       "history",
       "scroll",

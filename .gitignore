@@ -16,3 +16,7 @@ scripts/mexc-executor/profile/
 scripts/mexc-executor/logs/
 scripts/mexc-executor/node_modules/
 scripts/mexc-executor/package*.json
+
+# Своя подложка панели: картинка личная, у каждого своя, и в репозитории
+# ей не место - панель подхватывает её с диска, если файл рядом.
+scripts/mexc-executor/panel-bg.*

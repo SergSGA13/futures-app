@@ -3885,14 +3885,23 @@ async function sigFetch(u, ms) {
 // tf: '5m' | '15m' — оба значения валидны как есть для Binance interval,
 // для Bybit interval передаётся числом минут ('5'/'15').
 // Токенизированные "акции" ветки MEXC (SPCX и т.п.) торгуются у MEXC как
-// отдельный продукт "event futures" ("https://www.mexc.com/futures/event-futures/SPCX_USDT",
-// см. scripts/mexc-executor/config.example.json) - обычной пары на Binance/
-// Bybit для них не существует, поэтому для таких активов нужен третий,
-// собственный источник свечей.
+// отдельный продукт "event futures" - обычной пары на Binance/Bybit для
+// них не существует, поэтому для таких активов нужен третий, собственный
+// источник свечей.
+// Тикер на бирже НЕ совпадает с коротким ключом сигнала: у MEXC акции
+// подписаны иначе (см. scripts/mexc-executor/config.example.json/README -
+// "У MEXC символ SPCX называется SPCXSTOCK_USDT", там же для исполнителя
+// заведена карта symbols с тем же смыслом). Здесь она нужна для того же -
+// собрать правильный символ для публичного kline-эндпоинта.
+const SIG_MEXC_CONTRACT_SYMBOLS = { SPCX: 'SPCXSTOCK' };
+
 // Публичный контрактный kline-эндпоинт MEXC, символ через подчёркивание
-// ("SPCXUSDT" -> "SPCX_USDT"), время в секундах, ответ - колонки, а не строки.
+// ("SPCXUSDT" -> база "SPCX" -> биржевой тикер "SPCXSTOCK" -> "SPCXSTOCK_USDT"),
+// время в секундах, ответ - колонки, а не строки.
 async function fetchMexcContractCandles(sym, days, tf) {
-  const mexcSym = sym.replace(/USDT$/, '_USDT');
+  const base = sym.replace(/USDT$/, '');
+  const mexcBase = SIG_MEXC_CONTRACT_SYMBOLS[base] || base;
+  const mexcSym = `${mexcBase}_USDT`;
   const interval = tf === '15m' ? 'Min15' : 'Min5';
   const end = Math.floor(Date.now() / 1000);
   const start = end - days * 86400;

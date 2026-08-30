@@ -4668,6 +4668,87 @@ function mexcPairOrder_(sigs) {
   return Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
 }
 
+// ===== СТАВКА ВЕТКИ (редактируемая - пересчитывает весь PNL на странице) =====
+// Значения по умолчанию совпадают с боевым конфигом исполнителя
+// (scripts/mexc-executor/config.example.json: stakes), но здесь их можно
+// поменять - для "а что если ставить больше/меньше" без правки конфига.
+// MEXC_STATS.stakes - те, что реально используются сейчас (стартуют как
+// копия дефолтов и правятся селекторами в initMexcStatsUI).
+const MEXC_STAKE_DEFAULTS = { ETH: 150, BTC: 250, SPCX: 30 };
+MEXC_STATS.stakes = { ...MEXC_STAKE_DEFAULTS };
+
+function mexcStakeFor_(pair) {
+  return MEXC_STATS.stakes[pair] ?? MEXC_STAKE_DEFAULTS.ETH;
+}
+// Итог по одному сигналу текущей веткой ставок - замена devPnlSig(s,'MEXC'),
+// которая берёт ставку из глобального DEV_STAKES.MEXC и не знает о SPCX.
+function mexcPnlSig_(s) {
+  const st = mexcStakeFor_(s.pair);
+  if (s.res === 'WIN')  return st * DEV_PAYOUT;
+  if (s.res === 'LOSE') return -st;
+  return 0;
+}
+function mexcPnlOf_(w, l, pair) {
+  const st = mexcStakeFor_(pair);
+  return w * st * DEV_PAYOUT - l * st;
+}
+// Итоговая строка под таблицей по парам - свой вариант devBranchSummaryHtml:
+// та берёт ставку из общего DEV_STAKES.MEXC (не знает про SPCX и про
+// пользовательский выбор ставки на этой странице), эта - из mexcStakeFor_
+// и перечисляет ставку РЕАЛЬНО присутствующих пар, а не фиксированную пару ETH/BTC.
+function mexcBranchSummaryHtml_(groups) {
+  let w = 0, l = 0, pnl = 0;
+  const pairs = Object.keys(groups);
+  for (const pair of pairs) {
+    const o = groups[pair];
+    const pw = o.upW + o.dnW, pl = o.upL + o.dnL;
+    w += pw; l += pl;
+    pnl += mexcPnlOf_(pw, pl, pair);
+  }
+  const dec = w + l;
+  if (!dec) return '';
+  const wr = w / dec * 100;
+  const stakeTxt = pairs.map(p => `${p} ${mexcStakeFor_(p)}`).join(' · ');
+  return `<div class="dev-branch-total">
+    <span>PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b></span>
+    <span>WR <b class="${wrClass(wr)}">${wr.toFixed(1)}%</b></span>
+    <span class="dev-branch-stake">${stakeTxt} USDT</span>
+  </div>`;
+}
+
+function mexcRenderDrawdownChart_(sigs) {
+  if (typeof Chart === 'undefined') return false;
+  const dd = devComputeDrawdown(sigs, mexcPnlSig_);
+  if (!dd) return false;
+
+  const noteEl = document.getElementById('mexcDrawdownNote');
+  if (noteEl) {
+    noteEl.innerHTML = dd.maxDdPct < 0
+      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита, ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
+      : 'Просадок не было - кривая PNL ни разу не опускалась ниже локального пика.';
+  }
+
+  const ctx = document.getElementById('mexcDrawdownChart')?.getContext('2d');
+  if (!ctx) return false;
+  const gradient = ctx.createLinearGradient(0, 0, 0, 140);
+  gradient.addColorStop(0, 'rgba(255, 82, 114, 0.05)');
+  gradient.addColorStop(1, 'rgba(255, 82, 114, 0.4)');
+
+  MEXC_STATS.charts.dd = new Chart(ctx, {
+    type: 'line',
+    data: { labels: dd.labels, datasets: [{ data: dd.ddData, borderColor: '#FF5272', backgroundColor: gradient, borderWidth: 1.5, pointRadius: 0, fill: true, tension: 0.25 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `Просадка: ${c.parsed.y}%` } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 8, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { max: 0, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+  return true;
+}
+
 function mexcDestroyCharts_() {
   for (const k of Object.keys(MEXC_STATS.charts)) {
     try { MEXC_STATS.charts[k]?.destroy(); } catch (e) { /* уже уничтожен */ }
@@ -4680,14 +4761,15 @@ function mexcShow_(cardId, on) {
   if (el) el.style.display = on ? 'block' : 'none';
 }
 
-// Накопленный PNL ветки по её собственным ставкам (devPnlSig(s,'MEXC')).
+// Накопленный PNL ветки по текущей ставке страницы (mexcPnlSig_ - учитывает
+// и SPCX, и правку ставки через селекторы, в отличие от devPnlSig(s,'MEXC')).
 function mexcRenderPnlChart_(sigs) {
   if (typeof Chart === 'undefined') return false;
   const ctx = document.getElementById('mexcPnlChart')?.getContext('2d');
   if (!ctx) return false;
 
   const daily = {};
-  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + devPnlSig(s, 'MEXC');
+  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + mexcPnlSig_(s);
   const days = Object.keys(daily).sort();
   if (days.length < 2) return false;
 
@@ -4722,7 +4804,7 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
   let w = 0, l = 0, pnl = 0;
   for (const s of sigs) {
     if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
-    pnl += devPnlSig(s, 'MEXC');
+    pnl += mexcPnlSig_(s);
   }
   const dec = w + l;
   const wr = dec ? (w / dec * 100) : null;
@@ -4771,12 +4853,17 @@ async function renderMexcStats() {
     if (MEXC_STATS.src && MEXC_STATS.src !== 'ALL') sigs = sigs.filter(s => s.src === MEXC_STATS.src);
 
     if (!sigs.length) {
-      for (const c of ['mexcPnlCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
+      for (const c of ['mexcPnlCard', 'mexcDrawdownCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
       if (sumEl) sumEl.innerHTML = 'Нет данных';
       mexcShow_('mexcEmpty', true);
       return;
     }
     mexcShow_('mexcEmpty', false);
+
+    // Поле ставки SPCX показываем только когда такие сигналы реально есть -
+    // остальные ветки/периоды его не используют, и лишний селектор будет шумом.
+    const spcxWrap = document.getElementById('mexcStakeSpcxWrap');
+    if (spcxWrap) spcxWrap.style.display = sigs.some(s => s.pair === 'SPCX') ? '' : 'none';
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
@@ -4795,6 +4882,12 @@ async function renderMexcStats() {
       mexcShow_('mexcPnlCard', false);
     }
     try {
+      mexcShow_('mexcDrawdownCard', mexcRenderDrawdownChart_(sigs));
+    } catch (e) {
+      console.log('MEXC drawdown chart error:', e);
+      mexcShow_('mexcDrawdownCard', false);
+    }
+    try {
       MEXC_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('mexcWrDailyChart', sigs, days);
       mexcShow_('mexcWrDailyCard', !!MEXC_STATS.charts.wr);
     } catch (e) {
@@ -4802,13 +4895,13 @@ async function renderMexcStats() {
       mexcShow_('mexcWrDailyCard', false);
     }
 
-    // По парам — состав ветки берём из данных, снизу PNL/WR по ставкам MEXC
+    // По парам — состав ветки берём из данных, снизу PNL/WR по текущей ставке страницы
     const pairOrder = mexcPairOrder_(sigs);
     const pairGroups = devAggregate(sigs, s => s.pair);
     const pairTable = devBuildTable(pairOrder, pairGroups);
     const pairEl = document.getElementById('mexcPairsTable');
     if (pairEl && pairTable) {
-      pairEl.innerHTML = pairTable + devBranchSummaryHtml(pairGroups, 'MEXC') + wrLegendHtml();
+      pairEl.innerHTML = pairTable + mexcBranchSummaryHtml_(pairGroups) + wrLegendHtml();
       mexcShow_('mexcPairsCard', true);
     } else {
       mexcShow_('mexcPairsCard', false);
@@ -4886,6 +4979,33 @@ function initMexcStatsUI() {
       if (on === MEXC_STATS.slotFilter) return;
       slotSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
       MEXC_STATS.slotFilter = on;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+
+  // Селекторы ставки: шаг 5, потолок - реальный лимит поля ввода на бирже
+  // (см. scripts/mexc-executor/config.example.json: stakeLimits), значение
+  // по умолчанию - боевая ставка. Смена любого пересчитывает всю страницу.
+  const stakeCfg = [
+    ['mexcStakeEth', 'ETH', 150],
+    ['mexcStakeBtc', 'BTC', 250],
+    ['mexcStakeSpcx', 'SPCX', 150],
+  ];
+  for (const [id, pair, max] of stakeCfg) {
+    const sel = document.getElementById(id);
+    if (!sel || sel.dataset.wired) continue;
+    sel.dataset.wired = '1';
+    for (let v = 5; v <= max; v += 5) {
+      const o = document.createElement('option');
+      o.value = o.textContent = v;
+      if (v === MEXC_STAKE_DEFAULTS[pair]) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => {
+      const v = parseInt(sel.value, 10);
+      if (!v || v === MEXC_STATS.stakes[pair]) return;
+      MEXC_STATS.stakes[pair] = v;
       if (tg) tg.HapticFeedback?.selectionChanged();
       renderMexcStats();
     });

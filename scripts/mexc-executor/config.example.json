@@ -175,6 +175,7 @@
   "statsDays": 7,
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
+  "payoutDriftPts": 5,
   "execTimings": [
     10,
     30

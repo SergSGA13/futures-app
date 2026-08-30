@@ -1373,8 +1373,22 @@ async function activeChipByStorage() {
 // сами не нажали другой чип. Память об этом снимает и секунды, и
 // пропуски: чаще всего нужная экспирация уже стоит с прошлого раза.
 const tfMemo = new WeakMap();
-function rememberTf(tf) {
-  if (page) tfMemo.set(page, { tf, at: Date.now(), nav: pageNav(page), url: page.url() });
+// «Тот же расклад выплат»: значения совпали по количеству и не разошлись
+// больше порога. Внутри одной экспирации выплаты гуляют на один-три
+// пункта, а между экспирациями разница в десятки - 10 минут против 5
+// это 80% против 66%. Поэтому расклад и годится как отпечаток состояния.
+// null - сравнивать нечего, решение принимать не по чему.
+function payoutDriftPts() { return Math.abs(CFG.payoutDriftPts ?? 5); }
+function samePayouts(a, b, tol) {
+  if (!a || !b) return null;
+  const x = String(a).split(',').map(Number), y = String(b).split(',').map(Number);
+  if (x.length !== y.length) return false;
+  const t = tol ?? payoutDriftPts();
+  return x.every((v, i) => Number.isFinite(v) && Number.isFinite(y[i]) && Math.abs(v - y[i]) <= t);
+}
+
+function rememberTf(tf, fp) {
+  if (page) tfMemo.set(page, { tf, at: Date.now(), nav: pageNav(page), url: page.url(), fp: fp ?? null });
 }
 function forgetTf() { if (page) tfMemo.delete(page); }
 function recallTf() {
@@ -1386,7 +1400,7 @@ function recallTf() {
   // Срок годности - на случай, если приложение всё же переставит чип
   // само: раз в полтора часа доказываем заново, это дешевле веры вслепую.
   if (Date.now() - m.at > (CFG.tfMemoMinutes ?? 90) * 60000) { tfMemo.delete(page); return null; }
-  return m.tf;
+  return m;
 }
 // Биржи, у которых выбранный чип не читается разметкой. Для них холостое
 // действие «смена экспирации» запрещено: оно уводит страницу в состояние,
@@ -1470,9 +1484,24 @@ async function waitPayoutChange(from, ms) {
   while (Date.now() < until) {
     await page.waitForTimeout(200);
     const s = await payoutFingerprint();
-    if (s && s !== from) return s;
+    if (s && samePayouts(s, from) === false) return s;
   }
   return null;
+}
+// Возврат к ИСХОДНОМУ раскладу, а не просто «к какому-нибудь другому».
+// Прежняя проверка требовала лишь, чтобы после нажатия нашего чипа
+// выплаты отличались от соседских, - и естественный дрейф на пункт
+// засчитывался как переключение обратно. То есть ставка могла остаться
+// на соседней экспирации, а проверка - отчитаться об успехе.
+async function waitPayoutBack(target, ms) {
+  const until = Date.now() + ms;
+  let last = null;
+  while (Date.now() < until) {
+    await page.waitForTimeout(200);
+    const s = await payoutFingerprint();
+    if (s) { last = s; if (samePayouts(s, target) === true) return s; }
+  }
+  return { failed: last };
 }
 
 async function proveByPayoutSwitch(tfText) {
@@ -1504,11 +1533,13 @@ async function proveByPayoutSwitch(tfText) {
       continue;
     }
     if (!(await clickBox(grp.boxes[tfText]).catch(() => false))) return false;
-    const sig2 = await waitPayoutChange(sig1, wait);
-    if (!sig2) {
-      log(`проверка чипов: нажал ${tfText}, а выплаты остались как на ${other} - переключения не было`);
+    const back = await waitPayoutBack(sig0, wait);
+    if (!back || back.failed !== undefined) {
+      log(`проверка чипов: нажал ${tfText}, а выплаты не вернулись к исходным `
+        + `(${sig0} → ${sig1} → ${back && back.failed}) - на нашей экспирации мы не стоим`);
       return false;
     }
+    const sig2 = back;
     log(`экспирация ${tfText}: выбор не отмечен в разметке, но страница отозвалась `
       + `на ${other} и на ${tfText} (выплаты ${sig0} → ${sig1} → ${sig2}) - принимаю`);
     return true;
@@ -1528,7 +1559,7 @@ async function proveByPayoutSwitch(tfText) {
 async function ensureTimeframe(tfText) {
   const re = new RegExp('^\\s*' + tfText + '\\s*$');
   let cur = await activeChipName();
-  if (cur === tfText) { rememberTf(tfText); return { ok: true, cur, tries: 0 }; }
+  if (cur === tfText) { rememberTf(tfText, await payoutFingerprint()); return { ok: true, cur, tries: 0, how: 'по разметке' }; }
   if (cur == null) {
     tfBlind.add(EX.name);
     // Разметка молчит, но мы САМИ ставили эту экспирацию на этой же
@@ -1536,7 +1567,25 @@ async function ensureTimeframe(tfText) {
     // надёжнее, чем доказывать заново: доказательство стоит секунд
     // восемь и само иногда не удаётся - а это и был главный источник
     // «не удалось убедиться, что выбрана экспирация».
-    if (recallTf() === tfText) return { ok: true, cur: tfText, tries: 0, how: 'по памяти' };
+    // Память верна, пока страницу не перерисовали. Но приложение биржи
+    // умеет пересобрать торговый виджет БЕЗ перехода по адресу - после
+    // истёкшей позиции, например, - и сбросить экспирацию на свою
+    // умолчательную. Переходов при этом ноль, память об этом не узнает и
+    // соврёт: так ставка ушла на 5 минут с выплатой 66%, пока журнал
+    // писал 10 минут и 80%. Поэтому память носит с собой расклад выплат
+    // на момент подтверждения и сверяется с текущим: одна экспирация от
+    // другой отличается десятками пунктов, а дрейф внутри - единицами.
+    const memo = recallTf();
+    if (memo && memo.tf === tfText) {
+      const now = await payoutFingerprint();
+      const same = samePayouts(memo.fp, now);
+      if (same !== false) {
+        return { ok: true, cur: tfText, tries: 0, how: same === true ? 'по памяти' : 'по памяти (выплаты не сверить)' };
+      }
+      log(`память говорит ${tfText}, но выплаты сменились (${memo.fp} → ${now}) - `
+        + 'проверяю экспирацию заново');
+      forgetTf();
+    }
   }
   // Пока щёлкаем - память недействительна: если нас прервут посреди,
   // на странице окажется что угодно, и запись об этом соврала бы.
@@ -1557,15 +1606,15 @@ async function ensureTimeframe(tfText) {
     while (Date.now() < until) {
       await page.waitForTimeout(300);
       const mark = await activeChipMarkup();
-      if (mark === tfText) { rememberTf(tfText); return { ok: true, cur: mark, tries, how }; }
+      if (mark === tfText) { rememberTf(tfText, await payoutFingerprint()); return { ok: true, cur: mark, tries, how }; }
     }
     cur = await activeChipName();
-    if (cur === tfText) { rememberTf(tfText); return { ok: true, cur, tries, how }; }
+    if (cur === tfText) { rememberTf(tfText, await payoutFingerprint()); return { ok: true, cur, tries, how }; }
     if (tries === 1) log(`чип ${tfText}: нажал (${how}), а выбран ${cur ?? 'неизвестно'} - пробую ещё раз`);
   }
   // Разметка молчит - пробуем доказать переключение сменой выплат.
   if (cur == null && await proveByPayoutSwitch(tfText)) {
-    rememberTf(tfText);
+    rememberTf(tfText, await payoutFingerprint());
     return { ok: true, cur: tfText, tries: 2, how: 'по смене выплат' };
   }
   return { ok: false, cur, tries: 2 };
@@ -1610,6 +1659,10 @@ async function placeBet(sig) {
   // просто нет.
   const uiKey = `${sig.ex}|${sig.asset}`;
   let recover = uiAsset.has(uiKey) ? 'ui' : null;
+  // Чем подтвердили экспирацию - разметкой, памятью или сменой выплат.
+  // Уходит в журнал: разбирать «почему ставка оказалась на чужих минутах»
+  // по одному только статусу невозможно.
+  let tfHow = '';
   for (let attempt = 1; attempt <= 3; attempt++) {
     let ready = null;
     // После первого промаха короткий путь запрещён: раз страница уже
@@ -1793,6 +1846,7 @@ async function placeBet(sig) {
     if (tf.ok) {
       // «по памяти» видно в журнале намеренно: если однажды окажется, что
       // память врёт, найти это можно будет только по этой пометке.
+      tfHow = tf.how || '';
       log(`экспирация ${tfText} выбрана`
         + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
     } else if (tf.cur == null) {
@@ -1918,6 +1972,26 @@ async function placeBet(sig) {
       return { status: 'skip-redirect', payoutPage: pv, note: drift };
     }
 
+    // ── выплата не сдвинулась, пока мы собирались ──
+    // Последняя и самая надёжная проверка экспирации: она смотрит не на
+    // чипы, а на условия, по которым ставка реально откроется. Если
+    // страница между чтением выплаты и нажатием переехала на другую
+    // экспирацию - хоть сама, хоть из-за нашего промаха, - выплата
+    // изменится на десятки пунктов, и мы это увидим. Ровно так ставка
+    // ушла на 5 минут с 66%, пока журнал писал 10 минут и 80%.
+    if (pv != null) {
+      const pvNow = await pagePayout(sig.direction);
+      if (pvNow != null && Math.abs(pvNow - pv) > payoutDriftPts()) {
+        log(`пропуск ${sig.asset} ${sig.direction}: выплата поехала с ${pv}% на ${pvNow}% `
+          + 'между проверкой и нажатием - это чужая экспирация, ставку не делаю');
+        await shot('payout-moved');
+        await dumpPage('payout-moved');
+        forgetTf();
+        return { status: 'skip-payout-moved', payoutPage: pvNow,
+                 note: `выплата ${pv}% → ${pvNow}%` };
+      }
+    }
+
     // ── цена входа ──
     // От сигнала до нажатия проходит от десяти секунд до минуты: пачка
     // ждёт своё окно, страница собирается, экспирация подтверждается.
@@ -1964,7 +2038,7 @@ async function placeBet(sig) {
     if (state.dryRun) {
       await shot(`dryrun-${sig.asset}-${sig.direction}`);
       log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
-      return { status: 'dry-run', payoutPage: pv, entryPrice, advPct };
+      return { status: 'dry-run', payoutPage: pv, entryPrice, advPct, tfHow };
     }
 
     const posBefore = await openPositionsCount();
@@ -1993,7 +2067,7 @@ async function placeBet(sig) {
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-    return { status: 'placed', payoutPage: pv, entryPrice, advPct };
+    return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.
   throw new Error('ставка не доиграна');
@@ -2426,6 +2500,11 @@ async function pump() {
         notes.push(`цена ${r.entryPrice} ${r.advPct > 0 ? 'хуже' : 'лучше'} на ${Math.abs(r.advPct).toFixed(3)}%`);
       }
       if (r.note) notes.push(r.note);
+      // Способ подтверждения экспирации пишем только когда он не самый
+      // надёжный: разметка сомнений не вызывает, а «по памяти» и «по
+      // смене выплат» - те два пути, на которых ставка когда-то уходила
+      // на чужие минуты.
+      if (r.tfHow && r.tfHow !== 'по разметке' && r.tfHow !== 'мышью') notes.push(`экспирация ${r.tfHow}`);
       logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
                note: notes.join('; ') });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько
@@ -3571,7 +3650,7 @@ function migrateMode() {
   // входа, срок памяти об экспирации. Код умеет работать и без них, но в
   // конфиге их не хватало бы под рукой - и панель не смогла бы их
   // сохранить обратно.
-  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs', 'statsDays']) {
+  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs', 'payoutDriftPts', 'statsDays']) {
     if (out[k] === undefined && sampleTop[k] !== undefined) {
       out[k] = sampleTop[k];
       added.push(k);

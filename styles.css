@@ -1447,6 +1447,32 @@ html, body {
 .dev-urgent-label { font-size: 13px; font-weight: 700; color: var(--text); }
 .dev-urgent-reason { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
 .dev-urgent-empty { font-size: 12px; color: var(--text-muted); padding: 4px 2px; }
+/* Фильтры списков окон: уровень / объяснение / значимость */
+.dev-win-filters {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 10px; padding: 8px 9px;
+  border: 1px solid rgba(102, 163, 255, .18); border-radius: 10px;
+  background: rgba(102, 163, 255, .04);
+}
+.dev-win-frow { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.dev-win-lbl {
+  flex: 0 0 74px; font-size: 9.5px; font-weight: 700; letter-spacing: .3px;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.dev-win-seg { flex: 0 0 auto; }
+.dev-win-seg button { min-width: 30px; padding: 4px 7px; font-size: 10px; }
+
+/* Строка «сильного» окна - зелёная, в отличие от красной стоп-строки */
+.dev-urgent-item.dev-good-item {
+  border-color: rgba(78, 255, 160, 0.42);
+  background: rgba(78, 255, 160, 0.09);
+}
+.dev-good-item .dev-stop-scope {
+  color: #7DFFC2; background: rgba(78, 255, 160, 0.10);
+  border-color: rgba(78, 255, 160, 0.32);
+}
+.dev-good-item .dev-stop-why { border-top-color: rgba(78, 255, 160, 0.22); }
+
 /* Цепочка горизонтов в стоп-окне: 365д / 180д / 90д / 30д */
 .dev-stop-h {
   display: inline-block; margin-right: 10px; white-space: nowrap;

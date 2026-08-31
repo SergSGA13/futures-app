@@ -864,7 +864,69 @@
         <div class="pnl-chart-card dev-urgent-card" id="devStopCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Стоп-окна: сигналы лучше остановить <span class="dev-chip">DEV</span></div>
           <p class="dev-note" style="margin-bottom:10px">Окно попадает сюда, только если оно ниже безубытка НА ВСЕХ горизонтах сразу - год / полгода / 3 месяца / 30 дней, причём на самом длинном - с запасом в 3 п.п. (иначе «55% при безубытке 55.6%» считалось бы проблемой наравне с 40%). Так отсекаются и разовые провалы, и старая слабость, которая давно выправилась: остаётся то, что проблемно на постоянной основе. Четыре уровня: час, день недели + час, 15-минутный интервал и фаза 4-часовой свечи; если час плох целиком, его же клетки не дублируются. Время везде варшавское, кроме границ 4H - они считаются по UTC с поправкой на летнее время. К каждому окну подписана вероятная причина (сессии, макро-данные, начало/конец недели) - это гипотеза по совпадению времени, а не доказанная связь. Данные: ALLsignal + BLOCKEDsignal, деньги по ставкам PRO (ETH 125 / BTC 250).</p>
+          <div class="dev-win-filters">
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Уровень</span>
+              <div class="fs-seg compact dev-win-seg" id="devStopLvlSeg">
+                <button class="active" data-level="ALL">Все</button>
+                <button data-level="hour">Час</button>
+                <button data-level="dowhour">День+час</button>
+                <button data-level="q15">15м</button>
+                <button data-level="h4">4H</button>
+              </div>
+            </div>
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Объяснение</span>
+              <div class="fs-seg compact dev-win-seg" id="devStopWhySeg">
+                <button class="active" data-why="0">Все</button>
+                <button data-why="1">Только с причиной</button>
+              </div>
+            </div>
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Значимость</span>
+              <div class="fs-seg compact dev-win-seg" id="devStopPnlSeg">
+                <button class="active" data-pnl="0">Все</button>
+                <button data-pnl="500">500+</button>
+                <button data-pnl="1000">1000+</button>
+                <button data-pnl="2000">2000+</button>
+              </div>
+            </div>
+          </div>
           <div id="devStopBlock" class="dev-urgent-list"></div>
+        </div>
+
+        <div class="pnl-chart-card dev-opportunity-card" id="devGoodCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg>Рабочие окна: где стратегия стабильно сильна <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:10px">Зеркало стоп-окон: те же горизонты и те же уровни, но окно попадает сюда, только если оно ВЫШЕ безубытка на всех горизонтах сразу, а на самом длинном - с запасом в 3 п.п. То есть это не удачный месяц, а окна, которые вывозят на постоянной основе - на них стоит опираться и в них не срезать объём.</p>
+          <div class="dev-win-filters">
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Уровень</span>
+              <div class="fs-seg compact dev-win-seg" id="devGoodLvlSeg">
+                <button class="active" data-level="ALL">Все</button>
+                <button data-level="hour">Час</button>
+                <button data-level="dowhour">День+час</button>
+                <button data-level="q15">15м</button>
+                <button data-level="h4">4H</button>
+              </div>
+            </div>
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Объяснение</span>
+              <div class="fs-seg compact dev-win-seg" id="devGoodWhySeg">
+                <button class="active" data-why="0">Все</button>
+                <button data-why="1">Только с причиной</button>
+              </div>
+            </div>
+            <div class="dev-win-frow">
+              <span class="dev-win-lbl">Значимость</span>
+              <div class="fs-seg compact dev-win-seg" id="devGoodPnlSeg">
+                <button class="active" data-pnl="0">Все</button>
+                <button data-pnl="500">500+</button>
+                <button data-pnl="1000">1000+</button>
+                <button data-pnl="2000">2000+</button>
+              </div>
+            </div>
+          </div>
+          <div id="devGoodBlock" class="dev-urgent-list"></div>
         </div>
 
         <div class="pnl-chart-card dev-urgent-card" id="devBadlistCard" style="display:none">

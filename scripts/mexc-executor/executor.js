@@ -853,9 +853,101 @@ async function waitPositionsGrow(before, timeoutMs) {
 // возвращаем null: выбирать наугад между выплатой Up и выплатой Down
 // хуже, чем честно сказать «не прочитал» - на биржах с обязательной
 // проверкой это означает отказ от ставки, а не ставку вслепую.
+// Выплата, привязанная К САМОЙ КНОПКЕ направления, а не к порядку блоков
+// на странице. Порядок приходилось задавать руками (order: UP, DOWN), и
+// он оказался угадан неверно: на ставках вверх исполнитель читал 79-82%,
+// а биржа применяла 72% - то есть бралось значение соседнего блока.
+// Заодно те же ставки, где читалось честные 72%, отбивались порогом. То
+// есть ошибка была не в дрейфе, а в сопоставлении.
+//
+// Геометрия угадывания не требует: подпись выплаты лежит рядом со своей
+// кнопкой, и ближайшая к «Higher» - это выплата Higher, какой бы ни был
+// порядок в разметке. Считаем расстояния между центрами и выбираем
+// сопоставление с наименьшей суммой - для двух кнопок вариантов всего
+// два.
+async function payoutByButtons() {
+  const E = curEx();
+  const words = { UP: E.dirWords.UP || 'Up', DOWN: E.dirWords.DOWN || 'Down' };
+  const re = (E.payoutList && E.payoutList.re) || '([0-9]{1,3}(?:[.,][0-9]+)?)\\s*%';
+  try {
+    return await page.evaluate(({ words, re }) => {
+      const vis = el => {
+        if (!(el.offsetWidth || el.offsetHeight)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const mid = el => { const r = el.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+
+      // Кнопки направления: собственный текст равен слову, значки вокруг
+      // игнорируем - «↗ Higher» это Higher.
+      const btn = {};
+      for (const [dir, w] of Object.entries(words)) {
+        const exact = new RegExp('^[^\p{L}]*' + w + '[^\p{L}]*$', 'iu');
+        for (const el of document.querySelectorAll('*')) {
+          if (!vis(el) || el.children.length > 2) continue;
+          if (!exact.test((el.innerText || '').trim())) continue;
+          btn[dir] = mid(el);
+          break;
+        }
+      }
+      if (!btn.UP || !btn.DOWN) return null;
+
+      // Блоки выплаты: самый мелкий видимый узел, чей текст даёт процент.
+      const rx = new RegExp(re, 'i');
+      const blocks = [];
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el) || el.children.length > 3) continue;
+        const t = (el.innerText || '').trim();
+        if (t.length > 120) continue;
+        const m = t.match(rx);
+        if (!m) continue;
+        const v = parseFloat(String(m[1]).replace(',', '.'));
+        if (!Number.isFinite(v) || v < 10 || v > 500) continue;
+        const c = mid(el);
+        // Один и тот же блок ловится и на родителе, и на потомке -
+        // оставляем ближайший к уже найденному, а не оба.
+        if (blocks.some(b => Math.abs(b.x - c.x) < 6 && Math.abs(b.y - c.y) < 6)) continue;
+        blocks.push({ v, x: c.x, y: c.y });
+      }
+      if (blocks.length < 2) return null;
+
+      const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      // Ближайшие к кнопкам два блока, в двух возможных сочетаниях.
+      let best = null;
+      for (let i = 0; i < blocks.length; i++) {
+        for (let j = 0; j < blocks.length; j++) {
+          if (i === j) continue;
+          const sum = d(btn.UP, blocks[i]) + d(btn.DOWN, blocks[j]);
+          if (!best || sum < best.sum) best = { sum, up: blocks[i], down: blocks[j] };
+        }
+      }
+      if (!best) return null;
+      // Насколько выбор уверенный: во сколько раз второй вариант хуже.
+      const alt = d(btn.UP, best.down) + d(btn.DOWN, best.up);
+      return { UP: best.up.v, DOWN: best.down.v, sum: best.sum, alt,
+               blocks: blocks.length };
+    }, { words, re });
+  } catch (e) { return null; }
+}
+
 async function pagePayout(direction) {
   const E = curEx();
   const word = E.dirWords[direction] || (direction === 'UP' ? 'Up' : 'Down');
+  // Первым делом - привязка к кнопке: она не требует угадывать порядок.
+  // Принимаем только уверенный выбор: если сочетание «наоборот» почти
+  // такое же по расстояниям, значит подписи стоят так, что рядом с
+  // кнопкой оказались обе, и решать по геометрии нельзя.
+  lastPayouts = null;
+  const byBtn = await payoutByButtons();
+  if (byBtn && byBtn.alt > byBtn.sum * 1.25) {
+    lastPayouts = { UP: byBtn.UP, DOWN: byBtn.DOWN, how: 'по кнопкам' };
+    return byBtn[direction];
+  }
+  if (byBtn) {
+    log(`выплата по кнопкам неуверенна (${byBtn.UP}% / ${byBtn.DOWN}%, `
+      + `расстояния ${Math.round(byBtn.sum)} против ${Math.round(byBtn.alt)}) - иду дальше`);
+  }
   // Пустой payoutRe = путь выключен. Он ищет процент ПОСЛЕ слова
   // направления, а на Toobit подпись выплаты стоит НАД кнопкой - и
   // шаблон брал процент соседнего блока: для Up возвращалось значение
@@ -912,9 +1004,15 @@ async function pagePayout(direction) {
       }
       return null;
     }
+    lastPayouts = { UP: found[L.order.indexOf('UP')], DOWN: found[L.order.indexOf('DOWN')],
+                    how: 'по порядку блоков' };
     return found[idx];
   } catch (e) { return null; }
 }
+// Обе выплаты последнего чтения. Уходят в журнал: когда биржа применяет
+// не то число, что мы прочитали, по одной записи не понять, взяли мы
+// соседний блок или выплата успела уехать.
+let lastPayouts = null;
 
 // Какой актив показывает страница СЕЙЧАС - по заголовку документа.
 // Адрес меняется мгновенно, а SPA перерисовывает панель позже, поэтому
@@ -1663,6 +1761,10 @@ async function placeBet(sig) {
   // Уходит в журнал: разбирать «почему ставка оказалась на чужих минутах»
   // по одному только статусу невозможно.
   let tfHow = '';
+  // Обе выплаты страницы на момент решения: если биржа применит другое
+  // число, по журналу будет видно, взяли мы соседний блок или выплата
+  // успела уехать.
+  let payoutPair = '';
   for (let attempt = 1; attempt <= 3; attempt++) {
     let ready = null;
     // После первого промаха короткий путь запрещён: раз страница уже
@@ -1903,7 +2005,11 @@ async function placeBet(sig) {
       await shot('payout-low');
       return { status: 'skip-payout', payoutPage: pv };
     } else {
-      log(`выплата на странице ${pv}% (нужно ${cmp} ${need}%)`);
+      const pair = lastPayouts
+      ? ` [${EX.dirWords.UP || 'Up'} ${lastPayouts.UP}% / ${EX.dirWords.DOWN || 'Down'} ${lastPayouts.DOWN}%, ${lastPayouts.how}]`
+      : '';
+    payoutPair = lastPayouts ? `${lastPayouts.UP}/${lastPayouts.DOWN}` : '';
+    log(`выплата на странице ${pv}% (нужно ${cmp} ${need}%)${pair}`);
     }
 
     // Поле суммы уже найдено при ожидании панели
@@ -2038,7 +2144,7 @@ async function placeBet(sig) {
     if (state.dryRun) {
       await shot(`dryrun-${sig.asset}-${sig.direction}`);
       log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
-      return { status: 'dry-run', payoutPage: pv, entryPrice, advPct, tfHow };
+      return { status: 'dry-run', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
     }
 
     const posBefore = await openPositionsCount();
@@ -2067,7 +2173,7 @@ async function placeBet(sig) {
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-    return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow };
+    return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.
   throw new Error('ставка не доиграна');
@@ -2505,6 +2611,7 @@ async function pump() {
       // смене выплат» - те два пути, на которых ставка когда-то уходила
       // на чужие минуты.
       if (r.tfHow && r.tfHow !== 'по разметке' && r.tfHow !== 'мышью') notes.push(`экспирация ${r.tfHow}`);
+      if (r.payoutPair) notes.push(`выплаты ${r.payoutPair}`);
       logBet({ ...sig, stake: betStake(sig), mode, status: r.status, payoutPage: r.payoutPage,
                note: notes.join('; ') });
       // Слот занимаем и в dry-run: иначе прогон не покажет, сколько

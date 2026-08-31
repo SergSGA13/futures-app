@@ -2147,6 +2147,127 @@ function devBuildUrgentSection(sigs, combinedRaw) {
   }).join('');
 }
 
+// ===== СТОП-ОКНА: устойчиво слабые часы (ALL Periods × Last 30 Days) =====
+// Срезы по времени на странице уже есть (WinRate по часам, тепловые карты),
+// но каждый смотрит только в ОДНО окно: либо за всю историю, либо за 30 дней.
+// По отдельности они обманчивы: слабый исторически час мог давно выправиться,
+// а свежая просадка часа - оказаться случайной на малой выборке. Здесь берём
+// ПЕРЕСЕЧЕНИЕ: окна, которые были убыточны исторически И остаются такими
+// сейчас. Именно их имеет смысл выключать, а не разовые провалы.
+//
+// Оба окна считаются по одной и той же популяции (ALLsignal + BLOCKEDsignal),
+// разница только в глубине истории - иначе сравнение было бы нечестным:
+// «сейчас» считалось бы по одному набору сигналов, а «всегда» по другому.
+const DEV_STOP_MIN_ALL_HOUR = 60;  // минимум решённых за всю историю (час)
+const DEV_STOP_MIN_30_HOUR  = 15;  // и за последние 30 дней
+const DEV_STOP_MIN_ALL_CELL = 30;  // то же для более мелких клеток
+const DEV_STOP_MIN_30_CELL  = 8;   // (день×час и час×15мин)
+
+// Пн=0..Вс=6 по ключу даты; null - дату разобрать не удалось.
+function devDowIdx_(dk) {
+  if (!dk) return null;
+  const [y, m, d] = dk.split('-').map(Number);
+  const raw = new Date(y, m - 1, d).getDay();  // 0=Вс
+  return raw === 0 ? 6 : raw - 1;
+}
+
+// Сводка по ключу: победы, поражения и деньги (по ставкам PRO - как и
+// остальные денежные цифры DEV-страницы).
+function devStopAgg_(sigs, keyFn) {
+  const m = {};
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    const k = keyFn(s);
+    if (k == null) continue;
+    if (!m[k]) m[k] = { w: 0, l: 0, pnl: 0 };
+    if (s.res === 'WIN') m[k].w++; else m[k].l++;
+    m[k].pnl += devPnlSig(s, 'PRO');
+  }
+  return m;
+}
+
+function devStopLevels_() {
+  const DAY = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'),
+               t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
+  const p2 = n => String(n).padStart(2, '0');
+  return [
+    {
+      kind: 'Час', minAll: DEV_STOP_MIN_ALL_HOUR, minNew: DEV_STOP_MIN_30_HOUR,
+      key: s => s.hour == null ? null : String(s.hour),
+      hourOf: k => +k,
+      label: k => `${p2(+k)}:00-${p2(+k)}:59`,
+    },
+    {
+      kind: 'День+час', minAll: DEV_STOP_MIN_ALL_CELL, minNew: DEV_STOP_MIN_30_CELL,
+      key: s => {
+        const d = devDowIdx_(s.dk);
+        return (d == null || s.hour == null) ? null : `${d}|${s.hour}`;
+      },
+      hourOf: k => +k.split('|')[1],
+      label: k => { const [d, h] = k.split('|'); return `${DAY[+d]} ${p2(+h)}:00`; },
+    },
+    {
+      kind: '15 мин', minAll: DEV_STOP_MIN_ALL_CELL, minNew: DEV_STOP_MIN_30_CELL,
+      key: s => (s.hour == null || s.minute == null) ? null : `${s.hour}|${Math.floor(s.minute / 15)}`,
+      hourOf: k => +k.split('|')[0],
+      label: k => {
+        const [h, q] = k.split('|'); const m0 = +q * 15;
+        return `${p2(+h)}:${p2(m0)}-${p2(+h)}:${p2(m0 + 14)}`;
+      },
+    },
+  ];
+}
+
+// sigs30 - сигналы за 30 дней, allSigs - вся история (та же популяция).
+function devBuildStopWindowsSection(sigs30, allSigs) {
+  const found = [];
+  const badHours = new Set();   // часы, уже помеченные целиком
+
+  for (const lvl of devStopLevels_()) {
+    const aAll = devStopAgg_(allSigs, lvl.key);
+    const aNew = devStopAgg_(sigs30, lvl.key);
+
+    const hits = [];
+    for (const k of Object.keys(aNew)) {
+      const A = aAll[k], N = aNew[k];
+      if (!A) continue;
+      const decA = A.w + A.l, decN = N.w + N.l;
+      if (decA < lvl.minAll || decN < lvl.minNew) continue;      // выборки не хватает
+      const wrA = A.w / decA * 100, wrN = N.w / decN * 100;
+      if (wrA >= WR_BREAKEVEN || wrN >= WR_BREAKEVEN) continue;  // где-то держится - не трогаем
+      // Час уже помечен целиком: его же день-час и четверти были бы
+      // повторами одной и той же рекомендации.
+      if (lvl.kind !== 'Час' && badHours.has(lvl.hourOf(k))) continue;
+      hits.push({ kind: lvl.kind, hour: lvl.hourOf(k), label: lvl.label(k), wrA, decA, wrN, decN, pnlN: N.pnl });
+    }
+
+    if (lvl.kind === 'Час') hits.forEach(h => badHours.add(h.hour));
+    found.push(...hits);
+  }
+
+  if (!found.length) {
+    return '<div class="dev-urgent-empty">Устойчиво слабых окон нет: часы, просевшие за 30 дней, историей не подтверждаются (или выборки пока не хватает).</div>';
+  }
+
+  // Самые дорогие сверху - с них и начинать отключение.
+  found.sort((a, b) => a.pnlN - b.pnlN);
+  const lost = found.reduce((acc, x) => acc + Math.min(0, x.pnlN), 0);
+
+  const head = `<div class="dev-urgent-empty" style="margin-bottom:8px">Найдено окон: <b>${found.length}</b>. За последние 30 дней они дали <b class="wr-red">${devFmtUsdt(lost)}</b>.</div>`;
+
+  return head + found.map(x => `<div class="dev-urgent-item dev-urgent-critical">
+      <span class="dev-urgent-icon">⛔</span>
+      <div class="dev-urgent-text">
+        <div class="dev-urgent-label">${x.label} <span class="dev-stop-scope">${x.kind}</span></div>
+        <div class="dev-urgent-reason">
+          Всё время: WR <b class="wr-red">${x.wrA.toFixed(0)}%</b> (n=${x.decA}) ·
+          30 дней: WR <b class="wr-red">${x.wrN.toFixed(0)}%</b> (n=${x.decN}) ·
+          за 30 дней <b class="${x.pnlN >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(x.pnlN)}</b>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
 // ===== СПИСОК "СТОИТ РАСШИРИТЬ" (под чек-листом "требуют пересмотра") =====
 // Обратная сторона урчент-списка: доказанно сильные индикаторы (WR ≥ WR_GREEN на значимой
 // выборке), которые сейчас недоиспользуются — двух типов:
@@ -3231,6 +3352,13 @@ async function renderDevL30d() {
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
     try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
+    // Стоп-окна: та же популяция, но два горизонта - вся история из
+    // combinedRaw (там сырые строки ОБОИХ листов целиком, без отсечки по дате)
+    // против 30-дневного среза sigs.
+    try {
+      const allSigs = combinedRaw.map(devParseSignal).filter(Boolean);
+      devShowTable('devStopBlock', 'devStopCard', devBuildStopWindowsSection(sigs, allSigs));
+    } catch (e) { console.log('DEV stop windows error:', e); }
     try { devRenderBadlist(); } catch (e) { console.log('DEV badlist error:', e); }
     try { devRenderToplist(); } catch (e) { console.log('DEV toplist error:', e); }
     try { devShowTable('devOpportunityBlock', 'devOpportunityCard', devBuildOpportunitySection(sigs, combinedRaw)); } catch (e) { console.log('DEV opportunity error:', e); }

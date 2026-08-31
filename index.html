@@ -861,6 +861,12 @@
           <div id="devUrgentBlock" class="dev-urgent-list"></div>
         </div>
 
+        <div class="pnl-chart-card dev-urgent-card" id="devStopCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Стоп-окна: сигналы лучше остановить <span class="dev-chip">DEV</span></div>
+          <p class="dev-note" style="margin-bottom:10px">Пересечение двух горизонтов: окна, которые были убыточны ЗА ВСЮ ИСТОРИЮ и остаются такими ЗА 30 ДНЕЙ. По отдельности срезы обманчивы - старая слабость могла давно выправиться, а свежая просадка оказаться случайной. Здесь только то, что подтверждается обоими. Три уровня: час, день недели + час, 15-минутный интервал; если час плох целиком, его же клетки не дублируются. Данные: ALLsignal + BLOCKEDsignal, деньги по ставкам PRO (ETH 125 / BTC 250).</p>
+          <div id="devStopBlock" class="dev-urgent-list"></div>
+        </div>
+
         <div class="pnl-chart-card dev-urgent-card" id="devBadlistCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>Конфигурации на удаление <span class="dev-chip">DEV</span></div>
           <p class="dev-note" style="margin-bottom:6px">Активные конфигурации (сигнал за последние 7 дней), у которых WR за последние 4 дня упал ниже безубытка 55.6% (= отрицательный EV). Данные: ALLsignal + BLOCKEDsignal, группировка по строке настроек.</p>

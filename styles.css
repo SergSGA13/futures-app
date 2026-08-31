@@ -2659,3 +2659,77 @@ html, body {
 }
 .sop-chip.win-lose { background: rgba(78,255,160,.10); border-color: rgba(78,255,160,.3); color: var(--green); }
 .sop-chip-arrow { color: var(--text-muted); font-size: 12px; }
+
+/* ===== БЛИЖАЙШИЕ ЗОНЫ: календарь стоп- и рабочих окон на сегодня ===== */
+/* Кнопка на главной стоит рядом с «Основной канал», поэтому строка ссылок
+   раскладывается в две колонки. */
+.links-section.links-row { flex-direction: row; gap: 8px; }
+.links-section.links-row > * { flex: 1 1 0; min-width: 0; }
+.zone-link { cursor: pointer; }
+.zone-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.zones-status { display: flex; flex-direction: column; gap: 6px; }
+.zone-now-card {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--card-border); border-radius: var(--radius);
+  background: var(--card); padding: 12px 14px;
+}
+.zone-now-time { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+.zone-now-body { min-width: 0; }
+.zone-now-title { font-size: 14px; font-weight: 800; }
+.zone-now-sub { font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 2px; }
+.zone-now-neutral .zone-now-time { color: var(--text-muted); }
+.zone-now-stop {
+  border-color: rgba(255,82,114,.45); background: rgba(255,82,114,.10);
+  box-shadow: 0 0 20px rgba(255,82,114,.14);
+}
+.zone-now-stop .zone-now-time, .zone-now-stop .zone-now-title { color: #FF5272; }
+.zone-now-good {
+  border-color: rgba(78,255,160,.45); background: rgba(78,255,160,.10);
+  box-shadow: 0 0 20px rgba(78,255,160,.14);
+}
+.zone-now-good .zone-now-time, .zone-now-good .zone-now-title { color: #4EFFA0; }
+
+.zone-next {
+  font-size: 12px; color: var(--text-muted); line-height: 1.4;
+  border: 1px solid var(--card-border); border-radius: var(--radius-sm);
+  background: var(--card); padding: 8px 12px;
+}
+.zone-next b { font-weight: 800; }
+.zone-next span { opacity: .75; }
+.zone-next-stop { border-color: rgba(255,82,114,.28); }
+.zone-next-stop b { color: #FF5272; }
+.zone-next-good { border-color: rgba(78,255,160,.28); }
+.zone-next-good b { color: #4EFFA0; }
+.zone-next-none { opacity: .7; }
+
+.zones-cal { display: flex; flex-direction: column; gap: 2px; }
+.zone-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.zone-row-past { opacity: .45; }
+.zone-row-now .zone-h { color: var(--blue); font-weight: 800; }
+.zone-h {
+  flex: 0 0 22px; font-size: 10.5px; font-weight: 700; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.zone-bar {
+  position: relative; flex: 1 1 auto; height: 16px; min-width: 0;
+  border-radius: 5px; background: rgba(255,255,255,.035);
+  border: 1px solid rgba(255,255,255,.05); overflow: hidden;
+}
+.zone-row-now .zone-bar { border-color: rgba(102,163,255,.45); box-shadow: 0 0 12px rgba(102,163,255,.18); }
+.zone-seg { position: absolute; top: 0; bottom: 0; }
+.zone-seg-stop { background: rgba(255,82,114,.55); }
+.zone-seg-good { background: rgba(78,255,160,.5); }
+/* Метка текущей минуты внутри часа */
+.zone-mark {
+  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  background: #66A3FF; box-shadow: 0 0 8px rgba(102,163,255,.9);
+}
+.zone-tags { flex: 0 0 auto; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 42%; }
+.zone-tag {
+  font-size: 8.5px; font-weight: 700; letter-spacing: .2px;
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+.zone-tag-stop { color: #FF8FA6; background: rgba(255,82,114,.12); border: 1px solid rgba(255,82,114,.30); }
+.zone-tag-good { color: #7DFFC2; background: rgba(78,255,160,.12); border: 1px solid rgba(78,255,160,.30); }
+.zones-legend { display: flex; gap: 8px; margin-top: 10px; }

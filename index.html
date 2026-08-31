@@ -125,11 +125,15 @@
       </div>
 
       <!-- Community links -->
-      <div class="links-section">
+      <div class="links-section links-row">
         <a href="https://t.me/+Bx9PHt1Dy743ZTgy" class="tg-link" target="_blank">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="#66A3FF"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>
           <span data-i18n="link.main">Основной канал</span>
         </a>
+        <div class="tg-link zone-link" onclick="navigate('zones')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="12" cy="16" r="2" fill="#4EFFA0" stroke="none"/></svg>
+          <span data-i18n="zones.btn">Ближайшие зоны</span>
+        </div>
       </div>
 
       <div style="padding: 0 16px 10px">
@@ -140,6 +144,31 @@
       </div>
     </div>
     <!-- /HOME PAGE -->
+
+    <!-- ZONES PAGE (календарь стоп- и рабочих окон на сегодня) -->
+    <div class="page" id="page-zones">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom:6px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span data-i18n="zones.title">Ближайшие зоны</span>
+        </h2>
+        <p class="dev-note" id="zonesHead"></p>
+
+        <div id="zonesStatus" class="zones-status"></div>
+
+        <div class="pnl-chart-card" style="margin-top:12px">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="zones.day">Сутки по часам</span></div>
+          <p class="dev-note" style="margin-bottom:10px" data-i18n="zones.note">Красным - стоп-окна, зелёным - рабочие. Полоса показывает минуты внутри часа, поэтому 15-минутные зоны видны отдельно. Вертикальная метка - текущее время. Данные те же, что в DEV-разделе: окно считается устойчивым, только если держится по одну сторону безубытка на всех горизонтах сразу.</p>
+          <div id="zonesCalendar" class="zones-cal"></div>
+          <div id="zonesEmpty" class="signals-empty" style="display:none" data-i18n="zones.empty">На сегодня устойчивых зон не найдено - торгуйте по обычным правилам.</div>
+          <div class="zones-legend">
+            <span class="zone-tag zone-tag-stop">стоп-зона</span>
+            <span class="zone-tag zone-tag-good">рабочая зона</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /ZONES PAGE -->
 
     <!-- FUTURES PREDICTION PAGE -->
     <div class="page" id="page-futures-prediction">

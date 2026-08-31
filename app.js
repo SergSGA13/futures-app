@@ -47,6 +47,7 @@ const navMap = {
   'stats-l30d-dev': 'nav-statistics',
   'stats-all': 'nav-statistics',
   'stats-mexc': 'nav-statistics',
+  'zones': 'nav-home',
   'articles': 'nav-articles',
 };
 const pageTitleKeys = {
@@ -59,6 +60,7 @@ const pageTitleKeys = {
   'stats-l30d-dev': 'title.stats.l30d.dev',
   'stats-all': 'title.stats.all',
   'stats-mexc': 'title.stats.mexc',
+  'zones': 'title.zones',
   'article-tilt': 'title.art',
   'article-paradigm': 'title.art',
   'article-what-is': 'title.art',
@@ -88,6 +90,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
+  if (pageId === 'zones') { renderZones(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
 
@@ -2240,6 +2243,7 @@ function devStopLevels_() {
       hourOf: k => +k,
       label: k => `${p2(+k)}:00-${p2(+k)}:59`,
       reason: k => devTimeReason_({ hour: +k }),
+      when: k => ({ hour: +k }),
     },
     {
       code: 'dowhour', kind: 'День+час', min: DEV_STOP_MIN_CELL,
@@ -2250,6 +2254,7 @@ function devStopLevels_() {
       hourOf: k => +k.split('|')[1],
       label: k => { const [d, h] = k.split('|'); return `${DAY[+d]} ${p2(+h)}:00`; },
       reason: k => { const [d, h] = k.split('|'); return devTimeReason_({ hour: +h, dow: +d }); },
+      when: k => { const [d, h] = k.split('|'); return { dow: +d, hour: +h }; },
     },
     {
       code: 'q15', kind: '15 мин', min: DEV_STOP_MIN_CELL,
@@ -2260,6 +2265,7 @@ function devStopLevels_() {
         return `${p2(+h)}:${p2(m0)}-${p2(+h)}:${p2(m0 + 14)}`;
       },
       reason: k => { const [h, q] = k.split('|'); return devTimeReason_({ hour: +h, quarter: +q }); },
+      when: k => { const [h, q] = k.split('|'); return { hour: +h, quarter: +q }; },
     },
     {
       // Фаза 4H считается по UTC, поэтому конкретного «часа» у неё нет -
@@ -2271,6 +2277,7 @@ function devStopLevels_() {
       reason: k => k === 'open'
         ? 'открытие 4-часовой свечи (границы 00/04/08/12/16/20 UTC)'
         : 'закрытие 4-часовой свечи (границы 00/04/08/12/16/20 UTC)',
+      when: k => ({ phase: k }),
     },
   ];
 }
@@ -2352,6 +2359,9 @@ function devComputeWindows_(allSigs, mode) {
       hits.push({
         code: lvl.code, kind: lvl.kind, hour,
         label: lvl.label(k), reason: lvl.reason(k),
+        // структурированное время нужно календарю «Ближайшие зоны»:
+        // по метке вроде «Пн 14:00» его пришлось бы разбирать обратно
+        when: lvl.when(k),
         per, pnl30: recent.pnl || 0,
       });
     }
@@ -2464,6 +2474,215 @@ function devBuildWindowSections(allSigs) {
     const card = document.getElementById(mode === 'stop' ? 'devStopCard' : 'devGoodCard');
     if (card) card.style.display = 'block';
   }
+}
+
+
+// ===== БЛИЖАЙШИЕ ЗОНЫ: календарь дня по стоп- и рабочим окнам =====
+// DEV-раздел отвечает на вопрос «что вообще выключить», но перед входом
+// нужен другой ответ - «а сейчас-то можно?». Здесь те же самые окна
+// (devComputeWindows_) разложены на сегодняшние сутки: что идёт прямо
+// сейчас и что будет дальше.
+// Время везде варшавское - в нём же лежат все исходные данные, поэтому
+// у трейдера из другого часового пояса подсветка не поедет.
+const ZONES = { stop: null, good: null, loaded: false, timer: null };
+
+function zonesPad_(n) { return String(n).padStart(2, '0'); }
+
+// Текущий момент по Варшаве. Правило перехода оценивается по UTC-дате -
+// сами переходы EU происходят в 01:00 UTC, так что это точно.
+function warsawNow_() {
+  const now = new Date();
+  const utcDk = `${now.getUTCFullYear()}-${zonesPad_(now.getUTCMonth() + 1)}-${zonesPad_(now.getUTCDate())}`;
+  const off = isWarsawDst_(utcDk) ? 2 : 1;
+  const w = new Date(now.getTime() + off * 3600000);
+  return {
+    hour: w.getUTCHours(), minute: w.getUTCMinutes(),
+    dow: (w.getUTCDay() + 6) % 7,                 // Пн=0
+    minOfDay: w.getUTCHours() * 60 + w.getUTCMinutes(),
+    dk: `${w.getUTCFullYear()}-${zonesPad_(w.getUTCMonth() + 1)}-${zonesPad_(w.getUTCDate())}`,
+    offset: off,
+  };
+}
+
+// Сигналы для расчёта - те же два листа, что и в DEV-блоке.
+async function zonesFetchSigs_() {
+  const [allRows, blockedRows] = await Promise.all([fetchAllSignals(), fetchBlockedSignals()]);
+  const blockedNorm = (blockedRows && blockedRows.length > 1)
+    ? blockedRows.slice(1).map(devNormalizeBlockedRow) : [];
+  const combined = (allRows && allRows.length ? allRows : []).concat(blockedNorm);
+  return combined.map(devParseSignal).filter(Boolean);
+}
+
+// Раскладывает окно на конкретные отрезки СЕГОДНЯШНИХ суток (минуты от
+// полуночи). Часовое окно - весь час; день+час - только если совпал день
+// недели; 15 минут - своя четверть; фаза 4H - шесть отрезков по 15 минут,
+// посчитанных из UTC-границ с поправкой на летнее время.
+function zonesRangesOf_(item, now) {
+  const w = item.when || {};
+  if (w.phase) {
+    const utcHours = w.phase === 'open' ? [0, 4, 8, 12, 16, 20] : [3, 7, 11, 15, 19, 23];
+    return utcHours.map(uh => {
+      const wh = (uh + now.offset) % 24;
+      const start = wh * 60 + (w.phase === 'open' ? 0 : 45);
+      return { start, end: start + 15 };
+    });
+  }
+  if (w.dow != null) {
+    if (w.dow !== now.dow) return [];
+    return [{ start: w.hour * 60, end: w.hour * 60 + 60 }];
+  }
+  if (w.quarter != null) {
+    const start = w.hour * 60 + w.quarter * 15;
+    return [{ start, end: start + 15 }];
+  }
+  if (w.hour != null) return [{ start: w.hour * 60, end: w.hour * 60 + 60 }];
+  return [];
+}
+
+// Все отрезки сегодняшнего дня из обоих списков, отсортированные по времени.
+function zonesBuildDay_(now) {
+  const out = [];
+  for (const [mode, items] of [['stop', ZONES.stop], ['good', ZONES.good]]) {
+    const list = (items && items.items) || [];
+    for (const it of list) {
+      for (const r of zonesRangesOf_(it, now)) {
+        out.push({ mode, start: r.start, end: r.end, label: it.label, kind: it.kind, reason: it.reason, pnl30: it.pnl30 });
+      }
+    }
+  }
+  return out.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+function zonesFmtMin_(m) {
+  const mm = ((m % 1440) + 1440) % 1440;
+  return `${zonesPad_(Math.floor(mm / 60))}:${zonesPad_(mm % 60)}`;
+}
+function zonesFmtLeft_(mins) {
+  if (mins < 60) return `через ${mins} мин`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `через ${h} ч ${m} мин` : `через ${h} ч`;
+}
+
+const ZONE_DAYS = ['понедельник', 'вторник', 'среду', 'четверг', 'пятницу', 'субботу', 'воскресенье'];
+
+function zonesRenderStatus_(ranges, now) {
+  const el = document.getElementById('zonesStatus');
+  if (!el) return;
+
+  const cur = ranges.filter(r => now.minOfDay >= r.start && now.minOfDay < r.end);
+  const curStop = cur.find(r => r.mode === 'stop');
+  const curGood = cur.find(r => r.mode === 'good');
+
+  let nowCls = 'zone-now-neutral', nowTitle = 'Нейтральное время', nowSub = 'Ни стоп-, ни рабочих окон прямо сейчас нет.';
+  if (curStop) {
+    nowCls = 'zone-now-stop'; nowTitle = 'Стоп-зона';
+    nowSub = `${curStop.label} - до ${zonesFmtMin_(curStop.end)}. Лучше пропустить или снизить объём.`;
+  } else if (curGood) {
+    nowCls = 'zone-now-good'; nowTitle = 'Рабочая зона';
+    nowSub = `${curGood.label} - до ${zonesFmtMin_(curGood.end)}. Окно, которое стабильно вывозит.`;
+  }
+
+  // Ближайшие впереди - по одной каждого типа, чтобы было видно и «когда
+  // прекратить», и «когда снова можно».
+  const ahead = ranges.filter(r => r.start > now.minOfDay);
+  const nextStop = ahead.find(r => r.mode === 'stop');
+  const nextGood = ahead.find(r => r.mode === 'good');
+  const nextHtml = (r, cls, word) => r
+    ? `<div class="zone-next ${cls}"><b>${word}</b> ${r.label} · ${zonesFmtMin_(r.start)} <span>${zonesFmtLeft_(r.start - now.minOfDay)}</span></div>`
+    : `<div class="zone-next zone-next-none">${word} сегодня больше нет</div>`;
+
+  el.innerHTML = `
+    <div class="zone-now-card ${nowCls}">
+      <div class="zone-now-time">${zonesPad_(now.hour)}:${zonesPad_(now.minute)}</div>
+      <div class="zone-now-body">
+        <div class="zone-now-title">${nowTitle}</div>
+        <div class="zone-now-sub">${nowSub}</div>
+      </div>
+    </div>
+    ${nextHtml(nextStop, 'zone-next-stop', 'Стоп-зона:')}
+    ${nextHtml(nextGood, 'zone-next-good', 'Рабочая зона:')}`;
+}
+
+function zonesRenderCalendar_(ranges, now) {
+  const el = document.getElementById('zonesCalendar');
+  if (!el) return;
+
+  let html = '';
+  for (let h = 0; h < 24; h++) {
+    const hStart = h * 60, hEnd = hStart + 60;
+    const segs = ranges.filter(r => r.end > hStart && r.start < hEnd);
+    const isNow = now.hour === h;
+    const past = h < now.hour;
+
+    // Широкие отрезки рисуем первыми, узкие поверх: иначе часовое окно
+    // закрасило бы 15-минутное внутри себя, и было бы не видно, что
+    // четверть часа ведёт себя иначе, чем час целиком.
+    const bars = segs.slice()
+      .sort((a, b) => (b.end - b.start) - (a.end - a.start))
+      .map(r => {
+        const a = Math.max(r.start, hStart), b = Math.min(r.end, hEnd);
+        const left = (a - hStart) / 60 * 100, width = (b - a) / 60 * 100;
+        return `<div class="zone-seg zone-seg-${r.mode}" style="left:${left}%;width:${width}%"></div>`;
+      }).join('');
+
+    const nowMark = isNow
+      ? `<div class="zone-mark" style="left:${now.minute / 60 * 100}%"></div>` : '';
+
+    // Подписи: у часового окна - одна на час, у мелких - со своим временем,
+    // иначе строка «07» с четвертью выглядела бы как весь час.
+    const tags = segs.map(r => {
+      const full = r.start <= hStart && r.end >= hEnd;
+      const txt = full ? r.kind : `${zonesFmtMin_(r.start)}-${zonesFmtMin_(r.end)}`;
+      return `<span class="zone-tag zone-tag-${r.mode}">${txt}</span>`;
+    }).join('');
+
+    html += `<div class="zone-row ${isNow ? 'zone-row-now' : ''} ${past ? 'zone-row-past' : ''}">
+      <div class="zone-h">${zonesPad_(h)}</div>
+      <div class="zone-bar">${bars}${nowMark}</div>
+      <div class="zone-tags">${tags}</div>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function zonesRender_() {
+  const now = warsawNow_();
+  const head = document.getElementById('zonesHead');
+  if (head) {
+    head.textContent = `Сегодня, ${ZONE_DAYS[now.dow]} · время варшавское (UTC+${now.offset})`;
+  }
+  const ranges = zonesBuildDay_(now);
+  zonesRenderStatus_(ranges, now);
+  zonesRenderCalendar_(ranges, now);
+
+  const legend = document.getElementById('zonesEmpty');
+  if (legend) {
+    legend.style.display = ranges.length ? 'none' : 'block';
+  }
+}
+
+async function renderZones() {
+  const status = document.getElementById('zonesStatus');
+  if (!ZONES.loaded) {
+    if (status) status.innerHTML = '<div class="signals-loading">Загрузка...</div>';
+    try {
+      const sigs = await zonesFetchSigs_();
+      ZONES.stop = devComputeWindows_(sigs, 'stop');
+      ZONES.good = devComputeWindows_(sigs, 'good');
+      ZONES.loaded = true;
+    } catch (e) {
+      console.log('Zones error:', e);
+      if (status) status.innerHTML = '<div class="signals-empty">Не удалось загрузить данные</div>';
+      return;
+    }
+  }
+  zonesRender_();
+
+  // Пока страница открыта, подсветка «сейчас» должна ехать сама.
+  if (ZONES.timer) clearInterval(ZONES.timer);
+  ZONES.timer = setInterval(() => {
+    if (currentPage === 'zones') zonesRender_(); else { clearInterval(ZONES.timer); ZONES.timer = null; }
+  }, 30000);
 }
 
 // ===== СПИСОК "СТОИТ РАСШИРИТЬ" (под чек-листом "требуют пересмотра") =====

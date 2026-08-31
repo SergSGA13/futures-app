@@ -5608,9 +5608,34 @@ function initMexcStatsUI() {
 }
 
 // ===== INIT =====
+// ===== РЕЖИМ ОДНОЙ СТРАНИЦЫ «БЛИЖАЙШИЕ ЗОНЫ» =====
+// Партнёрам нужна ссылка именно на зоны, без остальной кухни. Признак
+// берём из трёх мест: start_param мини-приложения (t.me/<бот>/<апп>?startapp=zones),
+// хэша и query - чтобы ссылка работала и в Telegram, и просто в браузере.
+// Это ОФОРМЛЕНИЕ, а не защита: файлы приложения открыты, и по базовому
+// адресу по-прежнему доступно всё. Скрытие навигации лишь убирает соблазн
+// бродить по разделам.
+const ZONES_ONLY = (() => {
+  try {
+    const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
+    const hash = (location.hash || '').replace(/^#/, '');
+    const q = new URLSearchParams(location.search).get('view') || '';
+    return [sp, hash, q].includes('zones');
+  } catch (e) { return false; }
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
-  updateHeader('home');
   applyTranslations();
+
+  if (ZONES_ONLY) {
+    // Тяжёлую загрузку главной пропускаем: партнёру она не нужна, а зоны
+    // тянут свои данные сами - страница открывается заметно быстрее.
+    document.body.classList.add('zones-only');
+    navigate('zones');
+    return;
+  }
+
+  updateHeader('home');
   loadStatsPreview();
   loadPnlAllFromSignals('pnlChartHome', 'home', true);
   loadSignalsList();

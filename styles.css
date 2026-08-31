@@ -2760,3 +2760,10 @@ html, body {
   box-shadow: 0 0 10px rgba(78,255,160,.22);
 }
 .zones-legend { display: flex; gap: 8px; margin-top: 10px; }
+
+/* Режим одной страницы «Ближайшие зоны» (партнёрская ссылка):
+   нижняя навигация и кнопка «назад» убраны, контент занимает их место.
+   updateHeader выставляет display кнопке инлайном, поэтому !important. */
+body.zones-only .bottom-nav { display: none; }
+body.zones-only #backBtn { display: none !important; }
+body.zones-only .app-main { bottom: 0; }

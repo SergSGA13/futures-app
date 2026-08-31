@@ -2789,7 +2789,7 @@ function buildAllHeatmapSection(sigs) {
 
   let html = `<div class="heatmap-wrap"><table class="heatmap-table"><thead><tr><th>${t('hm.hour')}</th>`;
   dayLabels.forEach(d => { html += `<th>${d}</th>`; });
-  html += '</tr></thead><tbody>';
+  html += '<th>Σ</th></tr></thead><tbody>';
 
   let shown = 0;
   for (let h = 0; h < 24; h++) {
@@ -2799,15 +2799,29 @@ function buildAllHeatmapSection(sigs) {
     if (!anyData) continue;
     shown++;
     html += `<tr><td class="hm-day">${String(h).padStart(2, '0')}</td>`;
+    let rowW = 0, rowL = 0;
     for (let d = 0; d < 7; d++) {
       const { w, l } = grid[h][d];
       const dec = w + l;
+      rowW += w; rowL += l;
       if (dec < ALL_HEATMAP_MIN) {
         html += '<td class="hm-empty">-</td>';
       } else {
         const wr = Math.round(w / dec * 100);
         html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;
       }
+    }
+    // Итог по часу. Без него строку читают «по клеткам»: три зелёных против
+    // трёх красных выглядят как размен, хотя в красных клетках сигналов
+    // обычно больше и час в сумме уходит ниже безубытка. Считаем по ВСЕМ
+    // клеткам строки, включая слишком мелкие для раскраски: по отдельности
+    // им верить рано, а в сумме они часть того же часа.
+    const rowDec = rowW + rowL;
+    if (rowDec) {
+      const rowWr = Math.round(rowW / rowDec * 100);
+      html += `<td class="hm-sum" style="background:${wrRgba(rowWr)}">${rowWr}%<span class="hm-n">n=${rowDec}</span></td>`;
+    } else {
+      html += '<td class="hm-empty">-</td>';
     }
     html += '</tr>';
   }

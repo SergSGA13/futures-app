@@ -2541,14 +2541,49 @@ function zonesRangesOf_(item, now) {
 
 // Все отрезки сегодняшнего дня из обоих списков, отсортированные по времени.
 function zonesBuildDay_(now) {
-  const out = [];
+  const raw = [];
   for (const [mode, items] of [['stop', ZONES.stop], ['good', ZONES.good]]) {
     const list = (items && items.items) || [];
     for (const it of list) {
       for (const r of zonesRangesOf_(it, now)) {
-        out.push({ mode, start: r.start, end: r.end, label: it.label, kind: it.kind, reason: it.reason, pnl30: it.pnl30 });
+        raw.push({ mode, start: r.start, end: r.end, label: it.label, kind: it.kind, reason: it.reason, pnl30: it.pnl30 });
       }
     }
+  }
+  return zonesMergeRanges_(raw);
+}
+
+// Склеивает соседние и перекрывающиеся отрезки ОДНОГО типа в один.
+// Без этого сутки распадались на пачку четвертей подряд («01:30-01:45» и
+// «01:45-02:00» отдельными плашками), а совпавшие по времени окна разных
+// уровней - например 15-минутное и фаза закрытия 4H на 17:45-18:00 -
+// показывались дважды. Заодно чинится и «сейчас ... до»: раньше конец брался
+// у первой четверти, хотя зона тянулась дальше.
+function zonesMergeRanges_(ranges) {
+  const out = [];
+  for (const mode of ['stop', 'good']) {
+    const list = ranges.filter(r => r.mode === mode)
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    let cur = null;
+    for (const r of list) {
+      if (cur && r.start <= cur.end) {          // касаются или перекрываются
+        cur.end = Math.max(cur.end, r.end);
+        cur.parts.push(r);
+      } else {
+        if (cur) out.push(cur);
+        cur = { mode, start: r.start, end: r.end, parts: [r] };
+      }
+    }
+    if (cur) out.push(cur);
+  }
+  // Имя склейки берём у самой широкой части - она и задаёт смысл окна.
+  for (const m of out) {
+    const widest = m.parts.slice().sort((a, b) => (b.end - b.start) - (a.end - a.start))[0];
+    m.kind = widest.kind;
+    m.reason = widest.reason;
+    m.label = m.parts.length === 1
+      ? widest.label
+      : `${zonesFmtMin_(m.start)}-${zonesFmtMin_(m.end)}`;
   }
   return out.sort((a, b) => a.start - b.start || a.end - b.end);
 }
@@ -2622,24 +2657,25 @@ function zonesRenderCalendar_(ranges, now) {
       .map(r => {
         const a = Math.max(r.start, hStart), b = Math.min(r.end, hEnd);
         const left = (a - hStart) / 60 * 100, width = (b - a) / 60 * 100;
-        return `<div class="zone-seg zone-seg-${r.mode}" style="left:${left}%;width:${width}%"></div>`;
+        // Подпись внутри плашки. Ставим её только в том часе, где отрезок
+        // начинается, иначе склейка через границу часа подписалась бы дважды.
+        // На узкой плашке полный диапазон не помещается - оставляем начало.
+        let txt = '';
+        if (r.start >= hStart) {
+          const full = r.start <= hStart && r.end >= hEnd;
+          txt = full ? r.kind
+              : width >= 40 ? `${zonesFmtMin_(r.start)}-${zonesFmtMin_(r.end)}`
+              : width >= 20 ? zonesFmtMin_(r.start) : '';
+        }
+        return `<div class="zone-seg zone-seg-${r.mode}" style="left:${left}%;width:${width}%"><span>${txt}</span></div>`;
       }).join('');
 
     const nowMark = isNow
       ? `<div class="zone-mark" style="left:${now.minute / 60 * 100}%"></div>` : '';
 
-    // Подписи: у часового окна - одна на час, у мелких - со своим временем,
-    // иначе строка «07» с четвертью выглядела бы как весь час.
-    const tags = segs.map(r => {
-      const full = r.start <= hStart && r.end >= hEnd;
-      const txt = full ? r.kind : `${zonesFmtMin_(r.start)}-${zonesFmtMin_(r.end)}`;
-      return `<span class="zone-tag zone-tag-${r.mode}">${txt}</span>`;
-    }).join('');
-
     html += `<div class="zone-row ${isNow ? 'zone-row-now' : ''} ${past ? 'zone-row-past' : ''}">
       <div class="zone-h">${zonesPad_(h)}</div>
       <div class="zone-bar">${bars}${nowMark}</div>
-      <div class="zone-tags">${tags}</div>
     </div>`;
   }
   el.innerHTML = html;

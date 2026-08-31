@@ -2147,21 +2147,35 @@ function devBuildUrgentSection(sigs, combinedRaw) {
   }).join('');
 }
 
-// ===== СТОП-ОКНА: устойчиво слабые часы (ALL Periods × Last 30 Days) =====
+// ===== СТОП-ОКНА: устойчиво проблемные периоды =====
 // Срезы по времени на странице уже есть (WinRate по часам, тепловые карты),
-// но каждый смотрит только в ОДНО окно: либо за всю историю, либо за 30 дней.
-// По отдельности они обманчивы: слабый исторически час мог давно выправиться,
-// а свежая просадка часа - оказаться случайной на малой выборке. Здесь берём
-// ПЕРЕСЕЧЕНИЕ: окна, которые были убыточны исторически И остаются такими
-// сейчас. Именно их имеет смысл выключать, а не разовые провалы.
+// но каждый смотрит только в ОДНО окно истории и потому обманчив: слабый
+// когда-то час мог давно выправиться, а свежая просадка - оказаться
+// случайной на малой выборке.
 //
-// Оба окна считаются по одной и той же популяции (ALLsignal + BLOCKEDsignal),
-// разница только в глубине истории - иначе сравнение было бы нечестным:
-// «сейчас» считалось бы по одному набору сигналов, а «всегда» по другому.
-const DEV_STOP_MIN_ALL_HOUR = 60;  // минимум решённых за всю историю (час)
-const DEV_STOP_MIN_30_HOUR  = 15;  // и за последние 30 дней
-const DEV_STOP_MIN_ALL_CELL = 30;  // то же для более мелких клеток
-const DEV_STOP_MIN_30_CELL  = 8;   // (день×час и час×15мин)
+// Здесь окно проверяется НА ЛЕСТНИЦЕ ГОРИЗОНТОВ (год / полгода / 3 месяца /
+// 30 дней) и попадает в список, только если оно ниже безубытка на ВСЕХ
+// горизонтах, где хватило выборки. Это и есть «проблемное на постоянной
+// основе», а не разовый провал.
+// Лестница подрезается под реальную глубину данных: если истории меньше
+// года, горизонт 365 дней совпал бы с «всей историей» и был бы пустым
+// дублем 180-дневного - такие ступени отбрасываются.
+//
+// Все горизонты считаются по ОДНОЙ популяции (ALLsignal + BLOCKEDsignal),
+// разница только в глубине - иначе «сейчас» и «всегда» считались бы по
+// разным наборам сигналов и сравнение было бы нечестным.
+const DEV_STOP_HORIZONS = [365, 180, 90, 30];
+// Минимум решённых сигналов на горизонт: для часа и для мелких клеток
+// (день×час, 15 минут, фаза 4H). Горизонт с меньшей выборкой не считается
+// ни за, ни против - он просто «нет данных».
+const DEV_STOP_MIN_HOUR = { 365: 60, 180: 45, 90: 30, 30: 15 };
+const DEV_STOP_MIN_CELL = { 365: 25, 180: 20, 90: 15, 30: 8 };
+const DEV_STOP_MIN_HORIZONS = 3;   // на скольких ступенях нужны данные
+// На самом длинном горизонте мало быть просто «ниже безубытка»: 55% против
+// 55.6% при n=60 - это шум, а не повод останавливать торговлю. Требуем
+// заметный отрыв вниз именно на длинной дистанции; короткие горизонты
+// проверяются по обычному безубытку.
+const DEV_STOP_LONG_MARGIN = 3;    // процентных пунктов
 
 // Пн=0..Вс=6 по ключу даты; null - дату разобрать не удалось.
 function devDowIdx_(dk) {
@@ -2169,6 +2183,35 @@ function devDowIdx_(dk) {
   const [y, m, d] = dk.split('-').map(Number);
   const raw = new Date(y, m - 1, d).getDay();  // 0=Вс
   return raw === 0 ? 6 : raw - 1;
+}
+
+// Летнее время в Варшаве: с последнего воскресенья марта по последнее
+// воскресенье октября (правило ЕС). Нужно, чтобы перевести варшавское время
+// таблицы в UTC - см. dev4hPhase_.
+function isWarsawDst_(dk) {
+  const [y, m, d] = dk.split('-').map(Number);
+  // дата последнего воскресенья месяца
+  const lastSunday = (year, month1) => {
+    const last = new Date(Date.UTC(year, month1, 0));   // последний день месяца
+    return last.getUTCDate() - last.getUTCDay();
+  };
+  if (m < 3 || m > 10) return false;
+  if (m > 3 && m < 10) return true;
+  return m === 3 ? d >= lastSunday(y, 3) : d < lastSunday(y, 10);
+}
+
+// Фаза внутри 4-часовой свечи. Границы 4H выровнены по UTC (00/04/08/12/16/20),
+// а время в таблице - варшавское, которое дважды в год сдвигается на час.
+// Без пересчёта в UTC один и тот же «час открытия 4H» летом и зимой попадал
+// бы в разные клетки и паттерн размазался бы.
+function dev4hPhase_(s) {
+  if (s.hour == null || s.minute == null || !s.dk) return null;
+  const off = isWarsawDst_(s.dk) ? 2 : 1;
+  const utcHour = ((s.hour - off) % 24 + 24) % 24;
+  const pos = (utcHour % 4) * 60 + s.minute;    // минут от открытия 4H-свечи
+  if (pos < 15) return 'open';
+  if (pos >= 225) return 'close';
+  return null;                                   // середина свечи не интересна
 }
 
 // Сводка по ключу: победы, поражения и деньги (по ставкам PRO - как и
@@ -2192,53 +2235,119 @@ function devStopLevels_() {
   const p2 = n => String(n).padStart(2, '0');
   return [
     {
-      kind: 'Час', minAll: DEV_STOP_MIN_ALL_HOUR, minNew: DEV_STOP_MIN_30_HOUR,
+      kind: 'Час', min: DEV_STOP_MIN_HOUR,
       key: s => s.hour == null ? null : String(s.hour),
       hourOf: k => +k,
       label: k => `${p2(+k)}:00-${p2(+k)}:59`,
+      reason: k => devTimeReason_({ hour: +k }),
     },
     {
-      kind: 'День+час', minAll: DEV_STOP_MIN_ALL_CELL, minNew: DEV_STOP_MIN_30_CELL,
+      kind: 'День+час', min: DEV_STOP_MIN_CELL,
       key: s => {
         const d = devDowIdx_(s.dk);
         return (d == null || s.hour == null) ? null : `${d}|${s.hour}`;
       },
       hourOf: k => +k.split('|')[1],
       label: k => { const [d, h] = k.split('|'); return `${DAY[+d]} ${p2(+h)}:00`; },
+      reason: k => { const [d, h] = k.split('|'); return devTimeReason_({ hour: +h, dow: +d }); },
     },
     {
-      kind: '15 мин', minAll: DEV_STOP_MIN_ALL_CELL, minNew: DEV_STOP_MIN_30_CELL,
+      kind: '15 мин', min: DEV_STOP_MIN_CELL,
       key: s => (s.hour == null || s.minute == null) ? null : `${s.hour}|${Math.floor(s.minute / 15)}`,
       hourOf: k => +k.split('|')[0],
       label: k => {
         const [h, q] = k.split('|'); const m0 = +q * 15;
         return `${p2(+h)}:${p2(m0)}-${p2(+h)}:${p2(m0 + 14)}`;
       },
+      reason: k => { const [h, q] = k.split('|'); return devTimeReason_({ hour: +h, quarter: +q }); },
+    },
+    {
+      // Фаза 4H считается по UTC, поэтому конкретного «часа» у неё нет -
+      // из дедупликации по часам она исключена (hourOf возвращает null).
+      kind: '4H-свеча', min: DEV_STOP_MIN_CELL,
+      key: dev4hPhase_,
+      hourOf: () => null,
+      label: k => k === 'open' ? 'Первые 15 мин 4H-свечи' : 'Последние 15 мин 4H-свечи',
+      reason: k => k === 'open'
+        ? 'открытие 4-часовой свечи (границы 00/04/08/12/16/20 UTC)'
+        : 'закрытие 4-часовой свечи (границы 00/04/08/12/16/20 UTC)',
     },
   ];
 }
 
-// sigs30 - сигналы за 30 дней, allSigs - вся история (та же популяция).
-function devBuildStopWindowsSection(sigs30, allSigs) {
+// Вероятное объяснение для окна - справочник «что происходит на рынке в это
+// время по Варшаве». Это ГИПОТЕЗА, а не доказанная причина: совпадение по
+// времени ничего не доказывает, но подсказывает, где искать объяснение.
+function devTimeReason_({ hour, dow, quarter }) {
+  const r = [];
+  if (hour === 8)  r.push('предоткрытие Лондона');
+  if (hour === 9)  r.push('открытие Лондона (09:00)');
+  if (hour === 14) r.push('макро-данные США (14:30 - CPI, NFP)');
+  if (hour === 15) r.push('открытие фондовой Америки (15:30)');
+  if (hour === 16) r.push('первый час Америки, данные 16:00 (ISM и др.)');
+  if (hour === 17) r.push('европейское закрытие');
+  if (hour === 22) r.push('закрытие американской сессии (22:00)');
+  if (hour === 23 || hour <= 3) r.push('азиатская сессия, тонкая ликвидность');
+  if (dow === 0) r.push('начало недели, отработка выходного гэпа');
+  if (dow === 4) r.push('конец недели, закрытие позиций');
+  if (dow === 5 || dow === 6) r.push('выходные, тонкий рынок');
+  if (quarter === 0) r.push('первые минуты часа');
+  if (quarter === 3) r.push('закрытие часовой свечи');
+  return r.join(' · ');
+}
+
+// allSigs - вся доступная история (та же популяция, что и 30-дневный срез).
+function devBuildStopWindowsSection(allSigs) {
+  // Лестницу подрезаем под реальную глубину данных: горизонты длиннее
+  // истории дали бы копию самой длинной ступени.
+  const dks = allSigs.map(s => s.dk).filter(Boolean).sort();
+  if (!dks.length) return '<div class="dev-urgent-empty">Нет данных для анализа.</div>';
+  const spanDays = Math.round((new Date(dks[dks.length - 1]) - new Date(dks[0])) / 86400000) + 1;
+  const horizons = DEV_STOP_HORIZONS.filter(h => h === 30 || h < spanDays);
+  if (horizons.length < DEV_STOP_MIN_HORIZONS) {
+    return `<div class="dev-urgent-empty">Истории пока мало (${spanDays} дн.) - для вывода об устойчивости нужно минимум ${DEV_STOP_MIN_HORIZONS} горизонта сравнения.</div>`;
+  }
+
+  const slices = horizons.map(h => {
+    const cutoff = cutoffDk(h);
+    return { days: h, sigs: allSigs.filter(s => s.dk >= cutoff) };
+  });
+
   const found = [];
-  const badHours = new Set();   // часы, уже помеченные целиком
+  const badHours = new Set();
 
   for (const lvl of devStopLevels_()) {
-    const aAll = devStopAgg_(allSigs, lvl.key);
-    const aNew = devStopAgg_(sigs30, lvl.key);
+    const aggs = slices.map(sl => ({ days: sl.days, agg: devStopAgg_(sl.sigs, lvl.key) }));
+    const shortest = aggs[aggs.length - 1];   // 30 дней - самый свежий срез
 
     const hits = [];
-    for (const k of Object.keys(aNew)) {
-      const A = aAll[k], N = aNew[k];
-      if (!A) continue;
-      const decA = A.w + A.l, decN = N.w + N.l;
-      if (decA < lvl.minAll || decN < lvl.minNew) continue;      // выборки не хватает
-      const wrA = A.w / decA * 100, wrN = N.w / decN * 100;
-      if (wrA >= WR_BREAKEVEN || wrN >= WR_BREAKEVEN) continue;  // где-то держится - не трогаем
-      // Час уже помечен целиком: его же день-час и четверти были бы
-      // повторами одной и той же рекомендации.
-      if (lvl.kind !== 'Час' && badHours.has(lvl.hourOf(k))) continue;
-      hits.push({ kind: lvl.kind, hour: lvl.hourOf(k), label: lvl.label(k), wrA, decA, wrN, decN, pnlN: N.pnl });
+    for (const k of Object.keys(shortest.agg)) {
+      const per = [];
+      let bad = true;
+      for (const { days, agg } of aggs) {
+        const g = agg[k];
+        const dec = g ? g.w + g.l : 0;
+        if (dec < (lvl.min[days] || 0)) { per.push({ days, wr: null, dec }); continue; }
+        const wr = g.w / dec * 100;
+        per.push({ days, wr, dec, pnl: g.pnl });
+        if (wr >= WR_BREAKEVEN) bad = false;
+      }
+      const withData = per.filter(p => p.wr != null);
+      if (!bad || withData.length < DEV_STOP_MIN_HORIZONS) continue;
+      // Длинная дистанция должна быть убыточной с запасом, иначе окно
+      // «55% при безубытке 55.6%» попадало бы в список наравне с 40%.
+      if (withData[0].wr > WR_BREAKEVEN - DEV_STOP_LONG_MARGIN) continue;
+
+      const hour = lvl.hourOf(k);
+      // Час уже помечен целиком - его же клетки были бы повтором одной
+      // и той же рекомендации.
+      if (lvl.kind !== 'Час' && hour != null && badHours.has(hour)) continue;
+
+      const recent = per.find(p => p.days === 30) || {};
+      hits.push({
+        kind: lvl.kind, hour, label: lvl.label(k), reason: lvl.reason(k),
+        per: withData, pnl30: recent.pnl || 0,
+      });
     }
 
     if (lvl.kind === 'Час') hits.forEach(h => badHours.add(h.hour));
@@ -2246,26 +2355,27 @@ function devBuildStopWindowsSection(sigs30, allSigs) {
   }
 
   if (!found.length) {
-    return '<div class="dev-urgent-empty">Устойчиво слабых окон нет: часы, просевшие за 30 дней, историей не подтверждаются (или выборки пока не хватает).</div>';
+    return `<div class="dev-urgent-empty">Устойчиво проблемных окон нет: ни одно окно не держится ниже безубытка на всех горизонтах (${horizons.join(' / ')} дн.) - просадки не подтверждаются на длинной дистанции или выборки пока не хватает.</div>`;
   }
 
-  // Самые дорогие сверху - с них и начинать отключение.
-  found.sort((a, b) => a.pnlN - b.pnlN);
-  const lost = found.reduce((acc, x) => acc + Math.min(0, x.pnlN), 0);
+  found.sort((a, b) => a.pnl30 - b.pnl30);
+  const lost = found.reduce((acc, x) => acc + Math.min(0, x.pnl30), 0);
 
-  const head = `<div class="dev-urgent-empty" style="margin-bottom:8px">Найдено окон: <b>${found.length}</b>. За последние 30 дней они дали <b class="wr-red">${devFmtUsdt(lost)}</b>.</div>`;
+  const head = `<div class="dev-urgent-empty" style="margin-bottom:8px">Горизонты: <b>${horizons.join(' / ')}</b> дн. (история - ${spanDays} дн.). Найдено окон: <b>${found.length}</b>, за последние 30 дней они дали <b class="wr-red">${devFmtUsdt(lost)}</b>.</div>`;
 
-  return head + found.map(x => `<div class="dev-urgent-item dev-urgent-critical">
+  return head + found.map(x => {
+    const chain = x.per.map(p =>
+      `<span class="dev-stop-h">${p.days}д: <b class="wr-red">${p.wr.toFixed(0)}%</b> <i>n=${p.dec}</i></span>`).join('');
+    const why = x.reason ? `<div class="dev-stop-why">Вероятно: ${x.reason}</div>` : '';
+    return `<div class="dev-urgent-item dev-urgent-critical">
       <span class="dev-urgent-icon">⛔</span>
       <div class="dev-urgent-text">
         <div class="dev-urgent-label">${x.label} <span class="dev-stop-scope">${x.kind}</span></div>
-        <div class="dev-urgent-reason">
-          Всё время: WR <b class="wr-red">${x.wrA.toFixed(0)}%</b> (n=${x.decA}) ·
-          30 дней: WR <b class="wr-red">${x.wrN.toFixed(0)}%</b> (n=${x.decN}) ·
-          за 30 дней <b class="${x.pnlN >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(x.pnlN)}</b>
-        </div>
+        <div class="dev-urgent-reason">${chain}<span class="dev-stop-h">за 30 дней <b class="${x.pnl30 >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(x.pnl30)}</b></span></div>
+        ${why}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ===== СПИСОК "СТОИТ РАСШИРИТЬ" (под чек-листом "требуют пересмотра") =====
@@ -3352,12 +3462,12 @@ async function renderDevL30d() {
     // График не должен блокировать таблицы (например, если CDN Chart.js недоступен)
     try { devRenderPnlChart(sigs); } catch (e) { console.log('DEV PNL chart error:', e); }
     try { devShowTable('devUrgentBlock', 'devUrgentCard', devBuildUrgentSection(sigs, combinedRaw)); } catch (e) { console.log('DEV urgent error:', e); }
-    // Стоп-окна: та же популяция, но два горизонта - вся история из
-    // combinedRaw (там сырые строки ОБОИХ листов целиком, без отсечки по дате)
-    // против 30-дневного среза sigs.
+    // Стоп-окна: лестница горизонтов режется внутри из всей доступной
+    // истории - combinedRaw содержит сырые строки ОБОИХ листов целиком,
+    // без отсечки по дате.
     try {
       const allSigs = combinedRaw.map(devParseSignal).filter(Boolean);
-      devShowTable('devStopBlock', 'devStopCard', devBuildStopWindowsSection(sigs, allSigs));
+      devShowTable('devStopBlock', 'devStopCard', devBuildStopWindowsSection(allSigs));
     } catch (e) { console.log('DEV stop windows error:', e); }
     try { devRenderBadlist(); } catch (e) { console.log('DEV badlist error:', e); }
     try { devRenderToplist(); } catch (e) { console.log('DEV toplist error:', e); }

@@ -147,7 +147,7 @@
         "minGapMin": 20
       },
       "checkPayout": true,
-      "pnlSource": "positions"
+      "pnlSource": "history"
     }
   },
   "dirLimits": {

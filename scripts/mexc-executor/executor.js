@@ -3133,6 +3133,119 @@ async function readClosedPositions(dayStamp) {
   }, { stamp: dayStamp });
 }
 
+// ── сводка из блока «Trade History» под кнопками ставки ──
+//
+// У Toobit прямо на странице торговли, под Higher/Lower, биржа сама
+// считает итоги: вкладки Today / Last day / 30D / All и четыре числа.
+// Это надёжнее, чем складывать список закрытых позиций: считает сама
+// биржа, разбирать нечего, и лишних вкладок открывать не надо.
+const HIST_FIELDS = [
+  ['amount',    /Trade\s*amount/i],
+  ['win_rate',  /Win\s*rate/i],
+  ['contracts', /Total\s*trades/i],
+  ['pnl',       /Total\s*P\s*&?\s*L/i],
+];
+
+// Снимок блока: и числа, и то, какая вкладка выглядит выбранной.
+async function histSnap() {
+  return await page.evaluate((fields) => {
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    let box = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (!vis(el)) continue;
+      const t = el.innerText || '';
+      if (!/Trade\s*History/i.test(t)) continue;
+      if (!/Win\s*rate/i.test(t)) continue;
+      if (t.length > 900) continue;
+      if (!box || t.length < (box.innerText || '').length) box = el;
+    }
+    if (!box) return null;
+    const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const out = { raw: lines.slice(0, 20), tab: '' };
+    for (const [key, reSrc] of fields) {
+      const re = new RegExp(reSrc.source, reSrc.flags);
+      for (let i = 0; i < lines.length; i++) {
+        if (!re.test(lines[i])) continue;
+        const num = /[-+]?\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d+)?/;
+        const here = lines[i].replace(re, '');
+        const m = (here.match(num) || [])[0] || ((lines[i + 1] || '').match(num) || [])[0];
+        if (m == null) break;
+        const v = parseFloat(String(m).replace(/[\s ]/g, '').replace(',', '.'));
+        if (Number.isFinite(v)) out[key] = v;
+        break;
+      }
+    }
+    // Какая вкладка активна: разметка у биржи разная, поэтому смотрим и
+    // aria, и классы, и жирность с цветом - что-нибудь да выдаст выбор.
+    for (const el of box.querySelectorAll('*')) {
+      const t = (el.textContent || '').trim();
+      if (!/^(Today|Last\s*day|Yesterday|30D|All)$/i.test(t)) continue;
+      if (el.children.length) continue;
+      if (!vis(el)) continue;
+      const cs = getComputedStyle(el);
+      const cls = (el.className && el.className.baseVal !== undefined
+        ? el.className.baseVal : String(el.className || ''));
+      const on = el.getAttribute('aria-selected') === 'true'
+        || /active|selected|current|\bon\b|checked/i.test(cls)
+        || parseInt(cs.fontWeight, 10) >= 600;
+      if (on) out.tab = t;
+    }
+    out.sig = fields.map(([k]) => out[k]).join(',');
+    return out;
+  }, HIST_FIELDS.map(([k, re]) => [k, { source: re.source, flags: re.flags }]));
+}
+
+async function readTradeHistory() {
+  const before = await histSnap();
+  if (!before) { log('блок «Trade History» на странице не найден'); return null; }
+  const tab = page.getByText(/^\s*(Last\s*day|Yesterday)\s*$/i).first();
+  if (!(await tab.count()) || !(await tab.isVisible().catch(() => false))) {
+    log('вкладка «Last day» в блоке «Trade History» не найдена');
+    return null;
+  }
+  await humanClick(tab).catch(() => {});
+  // Переключение надо доказать, а не понадеяться на паузу: молча
+  // записать сегодняшние числа под вчерашней датой - худшее, что тут
+  // может случиться. Доказательство любое из двух: вкладка отметилась
+  // выбранной или числа в блоке сменились.
+  const until = Date.now() + 5000;
+  let now = before;
+  while (Date.now() < until) {
+    await page.waitForTimeout(300);
+    now = await histSnap() || now;
+    if (/last\s*day|yesterday/i.test(now.tab) || now.sig !== before.sig) break;
+  }
+  if (!/last\s*day|yesterday/i.test(now.tab) && now.sig === before.sig) {
+    log('вкладка «Last day» не отметилась выбранной и числа не изменились'
+      + ` - сводку не пишу (что видно: ${JSON.stringify(now.raw)})`);
+    await shot('pnl-tab-unproven');
+    return null;
+  }
+  return now;
+}
+
+async function collectHistory(name) {
+  const got = await readTradeHistory();
+  if (!got) return null;
+  if (got.pnl === undefined || got.contracts === undefined) {
+    log(`сводка ${exCfg(name).title}: числа из блока не прочитались`
+      + ` (что видно: ${JSON.stringify(got.raw)})`);
+    await shot('pnl-history-unreadable');
+    return null;
+  }
+  // Прибыль и убыток биржа тут не разделяет: из четырёх чисел их не
+  // достать, ставки разного размера. Оставляем пустыми - в панели они и
+  // не показываются, а выдумывать их значило бы врать в отчёте.
+  return {
+    date: yesterdayStamp(), exchange: name,
+    pnl: got.pnl, profit: '', loss: '',
+    contracts: got.contracts,
+    win_rate: got.win_rate ?? '',
+    amount: got.amount ?? '',
+    collected_at: new Date().toISOString(),
+  };
+}
+
 async function collectClosed(name) {
   const stamp = yesterdayStamp();
   const got = await readClosedPositions(stamp);
@@ -3178,11 +3291,13 @@ async function collectPnl(exName) {
 
   // У биржи может не быть сводного окна - тогда складываем сами по
   // списку закрытых позиций.
-  if ((E.pnlSource || 'dialog') === 'positions') {
-    const rec = await collectClosed(name);
+  const src = E.pnlSource || 'dialog';
+  if (src === 'history' || src === 'positions') {
+    const rec = src === 'history' ? await collectHistory(name) : await collectClosed(name);
     if (!rec) return null;
     pnlSave(rec);
-    log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, позиций ${rec.contracts}, `
+    log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, `
+      + `${src === 'history' ? 'сделок' : 'позиций'} ${rec.contracts}, `
       + `прибыльных ${rec.win_rate}%, оборот ${rec.amount} USDT`);
     return rec;
   }

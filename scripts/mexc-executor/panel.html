@@ -1087,9 +1087,11 @@ function drawPnl(d) {
   const per = d.days.length ? Math.round(d.total / d.days.length * 100) / 100 : 0;
   // Откуда взялись числа - зависит от биржи: у одной есть сводное окно,
   // у другой мы складываем сами по списку закрытых позиций.
-  const from = d.source === 'positions'
-    ? 'PNL сложен по списку закрытых позиций биржи за вчера'
-    : 'PNL взят из сводки самой биржи («PNL History» за вчера)';
+  const from = d.source === 'history'
+    ? 'PNL взят из блока «Trade History» на странице торговли (вкладка «Last day»)'
+    : d.source === 'positions'
+      ? 'PNL сложен по списку закрытых позиций биржи за вчера'
+      : 'PNL взят из сводки самой биржи («PNL History» за вчера)';
   $('pnlNote').textContent =
     `${from}, число ставок - из журнала.`
     + ` В среднем ${money(per)} USDT в день за ${d.days.length} дн.`

@@ -175,8 +175,8 @@
   #bets td.dir { font-weight:600; letter-spacing:.4px; }
   #bets td.dir.up   { color:var(--dir-up); }
   #bets td.dir.down { color:var(--dir-down); }
-  #logFilter button, #pnlRange button { padding:5px 11px; font-size:10.5px; }
-  #pnlRange button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
+  #logFilter button, #pnlRange button, #pnlEx button { padding:5px 11px; font-size:10.5px; }
+  #pnlRange button.on, #pnlEx button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
   /* График рисуем сами: библиотеку тянуть в панель, которая должна
      открываться через туннель на телефоне, - лишний вес и лишний внешний
      адрес. Двух осей нет намеренно: PNL и число ставок - разные единицы,
@@ -592,8 +592,12 @@
 
   <!-- Доходность: PNL приходит с самой биржи (её арифметику мы не
        пересчитываем), число ставок - из нашего журнала. -->
-  <div class="card" id="pnlCard">
+  <button class="sect-toggle" id="btnPnlSect">Доходность</button>
+  <div class="card hidden" id="pnlCard">
   <h2>Доходность <span class="hint" id="pnlAt"></span></h2>
+  <!-- Биржи не складываем: у каждой свои сутки, свои выплаты и свой
+       размер ставки, и общий итог не отвечает ни на один вопрос. -->
+  <div class="btns" style="margin-bottom:8px" id="pnlEx"></div>
   <div class="btns" style="margin-bottom:10px" id="pnlRange">
     <button data-d="7">7 дней</button>
     <button data-d="14">14 дней</button>
@@ -970,7 +974,11 @@ function drawStats(x) {
 // дневной PNL в тех же USDT - это одна величина в двух видах, и мерить их
 // одной шкалой можно, а вот число ставок нельзя, поэтому оно плиткой.
 let pnlDays = +(localStorage.getItem('mx_pnldays') ?? 30);
+let pnlEx = localStorage.getItem('mx_pnlex') || '';
 let pnlLoaded = false;
+// Раздел свёрнут по умолчанию: смотрят его раз в день, а места он
+// занимает как журнал. Выбор запоминается, как и у настроек.
+let pnlOpen = localStorage.getItem('mx_pnlopen') === '1';
 let pnlBusy = false;
 
 const money = v => (v > 0 ? '+' : '') + (Math.round(v * 100) / 100).toLocaleString('ru-RU');
@@ -1046,8 +1054,9 @@ function chartDaily(days, w, h) {
 }
 
 function drawPnl(d) {
-  const at = d.enabled ? `сбор в ${d.at}` : 'автосбор выключен';
-  $('pnlAt').textContent = at;
+  const who = (d.exchanges || []).find(e => e.name === d.exchange);
+  $('pnlAt').textContent = (who ? who.title + ' · ' : '')
+    + (d.enabled ? `сбор в ${d.at}` : 'автосбор выключен');
   $('pnlCount').textContent = d.days.length
     ? `дней в ряду: ${d.days.length}` : 'данных пока нет';
 
@@ -1076,9 +1085,13 @@ function drawPnl(d) {
     + `<div class="chart-cap">PNL по дням</div>${chartDaily(d.days, 900, 90)}`;
   wirePnlHover(d.days);
   const per = d.days.length ? Math.round(d.total / d.days.length * 100) / 100 : 0;
+  // Откуда взялись числа - зависит от биржи: у одной есть сводное окно,
+  // у другой мы складываем сами по списку закрытых позиций.
+  const from = d.source === 'positions'
+    ? 'PNL сложен по списку закрытых позиций биржи за вчера'
+    : 'PNL взят из сводки самой биржи («PNL History» за вчера)';
   $('pnlNote').textContent =
-    `PNL берётся из сводки самой биржи («PNL History» за вчера), число ставок - из журнала:`
-    + ` биржа считает контракты по-своему, и подменять её арифметику своей нельзя.`
+    `${from}, число ставок - из журнала.`
     + ` В среднем ${money(per)} USDT в день за ${d.days.length} дн.`
     + (d.winRate != null ? ` Доля прибыльных контрактов ${d.winRate}%.` : '')
     + ` Число ставок вынесено плиткой, а не второй осью: это другая единица,`
@@ -1127,11 +1140,38 @@ function wirePnlHover(days) {
 
 async function refreshPnl() {
   try {
-    const d = await api('pnl?days=' + pnlDays);
+    const d = await api(`pnl?days=${pnlDays}&ex=${encodeURIComponent(pnlEx)}`);
+    pnlEx = d.exchange || pnlEx;
+    // Кнопки бирж строим по ответу: список приходит с сервера, и
+    // добавить биржу в конфиг должно быть достаточно.
+    const ex = $('pnlEx');
+    const key = (d.exchanges || []).map(e => e.name).join('|');
+    if (ex.dataset.key !== key) {
+      ex.dataset.key = key;
+      ex.innerHTML = (d.exchanges || []).map(e =>
+        `<button data-ex="${esc(e.name)}">${esc(e.title)}</button>`).join('');
+    }
+    ex.querySelectorAll('button[data-ex]').forEach(b =>
+      b.classList.toggle('on', b.dataset.ex === pnlEx));
     drawPnl(d);
   } catch (e) { $('pnlNote').textContent = 'ряд доходности не прочитался'; }
 }
 
+document.getElementById('pnlEx').addEventListener('click', e => {
+  const n = e.target.dataset.ex;
+  if (!n) return;
+  pnlEx = n;
+  localStorage.setItem('mx_pnlex', n);
+  refreshPnl();
+});
+$('btnPnlSect').onclick = () => {
+  pnlOpen = !pnlOpen;
+  localStorage.setItem('mx_pnlopen', pnlOpen ? '1' : '0');
+  $('pnlCard').classList.toggle('hidden', !pnlOpen);
+  $('btnPnlSect').classList.toggle('open', pnlOpen);
+  // Ряд тянем только когда раздел раскрыли: свёрнутому он не нужен.
+  if (pnlOpen) refreshPnl();
+};
 document.getElementById('pnlRange').addEventListener('click', e => {
   const d = e.target.dataset.d;
   if (d === undefined) return;
@@ -1146,7 +1186,8 @@ $('btnPnlNow').onclick = async () => {
   pnlBusy = true;
   $('btnPnlNow').disabled = true;
   $('pnlNote').textContent = 'открываю биржу и читаю сводку - это занимает секунд двадцать…';
-  try { await post('pnl-now'); } catch (e) { /* покажет следующий опрос */ }
+  $('pnlCount').textContent = 'собираю…';
+  try { await post('pnl-now?ex=' + encodeURIComponent(pnlEx)); } catch (e) { /* покажет следующий опрос */ }
   setTimeout(async () => { await refreshPnl(); pnlBusy = false; $('btnPnlNow').disabled = false; }, 25000);
 };
 
@@ -1469,7 +1510,9 @@ async function refresh() {
     pnlLoaded = true;
     document.querySelectorAll('#pnlRange button[data-d]').forEach(b =>
       b.classList.toggle('on', +b.dataset.d === pnlDays));
-    refreshPnl();
+    $('pnlCard').classList.toggle('hidden', !pnlOpen);
+    $('btnPnlSect').classList.toggle('open', pnlOpen);
+    if (pnlOpen) refreshPnl();
   }
   buildIdleActions(s.idleRotation.allActions, s.idleRotation.actions);
   $('lastIdle').textContent = st.lastIdle

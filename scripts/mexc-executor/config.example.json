@@ -60,7 +60,8 @@
         "maxPerDay": 6,
         "minGapMin": 20
       },
-      "checkPayout": true
+      "checkPayout": true,
+      "pnlSource": "dialog"
     },
     "toobit": {
       "title": "Toobit",
@@ -145,7 +146,8 @@
         "maxPerDay": 6,
         "minGapMin": 20
       },
-      "checkPayout": true
+      "checkPayout": true,
+      "pnlSource": "positions"
     }
   },
   "dirLimits": {
@@ -179,7 +181,8 @@
     "enabled": true,
     "at": "18:08",
     "exchanges": [
-      "mexc"
+      "mexc",
+      "toobit"
     ]
   },
   "tfMemoMinutes": 90,

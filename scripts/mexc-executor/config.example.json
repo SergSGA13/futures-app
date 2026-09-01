@@ -147,7 +147,8 @@
         "minGapMin": 20
       },
       "checkPayout": true,
-      "pnlSource": "history"
+      "pnlSource": "history",
+      "pnlAt": "02:00"
     }
   },
   "dirLimits": {

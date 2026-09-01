@@ -188,7 +188,7 @@ const state = {
   windowManual: false,                 // окно открыто руками из панели
   windowAt: null,                      // когда окно открылось/закрылось само
   wakes: [],                           // времена пробуждений биржи вне смены
-  pnlDone: null,                       // за какую минуту сводка уже собрана
+  pnlDone: {},                         // по биржам: за какую минуту сводка уже собрана
 };
 
 // ── состояние на диске ──
@@ -3339,37 +3339,59 @@ async function collectPnl(exName) {
 
 // Раз в сутки в назначенную минуту. Время местное - исполнитель и так
 // живёт в том поясе, из которого на биржу смотрят.
+// Час в виде «ЧЧ:ММ». Опечатку не проглатываем молча: «ерунда» с
+// разбором «0:00» тихо переехала бы на полночь, и заметить это можно
+// было бы только по пропавшим строкам.
+const badAt = new Set();
+function hhmm(v, def) {
+  const at = String(v ?? '').trim();
+  const m = at.match(/^(\d{1,2}):(\d{2})$/);
+  const h = m && +m[1], mi = m && +m[2];
+  if (m && h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return { at, hour: h, min: mi };
+  if (at && !badAt.has(at)) { badAt.add(at); log(`час сбора «${at}» не разобрать - беру ${def}`); }
+  const d = String(def).match(/^(\d{1,2}):(\d{2})$/);
+  return d ? { at: String(def), hour: +d[1], min: +d[2] } : { at: '18:08', hour: 18, min: 8 };
+}
 function pnlDailyCfg() {
   const d = CFG.pnlDaily || {};
-  const at = String(d.at || '18:08');
-  const [h, m] = at.split(':').map(Number);
+  const base = hhmm(d.at, '18:08');
+  const names = Array.isArray(d.exchanges) && d.exchanges.length ? d.exchanges : ['mexc'];
+  // Час у каждой биржи свой: сутки они режут по-разному, и собирать надо
+  // тогда, когда «вчера» у биржи уже закрыто. Час задаётся рядом с
+  // pnlSource, в блоке самой биржи; не задан - берётся общий.
+  const plan = names.map(n => ({ name: n, ...hhmm((CFG.exchanges?.[n] || {}).pnlAt, base.at) }));
   return {
     enabled: d.enabled !== false,
-    hour: Number.isFinite(h) ? h : 18,
-    min: Number.isFinite(m) ? m : 8,
-    exchanges: Array.isArray(d.exchanges) && d.exchanges.length ? d.exchanges : ['mexc'],
-    at,
+    hour: base.hour, min: base.min, at: base.at,
+    exchanges: names,
+    plan,
+    atOf: n => (plan.find(x => x.name === n) || base).at,
   };
 }
 async function pnlTick() {
   const C = pnlDailyCfg();
   if (!C.enabled) return;
   const now = new Date();
-  if (now.getHours() !== C.hour || now.getMinutes() !== C.min) return;
-  const stamp = `${now.toDateString()}|${C.at}`;
-  if (state.pnlDone === stamp) return;      // минута длится 60 секунд, тик раз в 30
-  state.pnlDone = stamp;
+  const due = C.plan.filter(x => x.hour === now.getHours() && x.min === now.getMinutes()
+    && exNames().includes(x.name));
+  if (!due.length) return;
+  // Отметка на каждую биржу своя: часы у них разные, одна общая метка
+  // съедала бы вторую сводку.
+  if (typeof state.pnlDone !== 'object' || !state.pnlDone) state.pnlDone = {};
+  const stamp = x => `${now.toDateString()}|${x.at}`;
+  const todo = due.filter(x => state.pnlDone[x.name] !== stamp(x));
+  if (!todo.length) return;                 // минута длится 60 секунд, тик раз в 30
+  for (const x of todo) state.pnlDone[x.name] = stamp(x);
   saveState();
   if (state.busy || state.queue.length) {
     log('время сводки, но идёт ставка - соберу при следующем запуске');
-    state.pnlDone = null;
+    for (const x of todo) delete state.pnlDone[x.name];
     return;
   }
   state.busy = true;
   try {
-    for (const n of C.exchanges) {
-      if (!exNames().includes(n)) continue;
-      await collectPnl(n).catch(e => log(`сводка ${n} не собралась: ${e.message}`));
+    for (const x of todo) {
+      await collectPnl(x.name).catch(e => log(`сводка ${x.name} не собралась: ${e.message}`));
     }
     await restoreHome('после сводки');
   } finally {
@@ -3561,7 +3583,7 @@ function pnlSeries(days, only) {
     winRate: cn ? Math.round(win / cn * 10) / 10 : null,
     best: all.length ? all.reduce((a, b) => (b.pnl > a.pnl ? b : a)) : null,
     worst: all.length ? all.reduce((a, b) => (b.pnl < a.pnl ? b : a)) : null,
-    at: C.at,
+    at: only ? C.atOf(only) : C.at,
     enabled: C.enabled,
     exchange: only || null,
     source: only ? exCfg(only).pnlSource : null,

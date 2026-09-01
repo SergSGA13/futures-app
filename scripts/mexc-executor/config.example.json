@@ -59,7 +59,8 @@
         "enabled": false,
         "maxPerDay": 6,
         "minGapMin": 20
-      }
+      },
+      "checkPayout": true
     },
     "toobit": {
       "title": "Toobit",
@@ -143,7 +144,8 @@
         "enabled": false,
         "maxPerDay": 6,
         "minGapMin": 20
-      }
+      },
+      "checkPayout": true
     }
   },
   "dirLimits": {
@@ -173,6 +175,13 @@
     "strict": false
   },
   "statsDays": 7,
+  "pnlDaily": {
+    "enabled": true,
+    "at": "18:08",
+    "exchanges": [
+      "mexc"
+    ]
+  },
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "payoutDriftPts": 5,

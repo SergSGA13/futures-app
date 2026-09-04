@@ -360,6 +360,10 @@
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
      колонки не пляшут при обновлении раз в 5 секунд. */
+  /* Минуты актива стоят рядом с суммой: это одна настройка одного
+     инструмента, и разносить их по разным карточкам незачем. */
+  .asset-tf { display:flex; gap:6px; margin-left:auto; }
+  .asset-tf .chk { font-size:11px; color:var(--muted); gap:3px; }
   .row > b { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.3px;
              color:#DFF7FF; text-shadow:0 0 10px rgba(34,232,255,.25); }
 
@@ -1220,7 +1224,13 @@ function buildAssetControls(st) {
   $('stakeRows').innerHTML = exs(s).map(e =>
     (multi ? `<div class="ex-h">${e.title}</div>` : '')
     + e.assets.map(a =>
+      // Минуты у актива бывают уже общих: у акций MEXC десятиминутного
+      // события просто нет. До сих пор это была единственная настройка
+      // актива, которую нельзя было увидеть, не открыв config.json.
       `<div class="row"><span>Ставка ${a}, USDT</span>
+        <span class="asset-tf">${(e.execTimings || [10, 30]).map(t =>
+          `<label class="chk" title="Играть ${a} по ${t}-минутным событиям"><input type="checkbox"
+            class="atBox" data-ex="${e.name}" data-asset="${a}" value="${t}"> ${t}м</label>`).join('')}</span>
         <input type="number" id="st_${e.name}_${a}" min="1" step="1"
           data-ex="${e.name}" data-asset="${a}"></div>`).join('')
     + `<div class="row"><span>Мин. выплата, %</span>
@@ -1277,6 +1287,8 @@ function buildAssetControls(st) {
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
   document.querySelectorAll('.tfBox').forEach(c =>
     c.addEventListener('change', () => dirty.add('tfBox')));
+  document.querySelectorAll('.atBox').forEach(c =>
+    c.addEventListener('change', () => dirty.add('atBox')));
 }
 
 // Активы в ручной ставке - только те, что торгуются на выбранной бирже.
@@ -1468,6 +1480,12 @@ async function refresh() {
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
   }
+  if (!dirty.has('atBox')) {
+    document.querySelectorAll('.atBox').forEach(c => {
+      const e = exs(s).find(x => x.name === c.dataset.ex);
+      c.checked = !!e && (e.assetTimings[c.dataset.asset] || []).includes(+c.value);
+    });
+  }
   // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
   // время экспирации. Последнее важно: общий выключатель ниже биржу
   // с собственным списком не трогает.
@@ -1487,6 +1505,14 @@ async function refresh() {
               ? `более чем на ${(e.priceGuard || {}).maxAdversePct}%` : 'вовсе'}`
           : '');
   }).join('. ') + '.'
+    // Галочки минут в строке актива легко спутать с общими внизу -
+    // объясняем разницу ровно тогда, когда у кого-то список и правда уже.
+    + (exs(s).some(e => e.assets.some(a =>
+        String(e.assetTimings[a]) !== String(e.execTimings)))
+        ? ' Галочки минут в строке актива - его собственные: у акций MEXC'
+          + ' десятиминутного события не бывает. Они только СУЖАЮТ общий'
+          + ' список внизу: снятая там экспирация выключается у всех.'
+        : '')
     + ((s.priceGuard || {}).enabled !== false
         ? ' От сигнала до нажатия проходит от десяти секунд до минуты, и за это'
           + ' время цена откатывается: с проверкой вход по цене хуже сигнала'
@@ -1672,13 +1698,19 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="wn_"]').forEach(i => {
     if (i.value !== '') (wakes[i.dataset.ex] = wakes[i.dataset.ex] || {}).maxPerDay = +i.value;
   });
+  const assetTimings = {};
+  document.querySelectorAll('.atBox').forEach(i => {
+    const by = assetTimings[i.dataset.ex] = assetTimings[i.dataset.ex] || {};
+    by[i.dataset.asset] = by[i.dataset.asset] || [];
+    if (i.checked) by[i.dataset.asset].push(+i.value);
+  });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts, assetTimings,
     priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });
-  dirty.delete('tfBox');
+  dirty.delete('tfBox'); dirty.delete('atBox');
   flash('savedStakes'); afterSave('stakes');
 };
 $('btnSaveDir').onclick = async () => {

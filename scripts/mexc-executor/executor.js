@@ -3731,6 +3731,11 @@ function snapshot() {
           name: n, title: e.title, assets,
           stakes: Object.fromEntries(assets.map(a => [a, stakeFor(a, n)])),
           stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
+          // Какие минуты реально играются по каждому активу. Панель
+          // рисует их галочками: до сих пор это была единственная
+          // настройка актива, которую нельзя было увидеть, не открыв
+          // config.json.
+          assetTimings: Object.fromEntries(assets.map(a => [a, timingsFor(a, n)])),
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           stakeJitterPct: e.stakeJitterPct,
@@ -3836,6 +3841,38 @@ function applySettings(s) {
         if (v !== stakeFor(a, n)) changed.push(`ставка ${exCfg(n).title} ${a} ${stakeFor(a, n)}→${v}`);
         own[a] = v;
       }
+      exReset();
+    }
+  }
+  // Экспирации по активам: { mexc: { MU: [30] } }. Список актива сужает
+  // общий, поэтому храним его ТОЛЬКО когда он и правда уже: совпал с
+  // общим - ключ убираем, иначе завтрашняя правка общего списка молча
+  // разошлась бы с активом, который её как бы не касается.
+  if (s.assetTimings) {
+    for (const n of exNames()) {
+      const want = s.assetTimings[n];
+      if (!want || typeof want !== 'object') continue;
+      const e = CFG.exchanges[n];
+      const all = exCfg(n).execTimings.map(Number);
+      const own = e.assetTimings ? e.assetTimings : (e.assetTimings = { ...(exCfg(n).assetTimings || {}) });
+      for (const a of Object.keys(exCfg(n).urls || {})) {
+        if (!Array.isArray(want[a])) continue;
+        const was = timingsFor(a, n).join(',');
+        // Порядок берём у общего списка, а не у панели: строка «10,30»
+        // потом сравнивается с прежней, и «30,10» соврало бы об изменении.
+        const asked = want[a].map(Number);
+        const v = all.filter(x => asked.includes(x));
+        // Пустой список - это «не ставить по активу вовсе». Такого
+        // выключателя в панели нет, и молча его заводить нельзя:
+        // пустую галочку считаем промахом и оставляем как было.
+        if (!v.length) continue;
+        if (v.length === all.length) delete own[a]; else own[a] = v;
+        // Читаем задуманное, а не exCfg: его кэш сбрасывается только
+        // после цикла, и обратное чтение вернуло бы прежние минуты.
+        const now = v.join(',');
+        if (was !== now) changed.push(`экспирации ${exCfg(n).title} ${a} ${was}→${now}м`);
+      }
+      if (!Object.keys(own).length) delete e.assetTimings;
       exReset();
     }
   }

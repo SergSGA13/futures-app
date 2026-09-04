@@ -3844,38 +3844,6 @@ function applySettings(s) {
       exReset();
     }
   }
-  // Экспирации по активам: { mexc: { MU: [30] } }. Список актива сужает
-  // общий, поэтому храним его ТОЛЬКО когда он и правда уже: совпал с
-  // общим - ключ убираем, иначе завтрашняя правка общего списка молча
-  // разошлась бы с активом, который её как бы не касается.
-  if (s.assetTimings) {
-    for (const n of exNames()) {
-      const want = s.assetTimings[n];
-      if (!want || typeof want !== 'object') continue;
-      const e = CFG.exchanges[n];
-      const all = exCfg(n).execTimings.map(Number);
-      const own = e.assetTimings ? e.assetTimings : (e.assetTimings = { ...(exCfg(n).assetTimings || {}) });
-      for (const a of Object.keys(exCfg(n).urls || {})) {
-        if (!Array.isArray(want[a])) continue;
-        const was = timingsFor(a, n).join(',');
-        // Порядок берём у общего списка, а не у панели: строка «10,30»
-        // потом сравнивается с прежней, и «30,10» соврало бы об изменении.
-        const asked = want[a].map(Number);
-        const v = all.filter(x => asked.includes(x));
-        // Пустой список - это «не ставить по активу вовсе». Такого
-        // выключателя в панели нет, и молча его заводить нельзя:
-        // пустую галочку считаем промахом и оставляем как было.
-        if (!v.length) continue;
-        if (v.length === all.length) delete own[a]; else own[a] = v;
-        // Читаем задуманное, а не exCfg: его кэш сбрасывается только
-        // после цикла, и обратное чтение вернуло бы прежние минуты.
-        const now = v.join(',');
-        if (was !== now) changed.push(`экспирации ${exCfg(n).title} ${a} ${was}→${now}м`);
-      }
-      if (!Object.keys(own).length) delete e.assetTimings;
-      exReset();
-    }
-  }
   // Порог выплаты - тоже по биржам: на MEXC он страховка поверх сигнала,
   // на Toobit единственная проверка.
   if (s.minPayouts) {
@@ -4177,6 +4145,16 @@ const server = http.createServer((req, res) => {
         const asset = m.asset;
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
         const timing = Number(m.timing) === 30 ? 30 : 10;
+        // Ручная ставка идёт мимо приёма сигналов, а значит и мимо его
+        // проверки экспирации. У акций MEXC десятиминутного события на
+        // бирже нет вовсе: такая ставка ушла бы в никуда.
+        const allow = timingsFor(asset, ex);
+        if (!allow.includes(timing)) {
+          return sendJson(400, {
+            error: `${asset} на ${exCfg(ex).title} не играется по ${timing} минутам`,
+            known: allow,
+          });
+        }
         // Сумму присылает панель. Клампим здесь, а не только в панели:
         // запрос можно отправить и мимо неё, а верхняя граница - биржевая.
         const stake = m.stake == null ? null

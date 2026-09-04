@@ -362,8 +362,8 @@
      колонки не пляшут при обновлении раз в 5 секунд. */
   /* Минуты актива стоят рядом с суммой: это одна настройка одного
      инструмента, и разносить их по разным карточкам незачем. */
-  .asset-tf { display:flex; gap:6px; margin-left:auto; }
-  .asset-tf .chk { font-size:11px; color:var(--muted); gap:3px; }
+  .asset-tf { margin-left:auto; font-size:11px; color:var(--muted);
+               font-family:var(--mono); white-space:nowrap; }
   .row > b { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.3px;
              color:#DFF7FF; text-shadow:0 0 10px rgba(34,232,255,.25); }
 
@@ -1224,13 +1224,15 @@ function buildAssetControls(st) {
   $('stakeRows').innerHTML = exs(s).map(e =>
     (multi ? `<div class="ex-h">${e.title}</div>` : '')
     + e.assets.map(a =>
-      // Минуты у актива бывают уже общих: у акций MEXC десятиминутного
-      // события просто нет. До сих пор это была единственная настройка
-      // актива, которую нельзя было увидеть, не открыв config.json.
+      // Минуты у актива бывают уже общих - и это не предпочтение, а
+      // свойство инструмента: десятиминутного события по акциям MEXC на
+      // бирже нет вовсе. Поэтому подпись, а не переключатель: предлагать
+      // включить то, чего на бирже не существует, значит звать на ставку,
+      // которой некуда уйти.
       `<div class="row"><span>Ставка ${a}, USDT</span>
-        <span class="asset-tf">${(e.execTimings || [10, 30]).map(t =>
-          `<label class="chk" title="Играть ${a} по ${t}-минутным событиям"><input type="checkbox"
-            class="atBox" data-ex="${e.name}" data-asset="${a}" value="${t}"> ${t}м</label>`).join('')}</span>
+        ${String(e.assetTimings[a]) !== String(e.execTimings)
+          ? `<span class="asset-tf" title="На бирже по ${a} бывают только такие события"
+              >только ${e.assetTimings[a].join('/')}м</span>` : ''}
         <input type="number" id="st_${e.name}_${a}" min="1" step="1"
           data-ex="${e.name}" data-asset="${a}"></div>`).join('')
     + `<div class="row"><span>Мин. выплата, %</span>
@@ -1281,14 +1283,15 @@ function buildAssetControls(st) {
   buildManualAssets(s);
   $('winEx').addEventListener('change', () => { winExTouched = true; });
   $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
-  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || s, true));
+  $('mAsset').addEventListener('change', () => {
+    buildManualTimings(lastSettings || s);
+    syncManualStake(lastSettings || s, true);
+  });
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
   document.querySelectorAll('.tfBox').forEach(c =>
     c.addEventListener('change', () => dirty.add('tfBox')));
-  document.querySelectorAll('.atBox').forEach(c =>
-    c.addEventListener('change', () => dirty.add('atBox')));
 }
 
 // Активы в ручной ставке - только те, что торгуются на выбранной бирже.
@@ -1298,6 +1301,22 @@ function buildManualAssets(s) {
   const keep = $('mAsset').value;
   $('mAsset').innerHTML = e.assets.map(a => `<option>${a}</option>`).join('');
   if (e.assets.includes(keep)) $('mAsset').value = keep;
+  buildManualTimings(s);
+}
+
+// Минуты в ручной ставке - только те, что у актива на бирже есть.
+// Ручная ставка идёт мимо приёма сигналов, и предложенная тут
+// десятиминутка по акции ушла бы в никуда.
+function buildManualTimings(s) {
+  const e = exBy(s, $('mEx').value);
+  if (!e) return;
+  const list = e.assetTimings[$('mAsset').value] || e.execTimings || [10, 30];
+  const keep = $('mTiming').value;
+  $('mTiming').innerHTML = list.map(t => `<option value="${t}">${t}м</option>`).join('');
+  if (list.map(String).includes(keep)) $('mTiming').value = keep;
+  // Единственная возможная экспирация - не выбор: показываем, но не
+  // делаем вид, что тут есть что переключать.
+  $('mTiming').disabled = list.length < 2;
 }
 
 // Сумма ручной ставки. Значение подставляем по активу - но только когда
@@ -1461,6 +1480,7 @@ async function refresh() {
   $('win').title = exs(s).map(e => `${e.title}: ${e.todayWindows || 'круглосуточно'}`).join('\n');
 
   buildAssetControls(st);
+  buildManualTimings(s);
   syncManualStake(s, false);
   for (const e of exs(s)) {
     for (const a of e.assets) {
@@ -1479,12 +1499,6 @@ async function refresh() {
   }
   if (!dirty.has('tfBox')) {
     document.querySelectorAll('.tfBox').forEach(c => { c.checked = s.execTimings.includes(+c.value); });
-  }
-  if (!dirty.has('atBox')) {
-    document.querySelectorAll('.atBox').forEach(c => {
-      const e = exs(s).find(x => x.name === c.dataset.ex);
-      c.checked = !!e && (e.assetTimings[c.dataset.asset] || []).includes(+c.value);
-    });
   }
   // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
   // время экспирации. Последнее важно: общий выключатель ниже биржу
@@ -1509,9 +1523,9 @@ async function refresh() {
     // объясняем разницу ровно тогда, когда у кого-то список и правда уже.
     + (exs(s).some(e => e.assets.some(a =>
         String(e.assetTimings[a]) !== String(e.execTimings)))
-        ? ' Галочки минут в строке актива - его собственные: у акций MEXC'
-          + ' десятиминутного события не бывает. Они только СУЖАЮТ общий'
-          + ' список внизу: снятая там экспирация выключается у всех.'
+        ? ' Пометка «только 30м» в строке актива - свойство инструмента:'
+          + ' такого события по нему на бирже не бывает, и включить его'
+          + ' нельзя. Общий список ниже эти активы только сужает.'
         : '')
     + ((s.priceGuard || {}).enabled !== false
         ? ' От сигнала до нажатия проходит от десяти секунд до минуты, и за это'
@@ -1698,19 +1712,13 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="wn_"]').forEach(i => {
     if (i.value !== '') (wakes[i.dataset.ex] = wakes[i.dataset.ex] || {}).maxPerDay = +i.value;
   });
-  const assetTimings = {};
-  document.querySelectorAll('.atBox').forEach(i => {
-    const by = assetTimings[i.dataset.ex] = assetTimings[i.dataset.ex] || {};
-    by[i.dataset.asset] = by[i.dataset.asset] || [];
-    if (i.checked) by[i.dataset.asset].push(+i.value);
-  });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts, assetTimings,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
     priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });
-  dirty.delete('tfBox'); dirty.delete('atBox');
+  dirty.delete('tfBox');
   flash('savedStakes'); afterSave('stakes');
 };
 $('btnSaveDir').onclick = async () => {

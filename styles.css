@@ -2767,3 +2767,5 @@ html, body {
 body.zones-only .bottom-nav { display: none; }
 body.zones-only #backBtn { display: none !important; }
 body.zones-only .app-main { bottom: 0; }
+/* Точка безубытка в итоге ветки MEXC - зависит от выплаты экспирации */
+.mexc-be { opacity: .8; }

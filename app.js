@@ -1348,11 +1348,13 @@ function devAggregate(sigs, keyFn) {
   return g;
 }
 
-function devWrTd(w, l) {
+// be - точка безубытка. Не передана => прежняя общая раскраска (DEV-страницы
+// считают по выплате 0.8 и не должны измениться от этой правки).
+function devWrTd(w, l, be) {
   const dec = w + l;
   if (!dec) return '<td>-</td>';
   const pct = Math.round(w / dec * 100);
-  return `<td class="${wrClass(pct)}">${pct}%</td>`;
+  return `<td class="${be == null ? wrClass(pct) : wrClassAt_(pct, be)}">${pct}%</td>`;
 }
 
 // Ячейка «Win». WR считается только по решённым сигналам (ничьи «WIN & LOSE»
@@ -1366,7 +1368,7 @@ function devWinTd(w, l, t) {
   return (t > dec && dec > 0) ? `<td>${w}/${dec}</td>` : `<td>${w}</td>`;
 }
 
-function devBuildTable(order, groups) {
+function devBuildTable(order, groups, be) {
   const headers = ['', '↑ Total', '↑ Win', '↑ WR%', '↓ Total', '↓ Win', '↓ WR%', 'Total'];
   let html = '<table class="anal-table"><thead><tr>';
   headers.forEach(h => { html += `<th>${h}</th>`; });
@@ -1381,12 +1383,12 @@ function devBuildTable(order, groups) {
     hasData = true;
     if (o.upT > o.upW + o.upL || o.dnT > o.dnW + o.dnL) hasDraws = true;
     for (const k in tot) tot[k] += o[k];
-    html += `<tr><td>${label}</td><td>${o.upT}</td>${devWinTd(o.upW, o.upL, o.upT)}${devWrTd(o.upW, o.upL)}` +
-            `<td>${o.dnT}</td>${devWinTd(o.dnW, o.dnL, o.dnT)}${devWrTd(o.dnW, o.dnL)}<td>${o.upT + o.dnT}</td></tr>`;
+    html += `<tr><td>${label}</td><td>${o.upT}</td>${devWinTd(o.upW, o.upL, o.upT)}${devWrTd(o.upW, o.upL, be)}` +
+            `<td>${o.dnT}</td>${devWinTd(o.dnW, o.dnL, o.dnT)}${devWrTd(o.dnW, o.dnL, be)}<td>${o.upT + o.dnT}</td></tr>`;
   }
   if (!hasData) return '';
-  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td>${devWinTd(tot.upW, tot.upL, tot.upT)}${devWrTd(tot.upW, tot.upL)}` +
-          `<td>${tot.dnT}</td>${devWinTd(tot.dnW, tot.dnL, tot.dnT)}${devWrTd(tot.dnW, tot.dnL)}<td>${tot.upT + tot.dnT}</td></tr>`;
+  html += `<tr class="anal-total"><td>TOTAL</td><td>${tot.upT}</td>${devWinTd(tot.upW, tot.upL, tot.upT)}${devWrTd(tot.upW, tot.upL, be)}` +
+          `<td>${tot.dnT}</td>${devWinTd(tot.dnW, tot.dnL, tot.dnT)}${devWrTd(tot.dnW, tot.dnL, be)}<td>${tot.upT + tot.dnT}</td></tr>`;
   html += '</tbody></table>';
 
   // Сноску показываем только когда ничьи реально есть - иначе она лишний шум.
@@ -5272,42 +5274,78 @@ function mexcPairOrder_(sigs) {
 const MEXC_STAKE_DEFAULTS = { ETH: 150, BTC: 250, SPCX: 30 };
 MEXC_STATS.stakes = { ...MEXC_STAKE_DEFAULTS };
 
+// У 30-минутных сигналов свои условия: выплата выше (0.85 против 0.8) и
+// ставка одна на все пары. Поэтому деньги считаются ПО СИГНАЛУ, с учётом
+// его листа, а не по агрегату пары - в режиме «Все» в одной паре лежат
+// сигналы обеих экспираций с разными ставкой и выплатой.
+const MEXC_PAYOUT = { '10m': 0.8, '30m': 0.85 };
+const MEXC_STAKE30_DEFAULT = 150;
+MEXC_STATS.stake30 = MEXC_STAKE30_DEFAULT;
+
 function mexcStakeFor_(pair) {
   return MEXC_STATS.stakes[pair] ?? MEXC_STAKE_DEFAULTS.ETH;
 }
-// Итог по одному сигналу текущей веткой ставок - замена devPnlSig(s,'MEXC'),
-// которая берёт ставку из глобального DEV_STAKES.MEXC и не знает о SPCX.
+function mexcIs30_(s) { return s.src === '30m'; }
+function mexcStakeOf_(s) {
+  return mexcIs30_(s) ? MEXC_STATS.stake30 : mexcStakeFor_(s.pair);
+}
+function mexcPayoutOf_(s) {
+  return mexcIs30_(s) ? MEXC_PAYOUT['30m'] : MEXC_PAYOUT['10m'];
+}
+// Итог по одному сигналу - замена devPnlSig(s,'MEXC'), которая берёт ставку
+// из глобального DEV_STAKES.MEXC, не знает о SPCX и о разной выплате.
 function mexcPnlSig_(s) {
-  const st = mexcStakeFor_(s.pair);
-  if (s.res === 'WIN')  return st * DEV_PAYOUT;
+  const st = mexcStakeOf_(s);
+  if (s.res === 'WIN')  return st * mexcPayoutOf_(s);
   if (s.res === 'LOSE') return -st;
   return 0;
 }
-function mexcPnlOf_(w, l, pair) {
-  const st = mexcStakeFor_(pair);
-  return w * st * DEV_PAYOUT - l * st;
+// Безубыток зависит от выплаты: 1/(1+p). При 0.8 это 55.6%, при 0.85 - 54.1%.
+// Для смешанного набора берём выплату, взвешенную по числу сигналов, иначе
+// 30-минутные окрашивались бы по чужому порогу и «54.4%» выглядели бы
+// убыточными, хотя при их выплате это плюс.
+function mexcBreakeven_(sigs) {
+  let n = 0, sum = 0;
+  for (const s of sigs) {
+    if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
+    sum += mexcPayoutOf_(s); n++;
+  }
+  const p = n ? sum / n : MEXC_PAYOUT['10m'];
+  return 100 / (1 + p);
+}
+// Раскраска WR относительно ПРОИЗВОЛЬНОЙ точки безубытка: у 30-минутных
+// сигналов она другая (54.1% против 55.6%), и красить их по общему порогу
+// значит показывать прибыльные ячейки красными.
+function wrClassAt_(wr, be) {
+  if (wr == null) return '';
+  return wr >= be + 6 ? 'wr-green' : wr >= be ? 'wr-yellow' : 'wr-red';
 }
 // Итоговая строка под таблицей по парам - свой вариант devBranchSummaryHtml:
 // та берёт ставку из общего DEV_STAKES.MEXC (не знает про SPCX и про
 // пользовательский выбор ставки на этой странице), эта - из mexcStakeFor_
 // и перечисляет ставку РЕАЛЬНО присутствующих пар, а не фиксированную пару ETH/BTC.
-function mexcBranchSummaryHtml_(groups) {
+function mexcBranchSummaryHtml_(sigs) {
   let w = 0, l = 0, pnl = 0;
-  const pairs = Object.keys(groups);
-  for (const pair of pairs) {
-    const o = groups[pair];
-    const pw = o.upW + o.dnW, pl = o.upL + o.dnL;
-    w += pw; l += pl;
-    pnl += mexcPnlOf_(pw, pl, pair);
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
+    pnl += mexcPnlSig_(s);
   }
   const dec = w + l;
   if (!dec) return '';
   const wr = w / dec * 100;
-  const stakeTxt = pairs.map(p => `${p} ${mexcStakeFor_(p)}`).join(' · ');
+  const be = mexcBreakeven_(sigs);
+  const has30 = sigs.some(mexcIs30_), has10 = sigs.some(s => !mexcIs30_(s));
+  const parts = [];
+  if (has10) {
+    const pairs = [...new Set(sigs.filter(s => !mexcIs30_(s)).map(s => s.pair))];
+    parts.push(`10м ${pairs.map(p => `${p} ${mexcStakeFor_(p)}`).join('/')} · вып. ${MEXC_PAYOUT['10m']}`);
+  }
+  if (has30) parts.push(`30м ${MEXC_STATS.stake30} · вып. ${MEXC_PAYOUT['30m']}`);
+  const stakeTxt = parts.join(' · ');
   return `<div class="dev-branch-total">
     <span>PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b></span>
-    <span>WR <b class="${wrClass(wr)}">${wr.toFixed(1)}%</b></span>
-    <span class="dev-branch-stake">${stakeTxt} USDT</span>
+    <span>WR <b class="${wrClassAt_(wr, be)}">${wr.toFixed(1)}%</b></span>
+    <span class="dev-branch-stake">${stakeTxt} USDT · б/у ${be.toFixed(1)}%</span>
   </div>`;
 }
 
@@ -5404,6 +5442,9 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
   const dec = w + l;
   const wr = dec ? (w / dec * 100) : null;
   const wrTxt = wr == null ? '-' : wr.toFixed(1) + '%';
+  // Безубыток зависит от выплаты выбранной экспирации, поэтому и порог
+  // окраски, и сама цифра берутся из текущего набора сигналов.
+  const be = mexcBreakeven_(sigs);
 
   // В режиме «Все» показываем, сколько дал каждый лист - иначе не видно,
   // подхватились ли 30-минутные сигналы вообще.
@@ -5422,9 +5463,10 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
 
   return {
     html: `Сигналов: <b>${sigs.length}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b>` +
-          ` &nbsp;·&nbsp; WR <b class="${wr == null ? '' : wrClass(wr)}">${wrTxt}</b>` +
-          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` + srcLine + slotLine,
-    wr,
+          ` &nbsp;·&nbsp; WR <b class="${wrClassAt_(wr, be)}">${wrTxt}</b>` +
+          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` +
+          ` &nbsp;·&nbsp; <span class="mexc-be">б/у ${be.toFixed(1)}%</span>` + srcLine + slotLine,
+    wr, be,
   };
 }
 
@@ -5463,7 +5505,7 @@ async function renderMexcStats() {
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
       const s = mexcSummaryHtml_(sigs, MEXC_STATS.src, slotExcluded);
-      sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= 60 ? ' sig-wr-good' : s.wr < 45 ? ' sig-wr-bad' : '');
+      sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= s.be + 6 ? ' sig-wr-good' : s.wr < s.be ? ' sig-wr-bad' : '');
       sumEl.innerHTML = s.html;
     }
 
@@ -5491,12 +5533,14 @@ async function renderMexcStats() {
     }
 
     // По парам — состав ветки берём из данных, снизу PNL/WR по текущей ставке страницы
+    // Порог раскраски WR в таблицах - по выплате выбранной экспирации.
+    const beNow = mexcBreakeven_(sigs);
     const pairOrder = mexcPairOrder_(sigs);
     const pairGroups = devAggregate(sigs, s => s.pair);
-    const pairTable = devBuildTable(pairOrder, pairGroups);
+    const pairTable = devBuildTable(pairOrder, pairGroups, beNow);
     const pairEl = document.getElementById('mexcPairsTable');
     if (pairEl && pairTable) {
-      pairEl.innerHTML = pairTable + mexcBranchSummaryHtml_(pairGroups) + wrLegendHtml();
+      pairEl.innerHTML = pairTable + mexcBranchSummaryHtml_(sigs) + wrLegendHtml();
       mexcShow_('mexcPairsCard', true);
     } else {
       mexcShow_('mexcPairsCard', false);
@@ -5508,7 +5552,7 @@ async function renderMexcStats() {
       const [y, m, d] = s.dk.split('-').map(Number);
       return dowOrder[(new Date(y, m - 1, d).getDay() + 6) % 7];
     });
-    const dowTable = devBuildTable(dowOrder, dowGroups);
+    const dowTable = devBuildTable(dowOrder, dowGroups, beNow);
     devShowTable('mexcDowTable', 'mexcDowCard', dowTable);
     mexcShow_('mexcDowCard', !!dowTable);
 
@@ -5516,14 +5560,14 @@ async function renderMexcStats() {
     const hourOrder = [];
     for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
     const hourGroups = devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`);
-    const hourTable = devBuildTable(hourOrder, hourGroups);
+    const hourTable = devBuildTable(hourOrder, hourGroups, beNow);
     devShowTable('mexcHourTable', 'mexcHourCard', hourTable);
     mexcShow_('mexcHourCard', !!hourTable);
 
     // По 15-минутным зонам внутри часа
     const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
     const tzGroups = devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)]);
-    const tzTable = devBuildTable(tzOrder, tzGroups);
+    const tzTable = devBuildTable(tzOrder, tzGroups, beNow);
     devShowTable('mexcTFTable', 'mexcTFCard', tzTable);
     mexcShow_('mexcTFCard', !!tzTable);
 
@@ -5601,6 +5645,25 @@ function initMexcStatsUI() {
       const v = parseInt(sel.value, 10);
       if (!v || v === MEXC_STATS.stakes[pair]) return;
       MEXC_STATS.stakes[pair] = v;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+
+  // У 30-минутных ставка одна на все пары - отдельный селектор.
+  const sel30 = document.getElementById('mexcStake30');
+  if (sel30 && !sel30.dataset.wired) {
+    sel30.dataset.wired = '1';
+    for (let v = 5; v <= 150; v += 5) {
+      const o = document.createElement('option');
+      o.value = o.textContent = v;
+      if (v === MEXC_STAKE30_DEFAULT) o.selected = true;
+      sel30.appendChild(o);
+    }
+    sel30.addEventListener('change', () => {
+      const v = parseInt(sel30.value, 10);
+      if (!v || v === MEXC_STATS.stake30) return;
+      MEXC_STATS.stake30 = v;
       if (tg) tg.HapticFeedback?.selectionChanged();
       renderMexcStats();
     });

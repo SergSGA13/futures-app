@@ -15,9 +15,7 @@
         "MEXC _10m",
         "MEXC _30m",
         "MEXC_10m",
-        "MEXC_30m",
-        "MEXC_MU_30m",
-        "MEXC_NVDA_30m"
+        "MEXC_30m"
       ],
       "schedule": {
         "hours": [

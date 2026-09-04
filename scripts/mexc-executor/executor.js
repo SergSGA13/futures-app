@@ -93,6 +93,10 @@ function exCfg(name) {
     // Главное отличие Toobit: сигналы приходят без выплаты, и проверить
     // её можно только на странице. Не прочитали - не ставим.
     requirePagePayout: e.requirePagePayout === true,
+    // Читать ли выплату со страницы вообще. Когда источник сигналов уже
+    // отобрал их по проценту возврата, второе чтение только тратит
+    // секунды на десятиминутной свече. Выключается в панели.
+    checkPayout: e.checkPayout !== false,
     // ?? вместо ||: пустая строка здесь ЗНАЧАЩАЯ - она выключает поиск
     // по слову направления. С || она подменялась значением по умолчанию,
     // и выключить путь было нечем.
@@ -116,6 +120,11 @@ function exCfg(name) {
     // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
     // ошибке маршрутизации, должна отбиться, а не открыться.
     execTimings: e.execTimings || CFG.execTimings || [10],
+    // Отдельные активы бывают уже общего списка: акции MU и NVIDIA у
+    // MEXC играются только тридцатиминутками, десятиминутного события по
+    // ним просто нет. Правило по активу точнее общего, поэтому оно его и
+    // заменяет - тем же порядком, каким список биржи заменяет верхний.
+    assetTimings: { ...(CFG.assetTimings || {}), ...(e.assetTimings || {}) },
     // Метки потока в поле "timing" сигнала. Источник шлёт разные потоки
     // разными метками: PRO-ветка - "10m", ветка MEXC - "MEXC _10m" и
     // "MEXC _30m", ветка ALT - "ALT10m". По ним и различаем, куда
@@ -132,6 +141,10 @@ function exCfg(name) {
     priceSelector: e.priceSelector ?? CFG.priceSelector ?? '',
     // На сколько процентов сумма ставки гуляет вокруг настроенной.
     stakeJitterPct: e.stakeJitterPct ?? CFG.stakeJitterPct ?? 0,
+    // Откуда брать дневной итог: 'dialog' - сводное окно биржи (MEXC),
+    // 'positions' - складываем сами по списку закрытых позиций (Toobit,
+    // где сводного окна нет).
+    pnlSource: e.pnlSource || CFG.pnlSource || 'dialog',
     // Как актив называется НА БИРЖЕ, если это не то же, что ключ в urls.
     // У MEXC акции подписаны иначе: ключ SPCX, а символ SPCXSTOCK_USDT.
     // Без этой пары проверка актива искала бы в заголовке «SPCX_USDT» и
@@ -180,6 +193,7 @@ const state = {
   windowManual: false,                 // окно открыто руками из панели
   windowAt: null,                      // когда окно открылось/закрылось само
   wakes: [],                           // времена пробуждений биржи вне смены
+  pnlDone: {},                         // по биржам: за какую минуту сводка уже собрана
 };
 
 // ── состояние на диске ──
@@ -190,7 +204,7 @@ const state = {
 // в stakeLimits, а нижняя граница общая.
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
-const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes'];
+const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone'];
 function saveState() {
   try {
     const o = {};
@@ -224,6 +238,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
 // Старый плоский stakeUSDT продолжает работать как запасной вариант.
+// Какие экспирации разрешены этому активу. Список актива только СУЖАЕТ
+// общий, а не заменяет его: галочки экспираций в панели - выключатель, и
+// он обязан выключать. Иначе снятая галочка «30 минут» останавливала бы
+// BTC с ETH, а акции продолжали бы торговаться молча.
+function timingsFor(asset, ex) {
+  const E = exCfg(ex);
+  const all = (E.execTimings || []).map(Number);
+  const own = (E.assetTimings || {})[asset];
+  if (!Array.isArray(own) || !own.length) return all;
+  return all.filter(t => own.map(Number).includes(t));
+}
 function stakeFor(asset, ex) {
   const t = exCfg(ex).stakes || {};
   return t[asset] != null ? t[asset] : (CFG.stakeUSDT ?? 5);
@@ -1986,10 +2011,16 @@ async function placeBet(sig) {
     // туда сигналы приходят без выплаты, и ставить, не прочитав её со
     // страницы, значит ставить вслепую. Отсюда requirePagePayout: не
     // прочитали - не ставим.
-    const pv = await pagePayout(sig.direction);
+    // Проверку можно выключить: тогда страницу не читаем вовсе и экономим
+    // секунду-полторы. Смысл в этом есть только если выплату уже отобрал
+    // источник сигнала - иначе ставка идёт вслепую.
+    const pv = EX.checkPayout ? await pagePayout(sig.direction) : null;
+    if (!EX.checkPayout) log('проверка выплаты выключена - беру условия страницы как есть');
     const need = EX.minPayout;
     const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
-    if (pv == null) {
+    if (pv == null && !EX.checkPayout) {
+      // Выключена намеренно - не жалуемся и не отказываем.
+    } else if (pv == null) {
       if (EX.requirePagePayout) {
         log(`пропуск ${sig.asset} ${sig.direction}: выплату на странице ${EX.title} прочитать не удалось, `
           + `а она обязательна (нужно ${cmp} ${need}%) - смотри ДАМП ниже`);
@@ -2085,7 +2116,7 @@ async function placeBet(sig) {
     // экспирацию - хоть сама, хоть из-за нашего промаха, - выплата
     // изменится на десятки пунктов, и мы это увидим. Ровно так ставка
     // ушла на 5 минут с 66%, пока журнал писал 10 минут и 80%.
-    if (pv != null) {
+    if (pv != null && EX.checkPayout) {
       const pvNow = await pagePayout(sig.direction);
       if (pvNow != null && Math.abs(pvNow - pv) > payoutDriftPts()) {
         log(`пропуск ${sig.asset} ${sig.direction}: выплата поехала с ${pv}% на ${pvNow}% `
@@ -2331,8 +2362,22 @@ function normalizeSignal(sig) {
   if (!sig.asset) {
     const t = String(sig.ticker || '').toUpperCase();
     const pool = ex ? Object.keys(exCfg(ex).urls || {}) : allAssets();
-    sig.asset = pool.sort((a, b) => b.length - a.length)
-      .find(k => t.includes(k.toUpperCase())) || '';
+    // Тикер бывает написан и ключом, и биржевым символом: "NVDA/USDT" и
+    // "NVIDIA_USDT" - один актив, а общих букв у них нет вовсе. Поэтому
+    // у каждого ключа проверяем оба написания.
+    const names = k => {
+      const out = new Set([String(k).toUpperCase()]);
+      for (const n of (ex ? [ex] : exNames())) {
+        const sym = (exCfg(n).symbols || {})[k];
+        if (sym) out.add(String(sym).toUpperCase());
+      }
+      return [...out];
+    };
+    sig.asset = pool
+      .map(k => [k, Math.max(...names(k).map(x => x.length))])
+      .sort((a, b) => b[1] - a[1])
+      .map(([k]) => k)
+      .find(k => names(k).some(x => t.includes(x))) || '';
   }
   // Биржу не назвали - смотрим на метку потока, потом на актив: если он
   // торгуется ровно на одной бирже, вопрос решён. Иначе биржа по
@@ -2362,7 +2407,23 @@ function normalizeSignal(sig) {
   // сигнал, а разбираться приходится именно по ней.
   const rawTag = String(sig.timing ?? '').trim();
   if (rawTag) sig.tag = rawTag;
-  sig.timing = /30/.test(rawTag) ? 30 : 10;
+  // Метка обычно сама говорит минуты: "MEXC_30m", "ALT10m". Если не
+  // говорит ни того, ни другого, а активу разрешена ровно одна
+  // экспирация - берём её: молчание метки не то же самое, что "10m", и
+  // отбивать из-за него ставку по активу, у которого другого времени и
+  // не бывает, значит терять сигнал на пустом месте. Явное "10" в метке
+  // при этом остаётся явным: его не переписываем, такая ставка честно
+  // отобьётся по списку активa.
+  if (/30/.test(rawTag)) sig.timing = 30;
+  else if (/10/.test(rawTag)) sig.timing = 10;
+  else {
+    const only = timingsFor(sig.asset, ex);
+    sig.timing = only.length === 1 ? Number(only[0]) : 10;
+    if (only.length === 1 && sig.timing !== 10) {
+      log(`метка "${rawTag || '-'}" о минутах молчит, у ${sig.asset} разрешена одна `
+        + `экспирация - беру ${sig.timing}м`);
+    }
+  }
   // Цена из сигнала. TradingView шлёт её как {{close}}; поле называют
   // по-разному, поэтому принимаем любое из привычных имён. Нет цены -
   // не беда: за точку отсчёта возьмём цену на момент начала ставки.
@@ -2422,10 +2483,14 @@ function acceptSignal(sig, src) {
     return reason;
   };
 
-  const execTimings = exCfg(sig.ex).execTimings;
-  if (execTimings.indexOf(sig.timing) < 0) {
+  const allow = timingsFor(sig.asset, sig.ex);
+  if (allow.indexOf(sig.timing) < 0) {
+    const own = (exCfg(sig.ex).assetTimings || {})[sig.asset];
     return skip('timing', null,
-      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
+      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке `
+      + `(${allow.length ? allow.join(', ') + 'м' : 'разрешённых не осталось'}`
+      + `${own ? `; у ${sig.asset} свой список ${own.join(', ')}м, общий `
+        + `${exCfg(sig.ex).execTimings.join(', ')}м` : ''})`);
   }
   if (!inActiveHours(null, sig.ex)) {
     // Пробуждение проверяем ДО отказа: может быть, эту ставку всё-таки
@@ -2907,6 +2972,484 @@ async function idleAction() {
   }
 }
 
+// ── сводка доходности с биржи ──
+// Журнал ставок знает, СКОЛЬКО мы поставили, но не знает, чем дело
+// кончилось: результат живёт на бирже. У MEXC он собран в окне «PNL
+// History» с вкладками Today / Yesterday / Monthly / All - оттуда и
+// берём, раз в сутки за прошедший день.
+//
+// Раз в сутки, а не чаще, потому что за вчера цифра уже не меняется:
+// перечитывать её каждый час значит ходить по бирже без повода.
+const PNL_HEAD = 'date,exchange,pnl,profit,loss,contracts,win_rate,amount,collected_at';
+const PNL_PATH = () => path.join(LOGS, 'pnl.csv');
+
+function pnlRows() {
+  const f = PNL_PATH();
+  if (!fs.existsSync(f)) return [];
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  const head = (lines.shift() || '').split(',');
+  return lines.filter(l => l.trim()).map(l => {
+    const c = l.split(',');
+    const o = {};
+    head.forEach((h, i) => { o[h] = c[i]; });
+    return o;
+  });
+}
+function pnlSave(rec) {
+  const f = PNL_PATH();
+  if (!fs.existsSync(f)) fs.writeFileSync(f, PNL_HEAD + '\n');
+  // День пересобираем, а не дублируем: ручной сбор поверх ночного должен
+  // заменить строку, иначе один день посчитается дважды.
+  const rows = pnlRows().filter(r => !(r.date === rec.date && r.exchange === rec.exchange));
+  rows.push(rec);
+  rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const body = rows.map(r => PNL_HEAD.split(',').map(h => r[h] ?? '').join(',')).join('\n');
+  fs.writeFileSync(f, PNL_HEAD + '\n' + body + '\n');
+}
+
+// Вчерашняя дата в местном времени: биржа считает сутки по своему
+// поясу, но и мы, и она смотрим на одну и ту же «вчерашнюю» вкладку.
+function yesterdayStamp() {
+  const d = new Date(Date.now() - 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Числа из окна сводки. Подписи ищем по тексту, а не по разметке: у
+// биржи она меняется чаще, чем слова, а слова здесь короткие и
+// однозначные. Проценты и знаки убираем, минус сохраняем.
+const PNL_FIELDS = [
+  ['pnl',       /Total\s*PNL/i],
+  ['profit',    /Total\s*Profit/i],
+  ['loss',      /Total\s*Loss/i],
+  ['contracts', /^\s*Contracts/i],
+  ['win_rate',  /Profitable\s*Contracts/i],
+  ['amount',    /Contract\s*Amount/i],
+];
+
+async function readPnlDialog() {
+  return await page.evaluate((fields) => {
+    const vis = el => !!(el.offsetWidth || el.offsetHeight);
+    // Окно сводки: ближайший предок, где есть и заголовок, и подписи.
+    let box = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (!vis(el)) continue;
+      const t = el.innerText || '';
+      if (!/PNL\s*History/i.test(t)) continue;
+      if (!/Total\s*PNL/i.test(t)) continue;
+      if (t.length > 1200) continue;
+      if (!box || t.length < (box.innerText || '').length) box = el;
+    }
+    if (!box) return null;
+    const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const out = { raw: lines.slice(0, 24) };
+    for (const [key, reSrc] of fields) {
+      const re = new RegExp(reSrc.source, reSrc.flags);
+      for (let i = 0; i < lines.length; i++) {
+        if (!re.test(lines[i])) continue;
+        // Значение бывает в той же строке и в следующей. Шаблон числа
+        // строгий: «-?[\d\s.,]+» съедал пробел ПЕРЕД минусом и возвращал
+        // из « -11.4 USDT» один пробел, то есть NaN.
+        const num = /[-+]?\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d+)?/;
+        const here = lines[i].replace(re, '');
+        const m = (here.match(num) || [])[0] || ((lines[i + 1] || '').match(num) || [])[0];
+        if (m == null) break;
+        const v = parseFloat(String(m).replace(/[\s ]/g, '').replace(',', '.'));
+        if (Number.isFinite(v)) out[key] = v;
+        break;
+      }
+    }
+    return out;
+  }, PNL_FIELDS.map(([k, re]) => [k, { source: re.source, flags: re.flags }]));
+}
+
+// Открыть окно сводки и переключить его на «вчера». Селектор кнопки у
+// биржи не задан - ищем по смыслу: сначала явный selectors.pnlOpen, если
+// его прописали, потом любой мелкий значок рядом с заголовком позиций.
+async function openPnlDialog() {
+  const E = curEx();
+  const already = await page.evaluate(() =>
+    /PNL\s*History/i.test(document.body.innerText || ''));
+  if (!already) {
+    const sel = (E.selectors || {}).pnlOpen;
+    if (sel) {
+      const loc = page.locator(sel).first();
+      if (await loc.count() > 0) await humanClick(loc).catch(() => {});
+    } else {
+      // Значок сводки стоит в одной строке с «Open Positions». Кандидатов
+      // перебираем справа налево: значок обычно крайний, но рядом бывают
+      // и другие. После каждого нажатия смотрим, не появилось ли окно.
+      const spots = await page.evaluate(() => {
+        // getBoundingClientRect, а не offsetWidth: у SVG его нет вовсе, и
+        // именно поэтому значок сводки раньше не находился.
+        const vis = el => { const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0; };
+        let head = null;
+        for (const el of document.querySelectorAll('*')) {
+          if (!vis(el) || el.children.length > 6) continue;
+          const t = (el.innerText || '').trim();
+          if (/Open\s*Positions/i.test(t) && t.length < 120) { head = el; break; }
+        }
+        if (!head) return [];
+        const row = head.parentElement || head;
+        const out = [];
+        for (const el of row.querySelectorAll('svg,img,button,i,span,div')) {
+          if (!vis(el)) continue;
+          const r = el.getBoundingClientRect();
+          // Значок мелкий; крупные блоки - это сами подписи вкладок.
+          if (r.width > 48 || r.height > 48) continue;
+          if ((el.innerText || '').trim().length > 3) continue;
+          out.push({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+        }
+        return out.sort((a, b) => b.x - a.x).slice(0, 4);
+      });
+      let opened = false;
+      for (const sp of spots) {
+        await mouseGlide(page, sp.x, sp.y);
+        await sleep(randInt(60, 160));
+        await page.mouse.down(); await sleep(randInt(45, 110)); await page.mouse.up();
+        await page.waitForTimeout(900);
+        opened = await page.evaluate(() => /PNL\s*History/i.test(document.body.innerText || ''));
+        if (opened) break;
+      }
+      if (!opened) {
+        log(`сводка: не нашёл, чем открыть окно (кандидатов рядом с «Open Positions»: ${spots.length})`);
+        return false;
+      }
+    }
+    await page.waitForTimeout(600);
+  }
+  // Вкладка «Yesterday».
+  const tab = page.getByText(/^\s*Yesterday\s*$/i).first();
+  if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
+    await humanClick(tab).catch(() => {});
+    await page.waitForTimeout(1200);
+  } else {
+    log('в окне сводки не нашлась вкладка «Yesterday» - читаю то, что открыто');
+  }
+  return await page.evaluate(() => /PNL\s*History/i.test(document.body.innerText || ''));
+}
+
+// Второй способ сбора: у биржи нет сводного окна, зато есть список
+// закрытых позиций. Toobit устроен так - вкладка «Past positions» рядом с
+// «Current Positions», и каждая строка несёт дату, объём и результат.
+// Складываем сами: за вчера, по строкам.
+//
+// Разбор нарочно грубый - по тексту строки, а не по колонкам: разметку
+// таблицы биржа меняет чаще, чем формат даты и знак числа. Что именно
+// прочиталось, видно по `node executor.js pnl toobit`.
+async function readClosedPositions(dayStamp) {
+  // Открываем вкладку закрытых позиций.
+  const tab = page.getByText(/(Past|Closed|History)\s*positions/i).first();
+  if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
+    await humanClick(tab).catch(() => {});
+    await page.waitForTimeout(1600);
+  } else {
+    log('вкладка закрытых позиций не найдена');
+    return null;
+  }
+  return await page.evaluate(({ stamp }) => {
+    const vis = el => { const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0; };
+    // Дата в строке бывает «2026-08-31 01:45:15» и «08-31 01:45».
+    const dateRe = /(\d{4}-\d{2}-\d{2})|(?:^|[^\d])(\d{2}-\d{2})(?:[^\d]|$)/;
+    const seen = new Set();
+    const rows = [];
+    for (const el of document.querySelectorAll('tr,[role=row],li,div')) {
+      if (!vis(el)) continue;
+      const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (t.length < 20 || t.length > 260) continue;
+      if (!dateRe.test(t)) continue;
+      if (!/USDT/i.test(t)) continue;
+      // Один и тот же ряд ловится и на строке, и на её обёртке.
+      if (seen.has(t)) continue;
+      seen.add(t);
+      rows.push(t);
+      if (rows.length >= 200) break;
+    }
+    const mine = [];
+    for (const t of rows) {
+      const m = t.match(dateRe);
+      const d = m && (m[1] || (stamp.slice(0, 5) === '' ? null : stamp.slice(0, 4) + '-' + m[2]));
+      if (!d || d !== stamp) continue;
+      // Результат: число со знаком рядом с USDT. Берём ПОСЛЕДНЕЕ такое -
+      // объём стоит раньше результата во всех виденных раскладках.
+      const nums = [...t.matchAll(/([+-]?\d+(?:[.,]\d+)?)\s*USDT/gi)]
+        .map(x => parseFloat(x[1].replace(',', '.')))
+        .filter(Number.isFinite);
+      if (!nums.length) continue;
+      mine.push({ text: t, amount: nums[0], pnl: nums[nums.length - 1] });
+    }
+    return { rows: rows.slice(0, 6), matched: mine };
+  }, { stamp: dayStamp });
+}
+
+// ── сводка из блока «Trade History» под кнопками ставки ──
+//
+// У Toobit прямо на странице торговли, под Higher/Lower, биржа сама
+// считает итоги: вкладки Today / Last day / 30D / All и четыре числа.
+// Это надёжнее, чем складывать список закрытых позиций: считает сама
+// биржа, разбирать нечего, и лишних вкладок открывать не надо.
+const HIST_FIELDS = [
+  ['amount',    /Trade\s*amount/i],
+  ['win_rate',  /Win\s*rate/i],
+  ['contracts', /Total\s*trades/i],
+  ['pnl',       /Total\s*P\s*&?\s*L/i],
+];
+
+// Снимок блока: и числа, и то, какая вкладка выглядит выбранной.
+async function histSnap() {
+  return await page.evaluate((fields) => {
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    let box = null;
+    for (const el of document.querySelectorAll('*')) {
+      if (!vis(el)) continue;
+      const t = el.innerText || '';
+      if (!/Trade\s*History/i.test(t)) continue;
+      if (!/Win\s*rate/i.test(t)) continue;
+      if (t.length > 900) continue;
+      if (!box || t.length < (box.innerText || '').length) box = el;
+    }
+    if (!box) return null;
+    const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const out = { raw: lines.slice(0, 20), tab: '' };
+    for (const [key, reSrc] of fields) {
+      const re = new RegExp(reSrc.source, reSrc.flags);
+      for (let i = 0; i < lines.length; i++) {
+        if (!re.test(lines[i])) continue;
+        const num = /[-+]?\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d+)?/;
+        const here = lines[i].replace(re, '');
+        const m = (here.match(num) || [])[0] || ((lines[i + 1] || '').match(num) || [])[0];
+        if (m == null) break;
+        const v = parseFloat(String(m).replace(/[\s ]/g, '').replace(',', '.'));
+        if (Number.isFinite(v)) out[key] = v;
+        break;
+      }
+    }
+    // Какая вкладка активна: разметка у биржи разная, поэтому смотрим и
+    // aria, и классы, и жирность с цветом - что-нибудь да выдаст выбор.
+    for (const el of box.querySelectorAll('*')) {
+      const t = (el.textContent || '').trim();
+      if (!/^(Today|Last\s*day|Yesterday|30D|All)$/i.test(t)) continue;
+      if (el.children.length) continue;
+      if (!vis(el)) continue;
+      const cs = getComputedStyle(el);
+      const cls = (el.className && el.className.baseVal !== undefined
+        ? el.className.baseVal : String(el.className || ''));
+      const on = el.getAttribute('aria-selected') === 'true'
+        || /active|selected|current|\bon\b|checked/i.test(cls)
+        || parseInt(cs.fontWeight, 10) >= 600;
+      if (on) out.tab = t;
+    }
+    out.sig = fields.map(([k]) => out[k]).join(',');
+    return out;
+  }, HIST_FIELDS.map(([k, re]) => [k, { source: re.source, flags: re.flags }]));
+}
+
+async function readTradeHistory() {
+  const before = await histSnap();
+  if (!before) { log('блок «Trade History» на странице не найден'); return null; }
+  const tab = page.getByText(/^\s*(Last\s*day|Yesterday)\s*$/i).first();
+  if (!(await tab.count()) || !(await tab.isVisible().catch(() => false))) {
+    log('вкладка «Last day» в блоке «Trade History» не найдена');
+    return null;
+  }
+  await humanClick(tab).catch(() => {});
+  // Переключение надо доказать, а не понадеяться на паузу: молча
+  // записать сегодняшние числа под вчерашней датой - худшее, что тут
+  // может случиться. Доказательство любое из двух: вкладка отметилась
+  // выбранной или числа в блоке сменились.
+  const until = Date.now() + 5000;
+  let now = before;
+  while (Date.now() < until) {
+    await page.waitForTimeout(300);
+    now = await histSnap() || now;
+    if (/last\s*day|yesterday/i.test(now.tab) || now.sig !== before.sig) break;
+  }
+  if (!/last\s*day|yesterday/i.test(now.tab) && now.sig === before.sig) {
+    log('вкладка «Last day» не отметилась выбранной и числа не изменились'
+      + ` - сводку не пишу (что видно: ${JSON.stringify(now.raw)})`);
+    await shot('pnl-tab-unproven');
+    return null;
+  }
+  return now;
+}
+
+async function collectHistory(name) {
+  const got = await readTradeHistory();
+  if (!got) return null;
+  if (got.pnl === undefined || got.contracts === undefined) {
+    log(`сводка ${exCfg(name).title}: числа из блока не прочитались`
+      + ` (что видно: ${JSON.stringify(got.raw)})`);
+    await shot('pnl-history-unreadable');
+    return null;
+  }
+  // Прибыль и убыток биржа тут не разделяет: из четырёх чисел их не
+  // достать, ставки разного размера. Оставляем пустыми - в панели они и
+  // не показываются, а выдумывать их значило бы врать в отчёте.
+  return {
+    date: yesterdayStamp(), exchange: name,
+    pnl: got.pnl, profit: '', loss: '',
+    contracts: got.contracts,
+    win_rate: got.win_rate ?? '',
+    amount: got.amount ?? '',
+    collected_at: new Date().toISOString(),
+  };
+}
+
+async function collectClosed(name) {
+  const stamp = yesterdayStamp();
+  const got = await readClosedPositions(stamp);
+  if (!got) return null;
+  if (!got.matched.length) {
+    log(`сводка ${exCfg(name).title}: строк за ${stamp} в списке закрытых позиций не нашлось`
+      + ` (первые строки, что видно: ${JSON.stringify(got.rows)})`);
+    await shot('pnl-no-rows');
+    return null;
+  }
+  // Результат «0 USDT» у события - это проигрыш: ставка списана целиком.
+  // Прибыльной считаем строку со строго положительным результатом.
+  const win = got.matched.filter(r => r.pnl > 0).length;
+  const pnl = got.matched.reduce((n, r) => n + (r.pnl > 0 ? r.pnl : -Math.abs(r.amount)), 0);
+  const profit = got.matched.filter(r => r.pnl > 0).reduce((n, r) => n + r.pnl, 0);
+  const amount = got.matched.reduce((n, r) => n + Math.abs(r.amount), 0);
+  return {
+    date: stamp, exchange: name,
+    pnl: Math.round(pnl * 100) / 100,
+    profit: Math.round(profit * 100) / 100,
+    loss: Math.round((pnl - profit) * 100) / 100,
+    contracts: got.matched.length,
+    win_rate: Math.round(win / got.matched.length * 1000) / 10,
+    amount: Math.round(amount * 100) / 100,
+    collected_at: new Date().toISOString(),
+  };
+}
+
+// Собрать сводку за вчера. Возвращает запись или null.
+async function collectPnl(exName) {
+  const name = exName || defaultEx();
+  const E = exCfg(name);
+  const url = homeUrl(E);
+  if (!url) { log(`сводка ${E.title}: не задан ни один адрес актива`); return null; }
+  EX = E;
+  page = await pageFor(name);
+  await page.bringToFront().catch(() => {});
+  if (!page.url().startsWith(url)) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+  }
+  await waitForPanel();
+
+  // У биржи может не быть сводного окна - тогда складываем сами по
+  // списку закрытых позиций.
+  const src = E.pnlSource || 'dialog';
+  if (src === 'history' || src === 'positions') {
+    const rec = src === 'history' ? await collectHistory(name) : await collectClosed(name);
+    if (!rec) return null;
+    pnlSave(rec);
+    log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, `
+      + `${src === 'history' ? 'сделок' : 'позиций'} ${rec.contracts}, `
+      + `прибыльных ${rec.win_rate}%, оборот ${rec.amount} USDT`);
+    return rec;
+  }
+
+  if (!(await openPnlDialog())) {
+    log(`сводка ${E.title}: окно «PNL History» не открылось`);
+    await shot('pnl-not-open');
+    await dumpPage('pnl-not-open');
+    return null;
+  }
+  const got = await readPnlDialog();
+  // Окно закрываем за собой: оставленное поверх страницы оно помешает
+  // следующей ставке найти кнопки.
+  const close = page.getByText(/^\s*(Confirm|OK|Подтвердить)\s*$/i).first();
+  if (await close.count() > 0 && await close.isVisible().catch(() => false)) {
+    await humanClick(close).catch(() => {});
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  await page.waitForTimeout(500);
+
+  if (!got || got.pnl === undefined) {
+    log(`сводка ${E.title}: числа из окна прочитать не удалось`
+      + (got ? ` (что видно: ${JSON.stringify(got.raw)})` : ''));
+    await shot('pnl-unreadable');
+    return null;
+  }
+  const rec = {
+    date: yesterdayStamp(), exchange: name,
+    pnl: got.pnl ?? '', profit: got.profit ?? '', loss: got.loss ?? '',
+    contracts: got.contracts ?? '', win_rate: got.win_rate ?? '',
+    amount: got.amount ?? '', collected_at: new Date().toISOString(),
+  };
+  pnlSave(rec);
+  log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, контрактов ${rec.contracts}, `
+    + `прибыльных ${rec.win_rate}%, оборот ${rec.amount} USDT`);
+  return rec;
+}
+
+// Раз в сутки в назначенную минуту. Время местное - исполнитель и так
+// живёт в том поясе, из которого на биржу смотрят.
+// Час в виде «ЧЧ:ММ». Опечатку не проглатываем молча: «ерунда» с
+// разбором «0:00» тихо переехала бы на полночь, и заметить это можно
+// было бы только по пропавшим строкам.
+const badAt = new Set();
+function hhmm(v, def) {
+  const at = String(v ?? '').trim();
+  const m = at.match(/^(\d{1,2}):(\d{2})$/);
+  const h = m && +m[1], mi = m && +m[2];
+  if (m && h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return { at, hour: h, min: mi };
+  if (at && !badAt.has(at)) { badAt.add(at); log(`час сбора «${at}» не разобрать - беру ${def}`); }
+  const d = String(def).match(/^(\d{1,2}):(\d{2})$/);
+  return d ? { at: String(def), hour: +d[1], min: +d[2] } : { at: '18:08', hour: 18, min: 8 };
+}
+function pnlDailyCfg() {
+  const d = CFG.pnlDaily || {};
+  const base = hhmm(d.at, '18:08');
+  const names = Array.isArray(d.exchanges) && d.exchanges.length ? d.exchanges : ['mexc'];
+  // Час у каждой биржи свой: сутки они режут по-разному, и собирать надо
+  // тогда, когда «вчера» у биржи уже закрыто. Час задаётся рядом с
+  // pnlSource, в блоке самой биржи; не задан - берётся общий.
+  const plan = names.map(n => ({ name: n, ...hhmm((CFG.exchanges?.[n] || {}).pnlAt, base.at) }));
+  return {
+    enabled: d.enabled !== false,
+    hour: base.hour, min: base.min, at: base.at,
+    exchanges: names,
+    plan,
+    atOf: n => (plan.find(x => x.name === n) || base).at,
+  };
+}
+async function pnlTick() {
+  const C = pnlDailyCfg();
+  if (!C.enabled) return;
+  const now = new Date();
+  const due = C.plan.filter(x => x.hour === now.getHours() && x.min === now.getMinutes()
+    && exNames().includes(x.name));
+  if (!due.length) return;
+  // Отметка на каждую биржу своя: часы у них разные, одна общая метка
+  // съедала бы вторую сводку.
+  if (typeof state.pnlDone !== 'object' || !state.pnlDone) state.pnlDone = {};
+  const stamp = x => `${now.toDateString()}|${x.at}`;
+  const todo = due.filter(x => state.pnlDone[x.name] !== stamp(x));
+  if (!todo.length) return;                 // минута длится 60 секунд, тик раз в 30
+  for (const x of todo) state.pnlDone[x.name] = stamp(x);
+  saveState();
+  if (state.busy || state.queue.length) {
+    log('время сводки, но идёт ставка - соберу при следующем запуске');
+    for (const x of todo) delete state.pnlDone[x.name];
+    return;
+  }
+  state.busy = true;
+  try {
+    for (const x of todo) {
+      await collectPnl(x.name).catch(e => log(`сводка ${x.name} не собралась: ${e.message}`));
+    }
+    await restoreHome('после сводки');
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+  }
+}
+
 // ── сторож тишины ──
 // Упавший туннель, снятый деплой Apps Script, выключенный хук - всё это
 // выглядит одинаково: сигналы просто перестают приходить. Заметить
@@ -3027,6 +3570,81 @@ function recentBets(n) {
   });
 }
 
+// ── ряд доходности по дням ──
+// Две величины из разных источников: PNL приходит с биржи (мы его не
+// считаем сами, чтобы не расходиться с её арифметикой), а число ставок
+// берётся из нашего журнала.
+function pnlSeries(days, only) {
+  // Биржи НЕ объединяем: у каждой свои сутки, свои выплаты и свой размер
+  // ставки, и общий итог не отвечает ни на один вопрос - ни «как идёт
+  // MEXC», ни «как идёт Toobit». Поэтому ряд всегда по одной бирже.
+  const rows = pnlRows().filter(r => !only || r.exchange === only);
+  // Ставки по дням: только те, что действительно ушли на биржу.
+  const bets = new Map();
+  const f = path.join(LOGS, 'bets.csv');
+  if (fs.existsSync(f)) {
+    const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+    const head = (lines.shift() || '').split(',');
+    const iT = head.indexOf('time'), iS = head.indexOf('status'), iE = head.indexOf('exchange');
+    const real = new Set(['placed', 'placed-unconfirmed', 'placed-unverified']);
+    for (const l of lines) {
+      if (!l.trim()) continue;
+      const c = l.split(',');
+      if (!real.has(c[iS])) continue;
+      const d = new Date(c[iT]);
+      if (isNaN(d)) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-`
+        + `${String(d.getDate()).padStart(2, '0')}|${c[iE] || ''}`;
+      bets.set(key, (bets.get(key) || 0) + 1);
+    }
+  }
+  const num = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
+  const byDay = new Map();
+  for (const r of rows) {
+    const o = byDay.get(r.date) || { date: r.date, pnl: 0, contracts: 0, amount: 0, bets: 0, ex: {} };
+    o.pnl += num(r.pnl);
+    o.contracts += num(r.contracts);
+    o.amount += num(r.amount);
+    o.bets += bets.get(`${r.date}|${r.exchange}`) || 0;
+    o.ex[r.exchange] = { pnl: num(r.pnl), winRate: num(r.win_rate), contracts: num(r.contracts) };
+    byDay.set(r.date, o);
+  }
+  let all = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
+  if (days) {
+    const since = new Date(Date.now() - days * 86400000);
+    const cut = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, '0')}-`
+      + `${String(since.getDate()).padStart(2, '0')}`;
+    all = all.filter(d => d.date >= cut);
+  }
+  // Накопленный итог: по нему и видно, растёт счёт или проседает.
+  let acc = 0;
+  for (const d of all) { acc = Math.round((acc + d.pnl) * 100) / 100; d.cum = acc; }
+  const sum = k => all.reduce((n, d) => n + (d[k] || 0), 0);
+  const win = all.reduce((n, d) =>
+    n + Object.values(d.ex).reduce((m, e) => m + e.winRate * e.contracts, 0), 0);
+  const cn = sum('contracts');
+  const C = pnlDailyCfg();
+  return {
+    days: all,
+    total: Math.round(sum('pnl') * 100) / 100,
+    contracts: cn,
+    bets: sum('bets'),
+    amount: Math.round(sum('amount') * 100) / 100,
+    winRate: cn ? Math.round(win / cn * 10) / 10 : null,
+    best: all.length ? all.reduce((a, b) => (b.pnl > a.pnl ? b : a)) : null,
+    worst: all.length ? all.reduce((a, b) => (b.pnl < a.pnl ? b : a)) : null,
+    at: only ? C.atOf(only) : C.at,
+    enabled: C.enabled,
+    exchange: only || null,
+    source: only ? exCfg(only).pnlSource : null,
+    // Список бирж, по которым вообще есть строки, плюс те, что собираются
+    // по расписанию: кнопка должна появиться до первого сбора.
+    exchanges: [...new Set([...pnlRows().map(r => r.exchange), ...C.exchanges])]
+      .filter(n => exNames().includes(n))
+      .map(n => ({ name: n, title: exCfg(n).title })),
+  };
+}
+
 // ── сводка: почему не сыграло ──
 // Три разговора подряд начинались с того, что нужно было прислать лог и
 // я по нему считал причины пропусков руками. Считать их умеет и сам
@@ -3135,6 +3753,7 @@ function snapshot() {
           activeNow: inActiveHours(null, n),
           todayWindows: todayWindows(n),
           requirePagePayout: e.requirePagePayout,
+          checkPayout: e.checkPayout,
           maxOpenBets: e.maxOpenBets,
           slots: openSlots(n),
         };
@@ -3258,6 +3877,18 @@ function applySettings(s) {
         ? Math.round(clamp(w.minGapMin, 0, 720, cur.minGapMin ?? 20))
         : (cur.minGapMin ?? 20);
       CFG.exchanges[n].wakeOnSignal = next;
+      exReset();
+    }
+  }
+  // Проверка выплаты на странице - по биржам: на одной сигналы приходят
+  // уже отобранными по проценту, на другой нет.
+  if (s.checkPayouts) {
+    for (const n of exNames()) {
+      if (s.checkPayouts[n] == null) continue;
+      const was = exCfg(n).checkPayout;
+      const v = !!s.checkPayouts[n];
+      if (v !== was) changed.push(`проверка выплаты ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`);
+      CFG.exchanges[n].checkPayout = v;
       exReset();
     }
   }
@@ -3460,6 +4091,25 @@ const server = http.createServer((req, res) => {
     if (am[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
     const action = am[2];
     if (action === 'state') return sendJson(200, { ...snapshot(), bets: recentBets(150) });
+    // Ряд доходности запрашивается отдельно: он меняется раз в сутки, и
+    // тащить его в каждое обновление панели незачем.
+    if (action === 'pnl') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const d = parseInt(q.get('days') || '0', 10);
+      const ex = q.get('ex') || '';
+      return sendJson(200, pnlSeries(Number.isFinite(d) && d > 0 ? d : null,
+        exNames().includes(ex) ? ex : defaultEx()));
+    }
+    // Собрать сводку прямо сейчас, не дожидаясь назначенного часа.
+    if (req.method === 'POST' && action === 'pnl-now') {
+      if (state.busy || state.queue.length) return sendJson(200, { ok: false, why: 'идёт ставка' });
+      state.busy = true;
+      collectPnl(new URL(req.url, 'http://x').searchParams.get('ex') || undefined)
+        .catch(e => log('ручной сбор сводки упал: ' + e.message))
+        .finally(async () => { await restoreHome('после сводки').catch(() => {});
+                               state.busy = false; if (state.queue.length) setImmediate(pump); });
+      return sendJson(200, { ok: true });
+    }
     if (req.method === 'POST' && action === 'pause')  { state.paused = true;  log('панель: пауза'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'resume') { state.paused = false; log('панель: снято с паузы'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'dry-on')  { state.dryRun = true;  log('панель: DRY-RUN включён'); return sendJson(200, snapshot()); }
@@ -3757,7 +4407,8 @@ function migrateMode() {
   // входа, срок памяти об экспирации. Код умеет работать и без них, но в
   // конфиге их не хватало бы под рукой - и панель не смогла бы их
   // сохранить обратно.
-  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs', 'payoutDriftPts', 'statsDays']) {
+  for (const k of ['priceGuard', 'tfMemoMinutes', 'payoutSwitchMs', 'payoutDriftPts', 'statsDays',
+                   'pnlDaily']) {
     if (out[k] === undefined && sampleTop[k] !== undefined) {
       out[k] = sampleTop[k];
       added.push(k);
@@ -3825,6 +4476,25 @@ async function loginMode() {
 }
 
 // ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──
+// Ручной сбор: чтобы не ждать назначенного часа и увидеть, что именно
+// прочиталось из окна биржи.
+async function pnlMode(exName) {
+  const name = exName || defaultEx();
+  console.log(`Открываю ${exCfg(name).title} и собираю сводку за вчера. Ставки НЕ делаются.`);
+  const rec = await collectPnl(name);
+  if (rec) {
+    console.log('\nЗаписано в logs/pnl.csv:');
+    console.log(PNL_HEAD);
+    console.log(PNL_HEAD.split(',').map(h => rec[h]).join(','));
+  } else {
+    console.log('\nСобрать не удалось - смотри строки выше и снимок в logs/shots.');
+    console.log('Если окно «PNL History» открывается другой кнопкой, пропиши её так:');
+    console.log('  "exchanges": { "mexc": { "selectors": { "pnlOpen": "ТУТ_СЕЛЕКТОР" } } }');
+  }
+  await closeBrowser().catch(() => {});
+  process.exit(rec ? 0 : 1);
+}
+
 async function diagMode() {
   // node executor.js diag [актив] [биржа] - вторую биржу иначе не
   // осмотреть, а именно её селекторы и надо подобрать.
@@ -3963,6 +4633,8 @@ if (process.argv[2] === 'migrate') {
   loginMode();
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
+} else if (process.argv[2] === 'pnl') {
+  pnlMode(process.argv[3]).catch(e => { console.error('сбор сводки упал:', e.message); process.exit(1); });
 } else {
   // Ctrl+C и обычное завершение должны закрывать за собой браузер и
   // отпускать порт. Без этого после остановки оставались висеть окна
@@ -4007,6 +4679,10 @@ if (process.argv[2] === 'migrate') {
     }
     // Сторож тишины: раз в минуту, дешевле некуда.
     const sil = setInterval(checkSilence, 60000);
+    // Раз в полминуты: минута назначенного часа не должна проскочить
+    // между тиками, а сама проверка стоит одно сравнение чисел.
+    const pnlT = setInterval(() => pnlTick().catch(e => log('сводка не собралась: ' + e.message)), 30000);
+    if (pnlT.unref) pnlT.unref();
     if (sil.unref) sil.unref();
     // Окно биржи по расписанию - тем же тиком.
     const win = setInterval(() => windowBySchedule().catch(e =>

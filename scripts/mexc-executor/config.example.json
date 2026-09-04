@@ -31,20 +31,28 @@
       "stakes": {
         "ETH": 150,
         "BTC": 250,
-        "SPCX": 30
+        "SPCX": 30,
+        "MU": 30,
+        "NVDA": 30
       },
       "stakeLimits": {
         "ETH": 150,
         "BTC": 250,
-        "SPCX": 150
+        "SPCX": 150,
+        "MU": 150,
+        "NVDA": 150
       },
       "urls": {
         "BTC": "https://www.mexc.com/futures/event-futures/BTC_USDT",
         "ETH": "https://www.mexc.com/futures/event-futures/ETH_USDT",
-        "SPCX": "https://www.mexc.com/futures/event-futures/SPCXSTOCK_USDT"
+        "SPCX": "https://www.mexc.com/futures/event-futures/SPCXSTOCK_USDT",
+        "MU": "https://www.mexc.com/futures/event-futures/MUSTOCK_USDT",
+        "NVDA": "https://www.mexc.com/futures/event-futures/NVIDIA_USDT"
       },
       "symbols": {
-        "SPCX": "SPCXSTOCK"
+        "SPCX": "SPCXSTOCK",
+        "MU": "MUSTOCK",
+        "NVDA": "NVIDIA"
       },
       "timeUnitText": {
         "10": "10m",
@@ -59,6 +67,16 @@
         "enabled": false,
         "maxPerDay": 6,
         "minGapMin": 20
+      },
+      "checkPayout": true,
+      "pnlSource": "dialog",
+      "assetTimings": {
+        "MU": [
+          30
+        ],
+        "NVDA": [
+          30
+        ]
       }
     },
     "toobit": {
@@ -143,7 +161,10 @@
         "enabled": false,
         "maxPerDay": 6,
         "minGapMin": 20
-      }
+      },
+      "checkPayout": true,
+      "pnlSource": "history",
+      "pnlAt": "02:00"
     }
   },
   "dirLimits": {
@@ -173,6 +194,14 @@
     "strict": false
   },
   "statsDays": 7,
+  "pnlDaily": {
+    "enabled": true,
+    "at": "18:08",
+    "exchanges": [
+      "mexc",
+      "toobit"
+    ]
+  },
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "payoutDriftPts": 5,

@@ -175,7 +175,25 @@
   #bets td.dir { font-weight:600; letter-spacing:.4px; }
   #bets td.dir.up   { color:var(--dir-up); }
   #bets td.dir.down { color:var(--dir-down); }
-  #logFilter button { padding:5px 11px; font-size:10.5px; }
+  #logFilter button, #pnlRange button, #pnlEx button { padding:5px 11px; font-size:10.5px; }
+  #pnlRange button.on, #pnlEx button.on { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--glow); }
+  /* График рисуем сами: библиотеку тянуть в панель, которая должна
+     открываться через туннель на телефоне, - лишний вес и лишний внешний
+     адрес. Двух осей нет намеренно: PNL и число ставок - разные единицы,
+     их нельзя мерить одной шкалой, поэтому ставки живут плиткой. */
+  #pnlChart svg { display:block; width:100%; height:auto; }
+  #pnlChart .gridline { stroke:var(--line); stroke-width:1; }
+  #pnlChart .zero { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 3; opacity:.7; }
+  #pnlChart .axis { fill:var(--muted); font-size:9px; font-family:var(--mono); }
+  #pnlChart .cum { fill:none; stroke-width:2; stroke-linejoin:round; }
+  #pnlChart .tip { fill:var(--card-solid); stroke:var(--line); }
+  #pnlChart .cross { stroke:var(--cyan); stroke-width:1; opacity:.55; }
+  #pnlChart .hit { fill:transparent; cursor:crosshair; }
+  #pnlChart .end { fill:var(--cyan); }
+  .chart-cap {
+    font-family:var(--mono); font-size:9.5px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--muted); margin:10px 0 2px;
+  }
   #logHead th[data-c] { cursor:pointer; user-select:none; }
   #logHead th[data-c]:hover { color:var(--cyan); }
   #logHead th.sorted { color:var(--cyan); text-shadow:0 0 9px rgba(34,232,255,.5); }
@@ -572,6 +590,27 @@
   <div class="note" id="statsHint"></div>
   </div>
 
+  <!-- Доходность: PNL приходит с самой биржи (её арифметику мы не
+       пересчитываем), число ставок - из нашего журнала. -->
+  <button class="sect-toggle" id="btnPnlSect">Доходность</button>
+  <div class="card hidden" id="pnlCard">
+  <h2>Доходность <span class="hint" id="pnlAt"></span></h2>
+  <!-- Биржи не складываем: у каждой свои сутки, свои выплаты и свой
+       размер ставки, и общий итог не отвечает ни на один вопрос. -->
+  <div class="btns" style="margin-bottom:8px" id="pnlEx"></div>
+  <div class="btns" style="margin-bottom:10px" id="pnlRange">
+    <button data-d="7">7 дней</button>
+    <button data-d="14">14 дней</button>
+    <button data-d="30" class="on">30 дней</button>
+    <button data-d="0">Всё</button>
+    <span class="hint" id="pnlCount" style="align-self:center"></span>
+    <button id="btnPnlNow" style="margin-left:auto">Собрать сейчас</button>
+  </div>
+  <div class="statrow" id="pnlTiles"></div>
+  <div id="pnlChart"></div>
+  <div class="note" id="pnlNote"></div>
+  </div>
+
   <button class="sect-toggle" id="btnSettings">Настройки</button>
   <div id="settingsBox" class="hidden">
     <div class="cards">
@@ -930,6 +969,230 @@ function drawStats(x) {
     : 'Журнал пуст.';
 }
 
+// ── доходность ──
+// Рисуем два графика, а не один с двумя осями: накопленный итог в USDT и
+// дневной PNL в тех же USDT - это одна величина в двух видах, и мерить их
+// одной шкалой можно, а вот число ставок нельзя, поэтому оно плиткой.
+let pnlDays = +(localStorage.getItem('mx_pnldays') ?? 30);
+let pnlEx = localStorage.getItem('mx_pnlex') || '';
+let pnlLoaded = false;
+// Раздел свёрнут по умолчанию: смотрят его раз в день, а места он
+// занимает как журнал. Выбор запоминается, как и у настроек.
+let pnlOpen = localStorage.getItem('mx_pnlopen') === '1';
+let pnlBusy = false;
+
+const money = v => (v > 0 ? '+' : '') + (Math.round(v * 100) / 100).toLocaleString('ru-RU');
+const dayLabel = d => { const [, m, dd] = String(d).split('-'); return `${dd}.${m}`; };
+
+function svgEl(w, h, inner) {
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img">${inner}</svg>`;
+}
+
+// Накопленный итог: линия с заливкой и подсвеченным последним днём.
+function chartCum(days, w, h) {
+  const pad = { l: 42, r: 10, t: 8, b: 16 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const vals = days.map(d => d.cum);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const span = (hi - lo) || 1;
+  const x = i => pad.l + (days.length === 1 ? iw / 2 : (i / (days.length - 1)) * iw);
+  const y = v => pad.t + ih - ((v - lo) / span) * ih;
+  const line = days.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.cum).toFixed(1)}`).join('');
+  const area = `${line}L${x(days.length - 1).toFixed(1)},${y(0).toFixed(1)}L${x(0).toFixed(1)},${y(0).toFixed(1)}Z`;
+  const last = days[days.length - 1];
+  const up = last.cum >= 0;
+  const col = up ? 'var(--green)' : 'var(--red)';
+  return svgEl(w, h, `
+    <defs><linearGradient id="cumFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${col}" stop-opacity=".28"/>
+      <stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    <line class="zero" x1="${pad.l}" y1="${y(0)}" x2="${w - pad.r}" y2="${y(0)}"/>
+    <path d="${area}" fill="url(#cumFill)"/>
+    <path class="cum" d="${line}" style="stroke:${col}"/>
+    <circle class="end" cx="${x(days.length - 1)}" cy="${y(last.cum)}" r="3.5" style="fill:${col}"/>
+    <text class="axis" x="4" y="${y(hi) + 3}">${money(hi)}</text>
+    <text class="axis" x="4" y="${y(lo) + 3}">${money(lo)}</text>
+    <text class="axis" x="${pad.l}" y="${h - 4}">${dayLabel(days[0].date)}</text>
+    <text class="axis" x="${w - pad.r}" y="${h - 4}" text-anchor="end">${dayLabel(last.date)}</text>
+    <g id="cumTip" style="display:none">
+      <line class="cross" y1="${pad.t}" y2="${pad.t + ih}"/>
+      <circle r="4" style="fill:${col}"/>
+      <rect class="tip" rx="3" height="46"/>
+      <text class="axis" id="tipA"></text>
+      <text class="axis" id="tipB"></text>
+      <text class="axis" id="tipC"></text>
+    </g>
+    <rect class="hit" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}"
+      data-x0="${pad.l}" data-step="${days.length === 1 ? 0 : iw / (days.length - 1)}"/>`);
+}
+
+// PNL по дням: столбики от нуля, зелёные вверх, красные вниз. Между
+// столбиками зазор в 2px, концы скруглены - как у любой другой полосы
+// в панели.
+function chartDaily(days, w, h) {
+  const pad = { l: 42, r: 10, t: 6, b: 16 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const vals = days.map(d => d.pnl);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const span = (hi - lo) || 1;
+  const y = v => pad.t + ih - ((v - lo) / span) * ih;
+  const step = iw / days.length;
+  const bw = Math.max(2, Math.min(22, step - 2));
+  const bars = days.map((d, i) => {
+    const cx = pad.l + step * i + step / 2;
+    const y0 = y(0), y1 = y(d.pnl);
+    const top = Math.min(y0, y1), hh = Math.max(1.5, Math.abs(y1 - y0));
+    const col = d.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    return `<rect x="${(cx - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}"
+      height="${hh.toFixed(1)}" rx="2" fill="${col}" opacity=".85"/>`;
+  }).join('');
+  return svgEl(w, h, `
+    <line class="zero" x1="${pad.l}" y1="${y(0)}" x2="${w - pad.r}" y2="${y(0)}"/>
+    ${bars}
+    <text class="axis" x="4" y="${y(hi) + 3}">${money(hi)}</text>
+    <text class="axis" x="4" y="${y(lo) + 3}">${money(lo)}</text>`);
+}
+
+function drawPnl(d) {
+  const who = (d.exchanges || []).find(e => e.name === d.exchange);
+  $('pnlAt').textContent = (who ? who.title + ' · ' : '')
+    + (d.enabled ? `сбор в ${d.at}` : 'автосбор выключен');
+  $('pnlCount').textContent = d.days.length
+    ? `дней в ряду: ${d.days.length}` : 'данных пока нет';
+
+  const t = [];
+  const sign = d.total > 0 ? 'good' : d.total < 0 ? 'bad' : '';
+  t.push(`<div class="stat ${sign}"><b>${money(d.total)}</b><span>PNL, USDT</span></div>`);
+  t.push(`<div class="stat"><b>${d.bets}</b><span>ставок</span></div>`);
+  t.push(`<div class="stat"><b>${d.contracts}</b><span>контрактов</span></div>`);
+  if (d.winRate != null) t.push(`<div class="stat"><b>${d.winRate}%</b><span>прибыльных</span></div>`);
+  t.push(`<div class="stat"><b>${money(d.amount)}</b><span>оборот, USDT</span></div>`);
+  if (d.best) t.push(`<div class="stat good"><b>${money(d.best.pnl)}</b><span>лучший ${dayLabel(d.best.date)}</span></div>`);
+  if (d.worst && d.worst.date !== (d.best || {}).date) {
+    t.push(`<div class="stat bad"><b>${money(d.worst.pnl)}</b><span>худший ${dayLabel(d.worst.date)}</span></div>`);
+  }
+  $('pnlTiles').innerHTML = d.days.length ? t.join('') : '';
+
+  if (!d.days.length) {
+    $('pnlChart').innerHTML = '';
+    $('pnlNote').textContent = d.enabled
+      ? `Сводка забирается с биржи раз в сутки в ${d.at} за прошедший день - первая строка появится после ближайшего сбора. Кнопка «Собрать сейчас» делает это немедленно.`
+      : 'Автосбор выключен в конфиге (pnlDaily.enabled). Данные можно собрать кнопкой «Собрать сейчас».';
+    return;
+  }
+  $('pnlChart').innerHTML =
+    `<div class="chart-cap">Накопленный итог</div>${chartCum(d.days, 900, 150)}`
+    + `<div class="chart-cap">PNL по дням</div>${chartDaily(d.days, 900, 90)}`;
+  wirePnlHover(d.days);
+  const per = d.days.length ? Math.round(d.total / d.days.length * 100) / 100 : 0;
+  // Откуда взялись числа - зависит от биржи: у одной есть сводное окно,
+  // у другой мы складываем сами по списку закрытых позиций.
+  const from = d.source === 'history'
+    ? 'PNL взят из блока «Trade History» на странице торговли (вкладка «Last day»)'
+    : d.source === 'positions'
+      ? 'PNL сложен по списку закрытых позиций биржи за вчера'
+      : 'PNL взят из сводки самой биржи («PNL History» за вчера)';
+  $('pnlNote').textContent =
+    `${from}, число ставок - из журнала.`
+    + ` В среднем ${money(per)} USDT в день за ${d.days.length} дн.`
+    + (d.winRate != null ? ` Доля прибыльных контрактов ${d.winRate}%.` : '')
+    + ` Число ставок вынесено плиткой, а не второй осью: это другая единица,`
+    + ` и общая шкала с деньгами врала бы.`;
+}
+
+// Наведение: перекрестье и подсказка по ближайшему дню. Без неё график -
+// картинка: увидеть, какой именно день дал провал, было бы нечем.
+function wirePnlHover(days) {
+  const svg = document.querySelector('#pnlChart svg');
+  if (!svg) return;
+  const hit = svg.querySelector('.hit');
+  const g = svg.querySelector('#cumTip');
+  if (!hit || !g) return;
+  const x0 = +hit.dataset.x0, step = +hit.dataset.step;
+  const line = g.querySelector('line'), dot = g.querySelector('circle');
+  const box = g.querySelector('rect');
+  const [ta, tb, tc] = [...g.querySelectorAll('text')];
+  const paths = svg.querySelector('.cum').getAttribute('d')
+    .split(/[ML]/).filter(Boolean).map(p => p.split(',').map(Number));
+
+  const move = ev => {
+    const r = svg.getBoundingClientRect();
+    // Координаты внутри viewBox, а не в пикселях экрана: svg тянется по
+    // ширине карточки, и масштаб у каждого экрана свой.
+    const vx = (ev.clientX - r.left) / r.width * 900;
+    const i = step ? Math.max(0, Math.min(days.length - 1, Math.round((vx - x0) / step))) : 0;
+    const d = days[i];
+    const [px, py] = paths[i] || paths[0];
+    line.setAttribute('x1', px); line.setAttribute('x2', px);
+    dot.setAttribute('cx', px); dot.setAttribute('cy', py);
+    const left = px > 620;
+    const bx = left ? px - 132 : px + 10;
+    box.setAttribute('x', bx); box.setAttribute('y', 10); box.setAttribute('width', 122);
+    ta.setAttribute('x', bx + 8); ta.setAttribute('y', 25);
+    tb.setAttribute('x', bx + 8); tb.setAttribute('y', 38);
+    tc.setAttribute('x', bx + 8); tc.setAttribute('y', 51);
+    ta.textContent = dayLabel(d.date) + ' · ставок ' + d.bets;
+    tb.textContent = 'за день ' + money(d.pnl);
+    tc.textContent = 'итого ' + money(d.cum);
+    g.style.display = '';
+  };
+  hit.addEventListener('mousemove', move);
+  hit.addEventListener('mouseleave', () => { g.style.display = 'none'; });
+}
+
+async function refreshPnl() {
+  try {
+    const d = await api(`pnl?days=${pnlDays}&ex=${encodeURIComponent(pnlEx)}`);
+    pnlEx = d.exchange || pnlEx;
+    // Кнопки бирж строим по ответу: список приходит с сервера, и
+    // добавить биржу в конфиг должно быть достаточно.
+    const ex = $('pnlEx');
+    const key = (d.exchanges || []).map(e => e.name).join('|');
+    if (ex.dataset.key !== key) {
+      ex.dataset.key = key;
+      ex.innerHTML = (d.exchanges || []).map(e =>
+        `<button data-ex="${esc(e.name)}">${esc(e.title)}</button>`).join('');
+    }
+    ex.querySelectorAll('button[data-ex]').forEach(b =>
+      b.classList.toggle('on', b.dataset.ex === pnlEx));
+    drawPnl(d);
+  } catch (e) { $('pnlNote').textContent = 'ряд доходности не прочитался'; }
+}
+
+document.getElementById('pnlEx').addEventListener('click', e => {
+  const n = e.target.dataset.ex;
+  if (!n) return;
+  pnlEx = n;
+  localStorage.setItem('mx_pnlex', n);
+  refreshPnl();
+});
+$('btnPnlSect').onclick = () => {
+  pnlOpen = !pnlOpen;
+  localStorage.setItem('mx_pnlopen', pnlOpen ? '1' : '0');
+  $('pnlCard').classList.toggle('hidden', !pnlOpen);
+  $('btnPnlSect').classList.toggle('open', pnlOpen);
+  // Ряд тянем только когда раздел раскрыли: свёрнутому он не нужен.
+  if (pnlOpen) refreshPnl();
+};
+document.getElementById('pnlRange').addEventListener('click', e => {
+  const d = e.target.dataset.d;
+  if (d === undefined) return;
+  pnlDays = +d;
+  localStorage.setItem('mx_pnldays', String(pnlDays));
+  document.querySelectorAll('#pnlRange button[data-d]').forEach(b =>
+    b.classList.toggle('on', +b.dataset.d === pnlDays));
+  refreshPnl();
+});
+$('btnPnlNow').onclick = async () => {
+  if (pnlBusy) return;
+  pnlBusy = true;
+  $('btnPnlNow').disabled = true;
+  $('pnlNote').textContent = 'открываю биржу и читаю сводку - это занимает секунд двадцать…';
+  $('pnlCount').textContent = 'собираю…';
+  try { await post('pnl-now?ex=' + encodeURIComponent(pnlEx)); } catch (e) { /* покажет следующий опрос */ }
+  setTimeout(async () => { await refreshPnl(); pnlBusy = false; $('btnPnlNow').disabled = false; }, 25000);
+};
+
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
@@ -964,6 +1227,10 @@ function buildAssetControls(st) {
         <input type="number" id="mp_${e.name}" min="50" max="100" step="1"
           data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
             e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>`
+    // Чтение выплаты со страницы стоит секунду-полторы. Если источник
+    // сигналов уже отобрал их по проценту, эта секунда лишняя.
+    + `<div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
+          data-ex="${e.name}"> Проверять выплату на странице</label></div>`
     // Порог отката: на сколько процентов цена входа может уйти против
     // сигнала. У каждой биржи свой - на разных инструментах обычное
     // движение за полминуты отличается в разы.
@@ -986,7 +1253,8 @@ function buildAssetControls(st) {
   ).join('');
   for (const e of exs(s)) {
     for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`,
-                      `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`]) {
+                      `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`,
+                      `cp_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -1190,6 +1458,8 @@ async function refresh() {
     setVal(`mp_${e.name}`, e.minPayout);
     setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
     setVal(`sj_${e.name}`, e.stakeJitterPct ?? 0);
+    setChk(`cp_${e.name}`, e.checkPayout !== false);
+    $(`mp_${e.name}`).disabled = e.checkPayout === false;
     setChk(`wk_${e.name}`, (e.wake || {}).enabled);
     setVal(`wn_${e.name}`, (e.wake || {}).maxPerDay);
     $(`wn_${e.name}`).disabled = !(e.wake || {}).enabled;
@@ -1205,7 +1475,9 @@ async function refresh() {
     const own = e.execTimings && String(e.execTimings) !== String(s.execTimings);
     return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
       + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
-      + (e.requirePagePayout ? ' и обязательно читается со страницы' : '')
+      + (e.checkPayout === false
+          ? ' (проверка выплаты выключена - условия страницы берутся как есть)'
+          : (e.requirePagePayout ? ' и обязательно читается со страницы' : ''))
       + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '')
       + ((e.wake || {}).enabled
           ? `, вне смены будится до ${e.wake.maxPerDay} раз в сутки с паузой ${e.wake.minGapMin} мин`
@@ -1234,6 +1506,16 @@ async function refresh() {
   setVal('idleFrom', s.idleRotation.everyMinFrom);
   setVal('idleTo', s.idleRotation.everyMinTo);
   drawStats(st.stats);
+  // Ряд доходности меняется раз в сутки - тянем его один раз при
+  // загрузке и дальше только по кнопке периода.
+  if (!pnlLoaded) {
+    pnlLoaded = true;
+    document.querySelectorAll('#pnlRange button[data-d]').forEach(b =>
+      b.classList.toggle('on', +b.dataset.d === pnlDays));
+    $('pnlCard').classList.toggle('hidden', !pnlOpen);
+    $('btnPnlSect').classList.toggle('open', pnlOpen);
+    if (pnlOpen) refreshPnl();
+  }
   buildIdleActions(s.idleRotation.allActions, s.idleRotation.actions);
   $('lastIdle').textContent = st.lastIdle
     ? `последнее: ${ACT_NAMES[st.lastIdle.act] || st.lastIdle.act} в ${fmtTime(st.lastIdle.at)}`
@@ -1379,6 +1661,10 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="sj_"]').forEach(i => {
     if (i.value !== '') stakeJitters[i.dataset.ex] = +i.value;
   });
+  const checkPayouts = {};
+  document.querySelectorAll('#stakeRows input[id^="cp_"]').forEach(i => {
+    checkPayouts[i.dataset.ex] = i.checked;
+  });
   const wakes = {};
   document.querySelectorAll('#stakeRows input[id^="wk_"]').forEach(i => {
     wakes[i.dataset.ex] = { enabled: i.checked };
@@ -1387,7 +1673,7 @@ $('btnSaveStakes').onclick = async () => {
     if (i.value !== '') (wakes[i.dataset.ex] = wakes[i.dataset.ex] || {}).maxPerDay = +i.value;
   });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters, wakes,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
     priceGuard: { enabled: $('priceOn').checked },
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),

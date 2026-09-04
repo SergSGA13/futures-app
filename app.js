@@ -5271,23 +5271,33 @@ function mexcPairOrder_(sigs) {
 // поменять - для "а что если ставить больше/меньше" без правки конфига.
 // MEXC_STATS.stakes - те, что реально используются сейчас (стартуют как
 // копия дефолтов и правятся селекторами в initMexcStatsUI).
-const MEXC_STAKE_DEFAULTS = { ETH: 150, BTC: 250, SPCX: 30 };
-MEXC_STATS.stakes = { ...MEXC_STAKE_DEFAULTS };
-
-// У 30-минутных сигналов свои условия: выплата выше (0.85 против 0.8) и
-// ставка одна на все пары. Поэтому деньги считаются ПО СИГНАЛУ, с учётом
-// его листа, а не по агрегату пары - в режиме «Все» в одной паре лежат
-// сигналы обеих экспираций с разными ставкой и выплатой.
+// Ставка зависит и от пары, И от экспирации: у 10-минутных она разная по
+// парам (как в боевом конфиге исполнителя), у 30-минутных - 150 на любую
+// пару, включая акции SPCX/MU/NVDA, которые торгуются только тридцатиминутками.
+// Выплата тоже разная: 0.8 против 0.85. Поэтому деньги считаются ПО СИГНАЛУ,
+// с учётом его листа, а не по агрегату пары - в режиме «Все» в одной паре
+// лежат сигналы обеих экспираций с разными ставкой и выплатой.
 const MEXC_PAYOUT = { '10m': 0.8, '30m': 0.85 };
-const MEXC_STAKE30_DEFAULT = 150;
-MEXC_STATS.stake30 = MEXC_STAKE30_DEFAULT;
+const MEXC_STAKE_DEFAULTS = {
+  '10m': { ETH: 150, BTC: 250, SPCX: 30 },
+  '30m': {},                                   // у всех пар по умолчанию 150
+};
+const MEXC_STAKE_FALLBACK = { '10m': 150, '30m': 150 };
+// Потолок селектора - предел поля ввода на бирже (config.example.json: stakeLimits).
+const MEXC_STAKE_MAX = { BTC: 250 };
+const MEXC_STAKE_MAX_DEFAULT = 150;
+// Пользовательские правки ставок, отдельно на экспирацию.
+MEXC_STATS.stakes = { '10m': {}, '30m': {} };
 
-function mexcStakeFor_(pair) {
-  return MEXC_STATS.stakes[pair] ?? MEXC_STAKE_DEFAULTS.ETH;
-}
 function mexcIs30_(s) { return s.src === '30m'; }
+function mexcStakeDefault_(exp, pair) {
+  return (MEXC_STAKE_DEFAULTS[exp] || {})[pair] ?? MEXC_STAKE_FALLBACK[exp];
+}
+function mexcStakeFor_(exp, pair) {
+  return (MEXC_STATS.stakes[exp] || {})[pair] ?? mexcStakeDefault_(exp, pair);
+}
 function mexcStakeOf_(s) {
-  return mexcIs30_(s) ? MEXC_STATS.stake30 : mexcStakeFor_(s.pair);
+  return mexcStakeFor_(mexcIs30_(s) ? '30m' : '10m', s.pair);
 }
 function mexcPayoutOf_(s) {
   return mexcIs30_(s) ? MEXC_PAYOUT['30m'] : MEXC_PAYOUT['10m'];
@@ -5334,13 +5344,13 @@ function mexcBranchSummaryHtml_(sigs) {
   if (!dec) return '';
   const wr = w / dec * 100;
   const be = mexcBreakeven_(sigs);
-  const has30 = sigs.some(mexcIs30_), has10 = sigs.some(s => !mexcIs30_(s));
   const parts = [];
-  if (has10) {
-    const pairs = [...new Set(sigs.filter(s => !mexcIs30_(s)).map(s => s.pair))];
-    parts.push(`10м ${pairs.map(p => `${p} ${mexcStakeFor_(p)}`).join('/')} · вып. ${MEXC_PAYOUT['10m']}`);
+  for (const exp of ['10m', '30m']) {
+    const pairs = [...new Set(sigs.filter(s => (mexcIs30_(s) ? '30m' : '10m') === exp).map(s => s.pair))];
+    if (!pairs.length) continue;
+    const lbl = exp === '30m' ? '30м' : '10м';
+    parts.push(`${lbl} ${pairs.map(p => `${p} ${mexcStakeFor_(exp, p)}`).join('/')} · вып. ${MEXC_PAYOUT[exp]}`);
   }
-  if (has30) parts.push(`30м ${MEXC_STATS.stake30} · вып. ${MEXC_PAYOUT['30m']}`);
   const stakeTxt = parts.join(' · ');
   return `<div class="dev-branch-total">
     <span>PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b></span>
@@ -5470,6 +5480,49 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
   };
 }
 
+// Строит селекторы ставок под текущий набор сигналов: отдельная группа на
+// каждую экспирацию и по селектору на КАЖДУЮ реально встреченную пару.
+// Раньше поля были прибиты в разметке (ETH/BTC/SPCX), и новая акция на бирже
+// осталась бы без своей ставки - а MU и NVDA торгуются только тридцатиминутками.
+function mexcRenderStakeRow_(sigs) {
+  const host = document.getElementById('mexcStakeFields');
+  if (!host) return;
+
+  const groups = [];
+  for (const exp of ['10m', '30m']) {
+    const pairs = [...new Set(sigs.filter(s => (mexcIs30_(s) ? '30m' : '10m') === exp).map(s => s.pair))].sort();
+    if (pairs.length) groups.push({ exp, pairs });
+  }
+  // Ключ состава: пересобираем разметку только когда набор пар изменился,
+  // иначе каждый перерасчёт сбрасывал бы уже выбранные значения.
+  const key = groups.map(g => g.exp + ':' + g.pairs.join(',')).join('|');
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+
+  host.innerHTML = groups.map(g => {
+    const lbl = g.exp === '30m' ? '30\u043c' : '10\u043c';
+    const fields = g.pairs.map(pair => {
+      const max = MEXC_STAKE_MAX[pair] ?? MEXC_STAKE_MAX_DEFAULT;
+      const cur = mexcStakeFor_(g.exp, pair);
+      let opts = '';
+      for (let v = 5; v <= max; v += 5) opts += `<option value="${v}"${v === cur ? ' selected' : ''}>${v}</option>`;
+      return `<label class="mexc-stake-field">${pair}<select class="mexc-stake-select" data-exp="${g.exp}" data-pair="${pair}">${opts}</select></label>`;
+    }).join('');
+    return `<span class="mexc-stake-group"><i>${lbl}</i>${fields}</span>`;
+  }).join('');
+
+  host.querySelectorAll('select[data-pair]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const v = parseInt(sel.value, 10);
+      const { exp, pair } = sel.dataset;
+      if (!v || v === mexcStakeFor_(exp, pair)) return;
+      MEXC_STATS.stakes[exp][pair] = v;
+      if (tg) tg.HapticFeedback?.selectionChanged?.();
+      renderMexcStats();
+    });
+  });
+}
+
 async function renderMexcStats() {
   const days = MEXC_STATS.days;
   const sumEl = document.getElementById('mexcSummary');
@@ -5497,10 +5550,8 @@ async function renderMexcStats() {
     }
     mexcShow_('mexcEmpty', false);
 
-    // Поле ставки SPCX показываем только когда такие сигналы реально есть -
-    // остальные ветки/периоды его не используют, и лишний селектор будет шумом.
-    const spcxWrap = document.getElementById('mexcStakeSpcxWrap');
-    if (spcxWrap) spcxWrap.style.display = sigs.some(s => s.pair === 'SPCX') ? '' : 'none';
+    // Селекторы ставок строим под реальный состав пар текущего набора.
+    mexcRenderStakeRow_(sigs);
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
@@ -5623,51 +5674,6 @@ function initMexcStatsUI() {
     });
   }
 
-  // Селекторы ставки: шаг 5, потолок - реальный лимит поля ввода на бирже
-  // (см. scripts/mexc-executor/config.example.json: stakeLimits), значение
-  // по умолчанию - боевая ставка. Смена любого пересчитывает всю страницу.
-  const stakeCfg = [
-    ['mexcStakeEth', 'ETH', 150],
-    ['mexcStakeBtc', 'BTC', 250],
-    ['mexcStakeSpcx', 'SPCX', 150],
-  ];
-  for (const [id, pair, max] of stakeCfg) {
-    const sel = document.getElementById(id);
-    if (!sel || sel.dataset.wired) continue;
-    sel.dataset.wired = '1';
-    for (let v = 5; v <= max; v += 5) {
-      const o = document.createElement('option');
-      o.value = o.textContent = v;
-      if (v === MEXC_STAKE_DEFAULTS[pair]) o.selected = true;
-      sel.appendChild(o);
-    }
-    sel.addEventListener('change', () => {
-      const v = parseInt(sel.value, 10);
-      if (!v || v === MEXC_STATS.stakes[pair]) return;
-      MEXC_STATS.stakes[pair] = v;
-      if (tg) tg.HapticFeedback?.selectionChanged();
-      renderMexcStats();
-    });
-  }
-
-  // У 30-минутных ставка одна на все пары - отдельный селектор.
-  const sel30 = document.getElementById('mexcStake30');
-  if (sel30 && !sel30.dataset.wired) {
-    sel30.dataset.wired = '1';
-    for (let v = 5; v <= 150; v += 5) {
-      const o = document.createElement('option');
-      o.value = o.textContent = v;
-      if (v === MEXC_STAKE30_DEFAULT) o.selected = true;
-      sel30.appendChild(o);
-    }
-    sel30.addEventListener('change', () => {
-      const v = parseInt(sel30.value, 10);
-      if (!v || v === MEXC_STATS.stake30) return;
-      MEXC_STATS.stake30 = v;
-      if (tg) tg.HapticFeedback?.selectionChanged();
-      renderMexcStats();
-    });
-  }
 }
 
 // ===== INIT =====

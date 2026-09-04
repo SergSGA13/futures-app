@@ -2769,3 +2769,14 @@ body.zones-only #backBtn { display: none !important; }
 body.zones-only .app-main { bottom: 0; }
 /* Точка безубытка в итоге ветки MEXC - зависит от выплаты экспирации */
 .mexc-be { opacity: .8; }
+/* Ставки: группы по экспирации, внутри - по паре */
+.mexc-stake-fields { display: contents; }
+.mexc-stake-group {
+  display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  padding: 2px 6px 2px 4px; border-radius: 8px;
+  border: 1px solid rgba(247,147,26,.20); background: rgba(247,147,26,.05);
+}
+.mexc-stake-group i {
+  font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .3px;
+  color: #FFC178; opacity: .9;
+}

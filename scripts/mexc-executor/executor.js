@@ -4791,8 +4791,12 @@ if (process.argv[2] === 'timings') {
     for (const n of exNames()) {
       const e = exCfg(n);
       const assets = Object.keys(e.urls || {});
+      // Минуты печатаем у каждого актива: список, записанный однажды
+      // неверно, тихо снимает актив с его настоящей экспирации, и по
+      // одним только суммам этого не видно.
       log(`  биржа ${e.title}${n === defaultEx() ? ' (по умолчанию)' : ''}: `
-        + `${assets.map(a => `${a} ${stakeFor(a, n)}`).join(' / ') || 'активов нет'} USDT `
+        + `${assets.map(a => `${a} ${stakeFor(a, n)} (${timingsFor(a, n).join('/') || 'нет минут!'}м)`)
+             .join(' / ') || 'активов нет'} `
         + `| выплата ${e.minPayoutStrict ? '>' : '>='} ${e.minPayout}%`
         + `${e.requirePagePayout ? ', обязательна со страницы' : ''} | слотов ${e.maxOpenBets}`);
       const tw = todayWindows(n);

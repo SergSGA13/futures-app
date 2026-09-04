@@ -120,6 +120,11 @@ function exCfg(name) {
     // 10-минутные сигналы PRO-ветки, и 30-минутка, попавшая туда по
     // ошибке маршрутизации, должна отбиться, а не открыться.
     execTimings: e.execTimings || CFG.execTimings || [10],
+    // Отдельные активы бывают уже общего списка: акции MU и NVIDIA у
+    // MEXC играются только тридцатиминутками, десятиминутного события по
+    // ним просто нет. Правило по активу точнее общего, поэтому оно его и
+    // заменяет - тем же порядком, каким список биржи заменяет верхний.
+    assetTimings: { ...(CFG.assetTimings || {}), ...(e.assetTimings || {}) },
     // Метки потока в поле "timing" сигнала. Источник шлёт разные потоки
     // разными метками: PRO-ветка - "10m", ветка MEXC - "MEXC _10m" и
     // "MEXC _30m", ветка ALT - "ALT10m". По ним и различаем, куда
@@ -233,6 +238,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
 // Старый плоский stakeUSDT продолжает работать как запасной вариант.
+// Какие экспирации разрешены этому активу. Список у актива свой -
+// берём его; нет своего - общий по бирже.
+function timingsFor(asset, ex) {
+  const E = exCfg(ex);
+  const own = (E.assetTimings || {})[asset];
+  return Array.isArray(own) && own.length ? own.map(Number) : E.execTimings;
+}
 function stakeFor(asset, ex) {
   const t = exCfg(ex).stakes || {};
   return t[asset] != null ? t[asset] : (CFG.stakeUSDT ?? 5);
@@ -2346,8 +2358,22 @@ function normalizeSignal(sig) {
   if (!sig.asset) {
     const t = String(sig.ticker || '').toUpperCase();
     const pool = ex ? Object.keys(exCfg(ex).urls || {}) : allAssets();
-    sig.asset = pool.sort((a, b) => b.length - a.length)
-      .find(k => t.includes(k.toUpperCase())) || '';
+    // Тикер бывает написан и ключом, и биржевым символом: "NVDA/USDT" и
+    // "NVIDIA_USDT" - один актив, а общих букв у них нет вовсе. Поэтому
+    // у каждого ключа проверяем оба написания.
+    const names = k => {
+      const out = new Set([String(k).toUpperCase()]);
+      for (const n of (ex ? [ex] : exNames())) {
+        const sym = (exCfg(n).symbols || {})[k];
+        if (sym) out.add(String(sym).toUpperCase());
+      }
+      return [...out];
+    };
+    sig.asset = pool
+      .map(k => [k, Math.max(...names(k).map(x => x.length))])
+      .sort((a, b) => b[1] - a[1])
+      .map(([k]) => k)
+      .find(k => names(k).some(x => t.includes(x))) || '';
   }
   // Биржу не назвали - смотрим на метку потока, потом на актив: если он
   // торгуется ровно на одной бирже, вопрос решён. Иначе биржа по
@@ -2377,7 +2403,23 @@ function normalizeSignal(sig) {
   // сигнал, а разбираться приходится именно по ней.
   const rawTag = String(sig.timing ?? '').trim();
   if (rawTag) sig.tag = rawTag;
-  sig.timing = /30/.test(rawTag) ? 30 : 10;
+  // Метка обычно сама говорит минуты: "MEXC_30m", "ALT10m". Если не
+  // говорит ни того, ни другого, а активу разрешена ровно одна
+  // экспирация - берём её: молчание метки не то же самое, что "10m", и
+  // отбивать из-за него ставку по активу, у которого другого времени и
+  // не бывает, значит терять сигнал на пустом месте. Явное "10" в метке
+  // при этом остаётся явным: его не переписываем, такая ставка честно
+  // отобьётся по списку активa.
+  if (/30/.test(rawTag)) sig.timing = 30;
+  else if (/10/.test(rawTag)) sig.timing = 10;
+  else {
+    const only = timingsFor(sig.asset, ex);
+    sig.timing = only.length === 1 ? Number(only[0]) : 10;
+    if (only.length === 1 && sig.timing !== 10) {
+      log(`метка "${rawTag || '-'}" о минутах молчит, у ${sig.asset} разрешена одна `
+        + `экспирация - беру ${sig.timing}м`);
+    }
+  }
   // Цена из сигнала. TradingView шлёт её как {{close}}; поле называют
   // по-разному, поэтому принимаем любое из привычных имён. Нет цены -
   // не беда: за точку отсчёта возьмём цену на момент начала ставки.
@@ -2437,10 +2479,12 @@ function acceptSignal(sig, src) {
     return reason;
   };
 
-  const execTimings = exCfg(sig.ex).execTimings;
-  if (execTimings.indexOf(sig.timing) < 0) {
+  const allow = timingsFor(sig.asset, sig.ex);
+  if (allow.indexOf(sig.timing) < 0) {
+    const own = (exCfg(sig.ex).assetTimings || {})[sig.asset];
     return skip('timing', null,
-      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${execTimings.join(', ')}м)`);
+      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${allow.join(', ')}м`
+      + `${own ? ` - список задан для ${sig.asset}` : ''})`);
   }
   if (!inActiveHours(null, sig.ex)) {
     // Пробуждение проверяем ДО отказа: может быть, эту ставку всё-таки

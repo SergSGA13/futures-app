@@ -5278,14 +5278,22 @@ function mexcPairOrder_(sigs) {
 // с учётом его листа, а не по агрегату пары - в режиме «Все» в одной паре
 // лежат сигналы обеих экспираций с разными ставкой и выплатой.
 const MEXC_PAYOUT = { '10m': 0.8, '30m': 0.85 };
+// Состав пар у экспираций разный: на 10 минутах торгуются только ETH и BTC,
+// на 30 минутах - ещё и акции (MU, NVDA, SPCX). Поэтому у 10м ставка своя
+// на пару, а на 30м у ВСЕХ пар, включая BTC, ставка 150.
 const MEXC_STAKE_DEFAULTS = {
-  '10m': { ETH: 150, BTC: 250, SPCX: 30 },
+  '10m': { ETH: 150, BTC: 250 },
   '30m': {},                                   // у всех пар по умолчанию 150
 };
 const MEXC_STAKE_FALLBACK = { '10m': 150, '30m': 150 };
-// Потолок селектора - предел поля ввода на бирже (config.example.json: stakeLimits).
-const MEXC_STAKE_MAX = { BTC: 250 };
+// Потолок селектора - предел поля ввода на бирже (config.example.json:
+// stakeLimits). Он тоже зависит от экспирации: 250 бывает только у BTC на
+// 10 минутах, на 30м максимум везде 150.
+const MEXC_STAKE_MAX = { '10m': { BTC: 250 }, '30m': {} };
 const MEXC_STAKE_MAX_DEFAULT = 150;
+function mexcStakeMax_(exp, pair) {
+  return (MEXC_STAKE_MAX[exp] || {})[pair] ?? MEXC_STAKE_MAX_DEFAULT;
+}
 // Пользовательские правки ставок, отдельно на экспирацию.
 MEXC_STATS.stakes = { '10m': {}, '30m': {} };
 
@@ -5502,7 +5510,7 @@ function mexcRenderStakeRow_(sigs) {
   host.innerHTML = groups.map(g => {
     const lbl = g.exp === '30m' ? '30\u043c' : '10\u043c';
     const fields = g.pairs.map(pair => {
-      const max = MEXC_STAKE_MAX[pair] ?? MEXC_STAKE_MAX_DEFAULT;
+      const max = mexcStakeMax_(g.exp, pair);
       const cur = mexcStakeFor_(g.exp, pair);
       let opts = '';
       for (let v = 5; v <= max; v += 5) opts += `<option value="${v}"${v === cur ? ' selected' : ''}>${v}</option>`;

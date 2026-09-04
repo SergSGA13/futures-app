@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -4711,7 +4711,55 @@ function addAssetMode(exName, key, symbol, stake, minutes) {
   console.log(`Проверь адрес глазами и перезапусти исполнитель - актив появится и в панели.`);
 }
 
-if (process.argv[2] === 'add-asset') {
+// ── режим timings: какие экспирации у актива бывают на бирже ──
+// Это свойство инструмента, а не предпочтение, поэтому в панели оно
+// только показывается. Менять его всё равно иногда надо - например,
+// когда список однажды записали неверно, - и делать это правкой JSON
+// руками не стоит: ошибиться там легче, чем кажется.
+//
+//   node executor.js timings mexc SPCX 30     только тридцатиминутки
+//   node executor.js timings mexc BTC all     как у всей биржи
+function timingsMode(exName, key, minutes) {
+  const die = (m) => { console.error(m); process.exit(1); };
+  if (!exName || !key || !minutes) {
+    die('как звать: node executor.js timings <биржа> <актив> <минуты|all>\n'
+      + 'примеры:  node executor.js timings mexc SPCX 30\n'
+      + '          node executor.js timings mexc BTC all');
+  }
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const E = (raw.exchanges || {})[exName];
+  if (!E) die(`биржи «${exName}» в конфиге нет; есть: ${Object.keys(raw.exchanges || {}).join(', ')}`);
+  key = String(key).toUpperCase();
+  if (!(E.urls || {})[key]) {
+    die(`актива ${key} у биржи ${E.title || exName} нет; есть: ${Object.keys(E.urls || {}).join(', ')}`);
+  }
+  const all = (E.execTimings || raw.execTimings || [10]).map(Number);
+  E.assetTimings = E.assetTimings || {};
+  let what;
+  if (/^all$/i.test(String(minutes))) {
+    delete E.assetTimings[key];
+    what = `как у всей биржи (${all.join(', ')}м)`;
+  } else {
+    const v = all.filter(t => String(minutes).split(/[^0-9]+/).map(Number).includes(t));
+    if (!v.length) die(`из «${minutes}» ничего не выбрать: биржа играет ${all.join(', ')}м`);
+    if (v.length === all.length) { delete E.assetTimings[key]; what = `как у всей биржи (${v.join(', ')}м)`; }
+    else { E.assetTimings[key] = v; what = `только ${v.join(', ')}м`; }
+  }
+  if (!Object.keys(E.assetTimings).length) delete E.assetTimings;
+  const bak = path.join(ROOT, `config.pre-timings.json`);
+  fs.copyFileSync(CFG_PATH, bak);
+  fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  JSON.parse(fs.readFileSync(CFG_PATH, 'utf8'));   // читаем обратно: писать битый конфиг нельзя
+  console.log(`${E.title || exName} ${key}: ${what}`);
+  const now = E.assetTimings || {};
+  console.log('  сейчас у биржи: ' + Object.keys(E.urls).map(a =>
+    `${a} ${(now[a] || all).join('/')}м`).join(', '));
+  console.log(`  копия старого конфига: ${path.basename(bak)}`);
+}
+
+if (process.argv[2] === 'timings') {
+  timingsMode(process.argv[3], process.argv[4], process.argv[5]);
+} else if (process.argv[2] === 'add-asset') {
   addAssetMode(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);
 } else if (process.argv[2] === 'migrate') {
   migrateMode();

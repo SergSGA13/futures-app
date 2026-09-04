@@ -244,7 +244,9 @@
      приоритет задавался общей прозрачностью секции, отчего текст просто
      мутнел. Теперь: разделитель - световой луч, а важность выражена
      размером и цветом, не мутью. */
-  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(150px,.8fr) minmax(175px,.9fr);
+  /* Секций три - режим, слоты, окно биржи. Колонок ровно столько же:
+     четвёртая осталась бы пустой дырой на месте ручной ставки. */
+  .ctl { display:grid; grid-template-columns:minmax(215px,1.1fr) minmax(180px,1fr) minmax(180px,1fr);
          gap:9px; padding:11px; }
   /* Каждая секция - своё окно с рамкой в собственном цвете. Линия-
      разделитель этого не давала: блоки читались как один сплошной текст. */
@@ -262,8 +264,6 @@
   .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
   .ctl-sec-win   { border-color:rgba(102,163,255,.24);
                    background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
-  .ctl-sec-man   { border-color:rgba(157,80,255,.32);
-                   background:radial-gradient(130% 110% at 0% 0%, rgba(157,80,255,.09), transparent 70%); }
   @media (max-width: 900px) { .ctl { grid-template-columns:1fr 1fr; } }
   @media (max-width: 540px) { .ctl { grid-template-columns:1fr; } }
 
@@ -509,23 +509,6 @@
       </div>
     </div>
 
-    <div class="ctl-sec ctl-dim ctl-sec-man">
-      <div class="ctl-h">Ручная ставка</div>
-      <div class="btns" style="margin-bottom:6px">
-        <select id="mEx" title="Биржа"></select>
-        <select id="mAsset"></select>
-        <select id="mDir"><option>UP</option><option>DOWN</option></select>
-        <select id="mTiming" title="Время экспирации"><option value="10">10м</option><option value="30">30м</option></select>
-      </div>
-      <!-- Сумма отдельно от настроечной ставки: разовый заход руками чаще
-           всего отличается от той, что автомат ставит по сигналу. Границы
-           биржевые и у каждого актива свои - подставляются по выбору. -->
-      <div class="row"><span>Сумма, USDT</span>
-        <input type="number" id="mStake" min="5" step="5"></div>
-      <div class="ctl-note" id="mStakeHint" style="margin:2px 0 7px"></div>
-      <button class="go" id="btnManual"
-        title="Payout и режим проверяются как обычно. Лимиты слотов и направления ручная ставка обходит: ты нажал сам.">Поставить</button>
-    </div>
   </div>
 
   <!-- Часы работы слева, журнал справа - оба на виду. Раньше эта пара
@@ -1272,21 +1255,13 @@ function buildAssetControls(st) {
     }
   }
 
-  $('mEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
-  $('mEx').style.display = multi ? '' : 'none';
-  // Тот же список для кнопки «Открыть»: смотреть глазами нужно и на ту
+  // Список бирж для кнопки «Открыть»: смотреть глазами нужно и на ту
   // биржу, что сейчас не в смене.
-  $('winEx').innerHTML = $('mEx').innerHTML;
+  $('winEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
   $('winEx').style.display = multi ? '' : 'none';
   winExTouched = false;
   $('commonHead').style.display = multi ? '' : 'none';
-  buildManualAssets(s);
   $('winEx').addEventListener('change', () => { winExTouched = true; });
-  $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
-  $('mAsset').addEventListener('change', () => {
-    buildManualTimings(lastSettings || s);
-    syncManualStake(lastSettings || s, true);
-  });
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
@@ -1294,56 +1269,8 @@ function buildAssetControls(st) {
     c.addEventListener('change', () => dirty.add('tfBox')));
 }
 
-// Активы в ручной ставке - только те, что торгуются на выбранной бирже.
-function buildManualAssets(s) {
-  const e = exBy(s, $('mEx').value);
-  if (!e) return;
-  const keep = $('mAsset').value;
-  $('mAsset').innerHTML = e.assets.map(a => `<option>${a}</option>`).join('');
-  if (e.assets.includes(keep)) $('mAsset').value = keep;
-  buildManualTimings(s);
-}
-
-// Минуты в ручной ставке - только те, что у актива на бирже есть.
-// Ручная ставка идёт мимо приёма сигналов, и предложенная тут
-// десятиминутка по акции ушла бы в никуда.
-function buildManualTimings(s) {
-  const e = exBy(s, $('mEx').value);
-  if (!e) return;
-  const list = e.assetTimings[$('mAsset').value] || e.execTimings || [10, 30];
-  const keep = $('mTiming').value;
-  $('mTiming').innerHTML = list.map(t => `<option value="${t}">${t}м</option>`).join('');
-  if (list.map(String).includes(keep)) $('mTiming').value = keep;
-  // Единственная возможная экспирация - не выбор: показываем, но не
-  // делаем вид, что тут есть что переключать.
-  $('mTiming').disabled = list.length < 2;
-}
-
-// Сумма ручной ставки. Значение подставляем по активу - но только когда
-// актив сменили, иначе автообновление раз в 5 секунд затирало бы то, что
-// ты набираешь прямо сейчас.
-const MSTAKE_MIN = 5;
-let mStakeAsset = null;
 // Пока биржу для окна не выбрали руками, она следует за сменой.
 let winExTouched = false;
-function syncManualStake(s, force) {
-  const a = $('mAsset').value;
-  const e = exBy(s, $('mEx').value);
-  if (!a || !e) return;
-  const max = e.stakeLimits[a] ?? 150;
-  $('mStake').max = max;
-  $('mStake').min = MSTAKE_MIN;
-  $('mStakeHint').textContent = `${MSTAKE_MIN}-${max} USDT`;
-  const tag = e.name + '|' + a;
-  if (force || tag !== mStakeAsset) {
-    mStakeAsset = tag;
-    // Стартуем от настроечной ставки актива на этой бирже.
-    $('mStake').value = Math.min(Math.max(e.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
-  } else {
-    const v = +$('mStake').value;
-    if (v > max) $('mStake').value = max;
-  }
-}
 
 let idleBuilt = false;
 function buildIdleActions(all, chosen) {
@@ -1480,8 +1407,6 @@ async function refresh() {
   $('win').title = exs(s).map(e => `${e.title}: ${e.todayWindows || 'круглосуточно'}`).join('\n');
 
   buildAssetControls(st);
-  buildManualTimings(s);
-  syncManualStake(s, false);
   for (const e of exs(s)) {
     for (const a of e.assets) {
       setVal(`st_${e.name}_${a}`, e.stakes[a]);
@@ -1646,37 +1571,6 @@ $('btnDry').onclick = async () => {
   if (st.dryRun && !confirm('Включить БОЕВОЙ режим? Ставки пойдут на реальные деньги.')) return;
   await post(st.dryRun ? 'dry-off' : 'dry-on');
   refresh();
-};
-// Ручная ставка обходит лимиты слотов и направления - значит второй клик
-// по кнопке это вторая ставка на реальные деньги, и ничто её не остановит.
-// Кнопку держим выключенной до ответа исполнителя.
-let manualBusy = false;
-$('btnManual').onclick = async () => {
-  if (manualBusy) return;
-  const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
-  const exchange = $('mEx').value;
-  const max = +$('mStake').max || 150;
-  const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
-  $('mStake').value = stake;
-  const exTitle = (exBy(lastSettings || {}, exchange) || {}).title || exchange;
-  if (!confirm(`Поставить ${exTitle} ${asset} ${direction}, экспирация ${timing} минут, ${stake} USDT?`)) return;
-  manualBusy = true;
-  const btn = $('btnManual'), label = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Ставлю…';
-  try {
-    const r = await post('manual', { exchange, asset, direction, timing, stake });
-    if (r && r.error) alert('Не принято: ' + r.error);
-  } catch (e) {
-    alert('Не дошло до исполнителя: ' + e.message);
-  } finally {
-    // Исполнитель отвечает сразу, как только положил ставку в очередь -
-    // то есть за десятки миллисекунд. Разблокируй кнопку по ответу, и
-    // двойной клик всё равно даст две ставки, поэтому держим паузу.
-    setTimeout(() => {
-      manualBusy = false; btn.disabled = false; btn.textContent = label;
-    }, 2500);
-    refresh(); setTimeout(refresh, 800);
-  }
 };
 $('btnOpen').onclick = async () => {
   $('btnOpen').disabled = true;

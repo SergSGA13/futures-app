@@ -41,9 +41,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
 let playwright;
 try { playwright = require('playwright'); }
 catch (e) {
-  // migrate только переписывает config.json - браузер ему не нужен, и
-  // требовать установку Playwright ради правки файла незачем.
-  if (process.argv[2] !== 'migrate') {
+  // migrate и add-asset только переписывают config.json - браузер им не
+  // нужен, и требовать установку Playwright ради правки файла незачем.
+  if (!['migrate', 'add-asset'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -4627,7 +4627,78 @@ async function diagMode() {
   process.exit(0);
 }
 
-if (process.argv[2] === 'migrate') {
+// ── режим add-asset: новый инструмент в конфиг ──
+// Актив живёт сразу в четырёх местах: urls, symbols, stakes,
+// stakeLimits, и иногда в assetTimings. Сводить их руками в JSON - ровно
+// та операция, на которой уже был SPCX: адрес написали, символ забыли, и
+// полтора месяца ставки уходили на BTC. Панель тут не помощник: строки
+// она строит ПО конфигу, придумать адрес ей неоткуда.
+//
+//   node executor.js add-asset mexc MU MUSTOCK 30 30
+//                              биржа ключ символ ставка минуты
+//
+// Адрес не спрашиваем: берём его у соседнего актива этой же биржи и
+// подставляем новый символ. Так новый адрес получается той же формы, что
+// и работающие, - а форма у бирж разная (у MEXC «/BTC_USDT», у Toobit
+// «/BTC-SWAP-USDT»), и именно на ней легче всего ошибиться.
+function addAssetMode(exName, key, symbol, stake, minutes) {
+  const die = (m) => { console.error(m); process.exit(1); };
+  if (!exName || !key) {
+    die('как звать: node executor.js add-asset <биржа> <ключ> [символ] [ставка] [минуты]\n'
+      + 'пример:   node executor.js add-asset mexc MU MUSTOCK 30 30');
+  }
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const E = (raw.exchanges || {})[exName];
+  if (!E) die(`биржи «${exName}» в конфиге нет; есть: ${Object.keys(raw.exchanges || {}).join(', ')}`);
+  key = String(key).toUpperCase();
+  const sym = String(symbol || key).toUpperCase();
+  E.urls = E.urls || {};
+  if (E.urls[key]) die(`актив ${key} у биржи ${E.title || exName} уже есть: ${E.urls[key]}`);
+
+  // Образец адреса: сосед, чей символ в адресе действительно виден.
+  let sample = null, sampleSym = '';
+  for (const [k, u] of Object.entries(E.urls)) {
+    const ks = String((E.symbols || {})[k] || k).toUpperCase();
+    if (String(u).toUpperCase().includes(ks)) { sample = u; sampleSym = ks; break; }
+  }
+  if (!sample) die(`у биржи ${E.title || exName} нет ни одного адреса, с которого можно взять образец`);
+  const i = String(sample).toUpperCase().lastIndexOf(sampleSym);
+  const url = sample.slice(0, i) + sym + sample.slice(i + sampleSym.length);
+
+  E.urls[key] = url;
+  if (sym !== key) { E.symbols = E.symbols || {}; E.symbols[key] = sym; }
+  // Ставку и потолок берём у соседа, если не сказано иначе: пятёрка по
+  // умолчанию - не то, чем стоит начинать торговать молча. Из соседей
+  // берём САМОГО скромного: у MEXC потолки разъехались от 150 до 250, и
+  // новый инструмент лучше начать с меньшего - поднять его в панели
+  // проще, чем заметить, что он стоит больше задуманного.
+  const near = (o) => {
+    const v = Object.values(o || {}).map(Number).filter(Number.isFinite);
+    return v.length ? Math.min(...v) : null;
+  };
+  E.stakes = E.stakes || {};
+  E.stakes[key] = stake != null && stake !== '' ? Number(stake) : (near(E.stakes) ?? 5);
+  E.stakeLimits = E.stakeLimits || {};
+  E.stakeLimits[key] = near(E.stakeLimits) ?? 150;
+  const mins = String(minutes || '').split(/[^0-9]+/).map(Number).filter(x => x === 10 || x === 30);
+  if (mins.length) { E.assetTimings = E.assetTimings || {}; E.assetTimings[key] = mins; }
+
+  const bak = path.join(ROOT, `config.pre-${key}.json`);
+  fs.copyFileSync(CFG_PATH, bak);
+  fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  JSON.parse(fs.readFileSync(CFG_PATH, 'utf8'));   // читаем обратно: писать битый конфиг нельзя
+  console.log(`${E.title || exName}: добавлен ${key}`);
+  console.log(`  адрес   ${url}`);
+  if (sym !== key) console.log(`  символ  ${sym}`);
+  console.log(`  ставка  ${E.stakes[key]} USDT, потолок ${E.stakeLimits[key]}`);
+  console.log(`  минуты  ${mins.length ? mins.join(', ') : 'как у всей биржи'}`);
+  console.log(`  копия старого конфига: ${path.basename(bak)}`);
+  console.log(`Проверь адрес глазами и перезапусти исполнитель - актив появится и в панели.`);
+}
+
+if (process.argv[2] === 'add-asset') {
+  addAssetMode(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);
+} else if (process.argv[2] === 'migrate') {
   migrateMode();
 } else if (process.argv[2] === 'login') {
   loginMode();

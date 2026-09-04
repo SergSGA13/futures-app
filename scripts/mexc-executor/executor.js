@@ -238,12 +238,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Ставка зависит от актива: на MEXC это ETH 150 / BTC 250.
 // Старый плоский stakeUSDT продолжает работать как запасной вариант.
-// Какие экспирации разрешены этому активу. Список у актива свой -
-// берём его; нет своего - общий по бирже.
+// Какие экспирации разрешены этому активу. Список актива только СУЖАЕТ
+// общий, а не заменяет его: галочки экспираций в панели - выключатель, и
+// он обязан выключать. Иначе снятая галочка «30 минут» останавливала бы
+// BTC с ETH, а акции продолжали бы торговаться молча.
 function timingsFor(asset, ex) {
   const E = exCfg(ex);
+  const all = (E.execTimings || []).map(Number);
   const own = (E.assetTimings || {})[asset];
-  return Array.isArray(own) && own.length ? own.map(Number) : E.execTimings;
+  if (!Array.isArray(own) || !own.length) return all;
+  return all.filter(t => own.map(Number).includes(t));
 }
 function stakeFor(asset, ex) {
   const t = exCfg(ex).stakes || {};
@@ -2483,8 +2487,10 @@ function acceptSignal(sig, src) {
   if (allow.indexOf(sig.timing) < 0) {
     const own = (exCfg(sig.ex).assetTimings || {})[sig.asset];
     return skip('timing', null,
-      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке (${allow.join(', ')}м`
-      + `${own ? ` - список задан для ${sig.asset}` : ''})`);
+      `${exCfg(sig.ex).title}: экспирация ${sig.timing}м не в списке `
+      + `(${allow.length ? allow.join(', ') + 'м' : 'разрешённых не осталось'}`
+      + `${own ? `; у ${sig.asset} свой список ${own.join(', ')}м, общий `
+        + `${exCfg(sig.ex).execTimings.join(', ')}м` : ''})`);
   }
   if (!inActiveHours(null, sig.ex)) {
     // Пробуждение проверяем ДО отказа: может быть, эту ставку всё-таки

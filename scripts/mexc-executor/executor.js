@@ -158,6 +158,17 @@ function exCfg(name) {
     // Пусто - холостое действие ограничится курсором и колесом.
     chartIntervals: e.chartIntervals || CFG.chartIntervals || [],
     chartAnchor: e.chartAnchor ?? CFG.chartAnchor ?? '',
+    // Рабочий актив: к нему возвращаемся после ставки и блужданий. Не
+    // задан - первый по списку urls. Ключ пробрасываем здесь: exCfg
+    // отдаёт наружу только перечисленное, и без этой строки настройка
+    // молча не работала - окно возвращалось на первый актив.
+    homeAsset: e.homeAsset ?? CFG.homeAsset ?? '',
+    // Чьи сутки считает биржа. dayTz - часы от UTC (у MEXC 8: её день
+    // начинается в 18:00 по Варшаве летом и в 17:00 зимой, и сдвиг
+    // доезжает сам). dayStart - тот же час, но заданный местным
+    // временем, если так понятнее.
+    dayTz: e.dayTz ?? CFG.dayTz ?? null,
+    dayStart: e.dayStart ?? CFG.dayStart ?? '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -3584,6 +3595,8 @@ async function shotPnlToday(exName) {
   } catch (e) {
     log('снимок сводки не получился: ' + e.message);
   }
+  // Числа из того же окна: по ним подпись сверяет журнал с биржей.
+  const nums = await readPnlDialog().catch(() => null);
   // Окно закрываем за собой: оставленное поверх страницы оно помешает
   // следующей ставке найти кнопки.
   const close = page.getByText(/^\s*(Confirm|OK|Подтвердить)\s*$/i).first();
@@ -3593,25 +3606,60 @@ async function shotPnlToday(exName) {
     await page.keyboard.press('Escape').catch(() => {});
   }
   await page.waitForTimeout(400);
-  return buf;
+  return { buf, nums };
+}
+
+// Начало текущих суток БИРЖИ, а не наших. MEXC режет сутки по UTC+8:
+// вкладка «Today» в её сводке считает с 18:00 по Варшаве, и если журнал
+// считать с местной полуночи, числа в подписи не сойдутся с картинкой
+// под ней. Пояс задаётся как dayTz (часы от UTC); не задан - сутки местные.
+function exDayStart(name) {
+  const E = exCfg(name);
+  const day = 86400000;
+  // Явный час местного времени - если так понятнее. Минус: при переходе
+  // на зимнее время его придётся поправить руками, а dayTz доедет сам.
+  if (E.dayStart) {
+    const { hour, min } = hhmm(E.dayStart, '00:00');
+    const d = new Date(); d.setHours(hour, min, 0, 0);
+    if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
+    return d.getTime();
+  }
+  const tz = E.dayTz;
+  if (tz == null) { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  const shifted = Date.now() + tz * 3600000;
+  return Math.floor(shifted / day) * day - tz * 3600000;
 }
 
 // Подпись к отчёту: то же, что видно на снимке, но словами - в ленте
 // подпись читается раньше картинки.
-function reportCaption(exName) {
+function reportCaption(exName, nums) {
   const E = exCfg(exName);
-  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const since = exDayStart(exName);
   const rows = recentBets(400).filter(b =>
-    b.exchange === exName && new Date(b.time) >= day);
+    b.exchange === exName && new Date(b.time).getTime() >= since);
   const n = st => rows.filter(b => b.status === st).length;
-  const placed = n('placed') + n('placed-unconfirmed') + n('placed-unverified') + n('dry-run');
+  // «Без подтверждения» - это ставка, после которой счётчик открытых
+  // позиций не вырос. Считать её просто открытой нельзя: именно из этих
+  // строк и берутся расхождения с биржей.
+  const unconf = n('placed-unconfirmed') + n('placed-unverified');
+  const placed = n('placed') + n('dry-run') + unconf;
   const by = {};
   for (const b of rows) if (!/^placed|^dry-run/.test(b.status)) by[b.status] = (by[b.status] || 0) + 1;
   const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 4)
     .map(([k, v]) => `${k} ${v}`).join(', ');
-  const hhmmNow = new Date().toTimeString().slice(0, 5);
-  return `${E.title} · ${hhmmNow}\n`
-    + `сигналов за сутки: ${rows.length}, открыто ${placed}\n`
+  // Сколько ставок биржа насчитала САМА - число из того же окна, что и
+  // на втором снимке. Журнал знает, сколько мы нажали; расходятся они
+  // ровно на потерянные ставки, и молчать об этом нельзя.
+  const real = nums && Number.isFinite(nums.contracts) ? nums.contracts : null;
+  const lost = real != null && !state.dryRun ? placed - real : 0;
+  const hm = t => new Date(t).toTimeString().slice(0, 5);
+  const sameDay = new Date(since).toDateString() === new Date().toDateString();
+  const opened = real != null && !state.dryRun ? real : placed;
+  return `${E.title} · с ${hm(since)}${sameDay ? '' : ' вчера'} до ${hm(Date.now())}\n`
+    + `сигналов за сутки: ${rows.length}, открыто ${opened}`
+    + (unconf ? ` (${unconf} без подтверждения)` : '') + '\n'
+    + (lost > 0 ? `до биржи не дошло: ${lost}\n` : '')
+    + (lost < 0 ? `на бирже больше на ${-lost} - были ставки руками\n` : '')
     + (top ? `не сыграло: ${top}` : 'отказов нет')
     + (state.dryRun ? '\nрежим DRY-RUN - ставок на бирже нет' : '');
 }
@@ -3630,10 +3678,10 @@ async function sendReport(exName) {
   // него отчёт и читают.
   const p = await shotPnlToday(name).catch(e => { log('сводка: ' + e.message); return null; });
   const j = await shotJournal(name).catch(e => { log('журнал: ' + e.message); return null; });
-  const shots = [j, p].filter(Boolean);
+  const shots = [j, p && p.buf].filter(Boolean);
   if (!shots.length) return fail('ни одного снимка не вышло - не отправляю');
   try {
-    await tgSend(T.token, T.chatId, reportCaption(name), shots);
+    await tgSend(T.token, T.chatId, reportCaption(name, p && p.nums), shots);
     log(`отчёт ${exCfg(name).title} отправлен в Telegram (${shots.length} снимка)`);
     state.reportAt = Date.now();
     state.reportLast = { at: Date.now(), ok: true, ex: name, shots: shots.length,

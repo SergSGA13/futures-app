@@ -78,7 +78,8 @@
           30
         ]
       },
-      "homeAsset": "ETH"
+      "homeAsset": "ETH",
+      "dayTz": 8
     },
     "toobit": {
       "title": "Toobit",

@@ -205,7 +205,7 @@ const state = {
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
 const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone',
-                 'reportDone', 'reportAt'];
+                 'reportDone', 'reportAt', 'reportLast'];
 function saveState() {
   try {
     const o = {};
@@ -3619,8 +3619,11 @@ function reportCaption(exName) {
 async function sendReport(exName) {
   const T = tgCfg();
   const name = exName || T.exchanges[0] || defaultEx();
-  if (!T.token || !T.chatId) { log('отчёт: не задан token или chatId в telegram'); return false; }
-  if (!exNames().includes(name)) { log(`отчёт: биржи «${name}» в конфиге нет`); return false; }
+  const fail = (why) => { log('отчёт: ' + why);
+    state.reportLast = { at: Date.now(), ok: false, ex: name, shots: 0, why }; saveState();
+    return false; };
+  if (!T.token || !T.chatId) return fail('не задан token или chatId в разделе telegram');
+  if (!exNames().includes(name)) return fail(`биржи «${name}» в конфиге нет`);
   // Порядок работ и порядок картинок разный. Сначала идём на биржу: она
   // поднимает браузер, а снимок журнала берётся вкладкой того же браузера
   // и без него не выйдет вовсе. В сообщение же журнал ставим первым - с
@@ -3628,15 +3631,20 @@ async function sendReport(exName) {
   const p = await shotPnlToday(name).catch(e => { log('сводка: ' + e.message); return null; });
   const j = await shotJournal(name).catch(e => { log('журнал: ' + e.message); return null; });
   const shots = [j, p].filter(Boolean);
-  if (!shots.length) { log('отчёт: ни одного снимка не вышло - не отправляю'); return false; }
+  if (!shots.length) return fail('ни одного снимка не вышло - не отправляю');
   try {
     await tgSend(T.token, T.chatId, reportCaption(name), shots);
     log(`отчёт ${exCfg(name).title} отправлен в Telegram (${shots.length} снимка)`);
     state.reportAt = Date.now();
+    state.reportLast = { at: Date.now(), ok: true, ex: name, shots: shots.length,
+                         why: shots.length < 2 ? 'один снимок из двух' : '' };
     saveState();
     return true;
   } catch (e) {
     log('отчёт не ушёл: ' + e.message);
+    state.reportLast = { at: Date.now(), ok: false, ex: name, shots: shots.length,
+                         why: String(e.message).slice(0, 160) };
+    saveState();
     return false;
   }
 }
@@ -3998,7 +4006,8 @@ function snapshot() {
     execTimings: CFG.execTimings || [10],
     requireKnownTag: !!CFG.requireKnownTag,
     report: (() => { const T = tgCfg();
-      return { enabled: T.enabled, times: T.times, exchanges: T.exchanges, at: state.reportAt || null }; })(),
+      return { enabled: T.enabled, ready: !!(T.token && T.chatId), times: T.times,
+               exchanges: T.exchanges, last: state.reportLast || null }; })(),
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
     lastIdle: state.lastIdle,
@@ -4815,7 +4824,25 @@ async function reportMode(exName) {
     console.error('                "at": ["07:10","12:10","17:10","22:10"], "exchanges": ["mexc"] }');
     process.exit(1);
   }
-  const srv = server.listen(CFG.port ?? 8787);
+  // Профиль браузера занят, пока исполнитель запущен, - вторым процессом
+  // к нему не подступиться. Раньше команда просто молча падала; теперь
+  // говорим прямо, что делать.
+  const port = CFG.port ?? 8787;
+  const busy = await new Promise(r => {
+    const t = require('net').createServer();
+    t.once('error', () => r(true));
+    t.once('listening', () => t.close(() => r(false)));
+    t.listen(port, '127.0.0.1');
+  });
+  if (busy) {
+    console.error(`\nНа порту ${port} уже слушает запущенный исполнитель.`);
+    console.error('Профиль браузера у него занят, и второй процесс к нему не подступится.');
+    console.error('Отправь отчёт кнопкой «Отправить сейчас» в панели - она делает то же самое,');
+    console.error(`но внутри работающего процесса: http://127.0.0.1:${port}/panel/<секрет>`);
+    console.error('Либо останови исполнитель (Ctrl+C) и повтори команду.');
+    process.exit(1);
+  }
+  const srv = server.listen(port);
   await new Promise(r => srv.once('listening', r).once('error', r));
   const ok = await sendReport(name);
   await closeBrowser().catch(() => {});

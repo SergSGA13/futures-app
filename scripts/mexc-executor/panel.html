@@ -244,9 +244,8 @@
      приоритет задавался общей прозрачностью секции, отчего текст просто
      мутнел. Теперь: разделитель - световой луч, а важность выражена
      размером и цветом, не мутью. */
-  /* Секций три - режим, слоты, окно биржи. Колонок ровно столько же:
-     четвёртая осталась бы пустой дырой на месте ручной ставки. */
-  .ctl { display:grid; grid-template-columns:minmax(215px,1.1fr) minmax(180px,1fr) minmax(180px,1fr);
+  /* Секций четыре: режим, слоты, окно биржи, отчёт. */
+  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(170px,.9fr) minmax(180px,.95fr);
          gap:9px; padding:11px; }
   /* Каждая секция - своё окно с рамкой в собственном цвете. Линия-
      разделитель этого не давала: блоки читались как один сплошной текст. */
@@ -264,6 +263,12 @@
   .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
   .ctl-sec-win   { border-color:rgba(102,163,255,.24);
                    background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
+  .ctl-sec-tg    { border-color:rgba(34,232,255,.24);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.06), transparent 70%); }
+  .ctl-sec-tg .ctl-note { margin:4px 0 0; color:#FF6B8A; }
+  .ok-t  { color:#31D0AA; }
+  .bad-t { color:#FF6B8A; }
+  .muted { color:var(--muted); }
   @media (max-width: 900px) { .ctl { grid-template-columns:1fr 1fr; } }
   @media (max-width: 540px) { .ctl { grid-template-columns:1fr; } }
 
@@ -514,6 +519,20 @@
       </div>
     </div>
 
+    <!-- Отчёт в Telegram. Держим его на виду, а не в настройках: если
+         связка отвалилась, узнать об этом надо сразу, а не через сутки
+         молчания телефона. -->
+    <div class="ctl-sec ctl-dim ctl-sec-tg">
+      <div class="ctl-h">Отчёт в Telegram</div>
+      <div class="row"><span>Расписание</span><b id="tgTimes" style="font-size:11px">—</b></div>
+      <div class="row"><span>Куда</span><b id="tgWhere" style="font-size:11px">—</b></div>
+      <div class="row"><span>Последний</span><b id="tgLast" style="font-size:11px">—</b></div>
+      <div class="ctl-note" id="tgWhy" style="display:none"></div>
+      <div class="btns" style="margin-top:7px">
+        <button id="btnReport" title="Собрать два снимка и отправить в Telegram прямо сейчас">Отправить сейчас</button>
+      </div>
+    </div>
+
   </div>
 
   <!-- Часы работы слева, журнал справа - оба на виду. Раньше эта пара
@@ -606,12 +625,7 @@
     <button data-d="0">Всё</button>
     <span class="hint" id="pnlCount" style="align-self:center"></span>
     <button id="btnPnlNow" style="margin-left:auto">Собрать сейчас</button>
-    <!-- Отчёт в Telegram: два снимка - журнал по этой бирже и окно
-         «PNL History - Today» с самой биржи. Кнопка нужна, чтобы
-         проверить связку, не дожидаясь назначенного часа. -->
-    <button id="btnReport" title="Отправить отчёт в Telegram прямо сейчас">Отчёт в Telegram</button>
   </div>
-  <div class="hint" id="reportAt" style="margin:-4px 0 8px"></div>
   <div class="statrow" id="pnlTiles"></div>
   <div id="pnlChart"></div>
   <div class="note" id="pnlNote"></div>
@@ -1223,20 +1237,35 @@ $('btnPnlNow').onclick = async () => {
   setTimeout(async () => { await refreshPnl(); pnlBusy = false; $('btnPnlNow').disabled = false; }, 25000);
 };
 
+// Отчёт собирается секунд двадцать: браузер ходит на биржу, открывает
+// окно сводки и снимает панель. Кнопку держим выключенной всё это время -
+// второе нажатие означало бы вторую пару снимков и второе сообщение.
 let reportBusy = false;
 $('btnReport').onclick = async () => {
   if (reportBusy) return;
   reportBusy = true;
-  $('btnReport').disabled = true;
-  const was = $('reportAt').textContent;
-  $('reportAt').textContent = 'собираю снимки и отправляю - это занимает секунд двадцать…';
-  try { await post('report-now?ex=' + encodeURIComponent(pnlEx)); } catch (e) { /* покажет опрос */ }
+  const btn = $('btnReport'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Собираю…';
+  $('tgLast').textContent = 'собираю снимки…';
+  try {
+    const r = await post('report-now');
+    if (r && r.ok === false) {
+      $('tgLast').textContent = 'не начал';
+      showWhy(r.why || 'исполнитель занят');
+      reportBusy = false; btn.disabled = false; btn.textContent = label;
+      return;
+    }
+  } catch (e) { /* итог покажет следующий опрос */ }
   setTimeout(() => {
-    reportBusy = false; $('btnReport').disabled = false;
-    if ($('reportAt').textContent.startsWith('собираю')) $('reportAt').textContent = was;
+    reportBusy = false; btn.disabled = false; btn.textContent = label;
     refresh();
-  }, 25000);
+  }, 24000);
 };
+function showWhy(t) {
+  const el = $('tgWhy');
+  el.style.display = t ? '' : 'none';
+  el.textContent = t || '';
+}
 
 // ── холостые действия ──
 const ACT_NAMES = {
@@ -1530,13 +1559,23 @@ async function refresh() {
           + ' откат ни случился, пока сигнал шёл до нажатия.');
   if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
   setChk('knownTag', !!st.requireKnownTag);
-  // Когда уходит отчёт и ушёл ли последний. Без этой строки о том, что
+  // Когда уходит отчёт и чем кончился последний. Без этого о том, что
   // связка с Telegram отвалилась, узнаёшь только по молчанию телефона.
-  const R = st.report || {};
-  $('reportAt').textContent = !R.enabled
-    ? 'Отчёты в Telegram выключены (раздел telegram в config.json)'
-    : `Отчёт по ${(R.exchanges || []).join(', ')} в ${(R.times || []).join(', ')}`
-      + (R.at ? ` · последний ${fmtTime(R.at)}` : ' · ещё не отправлялся');
+  const R = st.report || {}, L = R.last;
+  $('tgTimes').textContent = R.enabled ? (R.times || []).join(' · ')
+    : (R.ready ? 'выключено' : 'не настроено');
+  $('tgWhere').textContent = (R.exchanges || []).map(n =>
+    (exs(s).find(e => e.name === n) || {}).title || n).join(', ') || '—';
+  if (!reportBusy) {
+    $('tgLast').innerHTML = !L ? '<span class="muted">ещё не отправлялся</span>'
+      : (L.ok ? `<span class="ok-t">${fmtTime(L.at)}</span>`
+              : `<span class="bad-t">не ушёл · ${fmtTime(L.at)}</span>`);
+    showWhy(L && L.why ? L.why : '');
+  }
+  $('btnReport').disabled = reportBusy || !R.ready;
+  $('btnReport').title = R.ready
+    ? 'Собрать два снимка и отправить в Telegram прямо сейчас'
+    : 'В config.json не заполнен раздел telegram: token и chatId';
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =

@@ -606,7 +606,12 @@
     <button data-d="0">Всё</button>
     <span class="hint" id="pnlCount" style="align-self:center"></span>
     <button id="btnPnlNow" style="margin-left:auto">Собрать сейчас</button>
+    <!-- Отчёт в Telegram: два снимка - журнал по этой бирже и окно
+         «PNL History - Today» с самой биржи. Кнопка нужна, чтобы
+         проверить связку, не дожидаясь назначенного часа. -->
+    <button id="btnReport" title="Отправить отчёт в Telegram прямо сейчас">Отчёт в Telegram</button>
   </div>
+  <div class="hint" id="reportAt" style="margin:-4px 0 8px"></div>
   <div class="statrow" id="pnlTiles"></div>
   <div id="pnlChart"></div>
   <div class="note" id="pnlNote"></div>
@@ -688,9 +693,14 @@ const $ = id => document.getElementById(id);
 // в нём тонут, а смотрят журнал ради них и ради ошибок.
 const BET_STATUSES = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
 const ERR_STATUSES = ['error', 'placed-unconfirmed', 'placed-unverified'];
-let logFilter = localStorage.getItem('mx_logfilter') || 'all';
-let logEx = localStorage.getItem('mx_logex') || 'all';
-let logTf = localStorage.getItem('mx_logtf') || 'all';
+// Фильтры можно задать адресом: ?ex=mexc&f=bets&tf=10. Так снимает
+// журнал отчёт в Telegram - ему нужна одна ветка, а не всё подряд.
+// Из адреса они НЕ запоминаются: иначе открытая ради отчёта вкладка
+// меняла бы то, что ты видишь у себя.
+const Q = new URLSearchParams(location.search);
+let logFilter = Q.get('f') || localStorage.getItem('mx_logfilter') || 'all';
+let logEx = Q.get('ex') || localStorage.getItem('mx_logex') || 'all';
+let logTf = Q.get('tf') || localStorage.getItem('mx_logtf') || 'all';
 function passesFilter(b) {
   const st = b.status;
   if (logEx !== 'all' && b.exchange !== logEx) return false;
@@ -1213,6 +1223,21 @@ $('btnPnlNow').onclick = async () => {
   setTimeout(async () => { await refreshPnl(); pnlBusy = false; $('btnPnlNow').disabled = false; }, 25000);
 };
 
+let reportBusy = false;
+$('btnReport').onclick = async () => {
+  if (reportBusy) return;
+  reportBusy = true;
+  $('btnReport').disabled = true;
+  const was = $('reportAt').textContent;
+  $('reportAt').textContent = 'собираю снимки и отправляю - это занимает секунд двадцать…';
+  try { await post('report-now?ex=' + encodeURIComponent(pnlEx)); } catch (e) { /* покажет опрос */ }
+  setTimeout(() => {
+    reportBusy = false; $('btnReport').disabled = false;
+    if ($('reportAt').textContent.startsWith('собираю')) $('reportAt').textContent = was;
+    refresh();
+  }, 25000);
+};
+
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
@@ -1505,6 +1530,13 @@ async function refresh() {
           + ' откат ни случился, пока сигнал шёл до нажатия.');
   if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
   setChk('knownTag', !!st.requireKnownTag);
+  // Когда уходит отчёт и ушёл ли последний. Без этой строки о том, что
+  // связка с Telegram отвалилась, узнаёшь только по молчанию телефона.
+  const R = st.report || {};
+  $('reportAt').textContent = !R.enabled
+    ? 'Отчёты в Telegram выключены (раздел telegram в config.json)'
+    : `Отчёт по ${(R.exchanges || []).join(', ')} в ${(R.times || []).join(', ')}`
+      + (R.at ? ` · последний ${fmtTime(R.at)}` : ' · ещё не отправлялся');
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =

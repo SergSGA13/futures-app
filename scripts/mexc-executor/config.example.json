@@ -203,6 +203,20 @@
       "toobit"
     ]
   },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chatId": "",
+    "at": [
+      "07:10",
+      "12:10",
+      "17:10",
+      "22:10"
+    ],
+    "exchanges": [
+      "mexc"
+    ]
+  },
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "payoutDriftPts": 5,

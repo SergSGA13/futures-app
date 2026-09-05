@@ -204,7 +204,8 @@ const state = {
 // в stakeLimits, а нижняя граница общая.
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
-const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone'];
+const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone',
+                 'reportDone', 'reportAt'];
 function saveState() {
   try {
     const o = {};
@@ -3133,7 +3134,8 @@ async function readPnlDialog() {
 // Открыть окно сводки и переключить его на «вчера». Селектор кнопки у
 // биржи не задан - ищем по смыслу: сначала явный selectors.pnlOpen, если
 // его прописали, потом любой мелкий значок рядом с заголовком позиций.
-async function openPnlDialog() {
+async function openPnlDialog(tabName) {
+  const tabWord = tabName || 'Yesterday';
   const E = curEx();
   const already = await page.evaluate(() =>
     /PNL\s*History/i.test(document.body.innerText || ''));
@@ -3186,13 +3188,13 @@ async function openPnlDialog() {
     }
     await page.waitForTimeout(600);
   }
-  // Вкладка «Yesterday».
-  const tab = page.getByText(/^\s*Yesterday\s*$/i).first();
+  // Вкладка: «Yesterday» для ночной сводки, «Today» для отчёта в течение дня.
+  const tab = page.getByText(new RegExp(`^\\s*${tabWord}\\s*$`, 'i')).first();
   if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
     await humanClick(tab).catch(() => {});
     await page.waitForTimeout(1200);
   } else {
-    log('в окне сводки не нашлась вкладка «Yesterday» - читаю то, что открыто');
+    log(`в окне сводки не нашлась вкладка «${tabWord}» - читаю то, что открыто`);
   }
   return await page.evaluate(() => /PNL\s*History/i.test(document.body.innerText || ''));
 }
@@ -3453,6 +3455,221 @@ async function collectPnl(exName) {
   log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, контрактов ${rec.contracts}, `
     + `прибыльных ${rec.win_rate}%, оборот ${rec.amount} USDT`);
   return rec;
+}
+
+// ── отчёт в Telegram ──
+// Четыре раза в день - два снимка: журнал ставок из панели (сколько
+// сигналов и что с ними стало) и окно «PNL History - Today» с самой
+// биржи. Числами то же самое сказать нельзя: смысл отчёта в том, чтобы
+// смотреть на него глазами с телефона, не заходя ни в панель, ни на биржу.
+function tgCfg() {
+  const t = CFG.telegram || {};
+  const at = (Array.isArray(t.at) && t.at.length ? t.at : ['07:10', '12:10', '17:10', '22:10'])
+    .map(v => hhmm(v, '07:10'));
+  return {
+    enabled: t.enabled === true && !!t.token && !!t.chatId,
+    token: String(t.token || ''), chatId: String(t.chatId || ''),
+    at, times: at.map(x => x.at),
+    exchanges: Array.isArray(t.exchanges) && t.exchanges.length ? t.exchanges : ['mexc'],
+  };
+}
+
+// Отправка без единой зависимости: multipart собираем руками. Два снимка
+// уходят одним сообщением - в ленте это одна карточка, а не две.
+function tgSend(token, chatId, caption, photos) {
+  return new Promise((resolve, reject) => {
+    const b = '----executor' + Math.random().toString(36).slice(2);
+    const media = photos.map((p, i) => ({
+      type: 'photo', media: `attach://p${i}`,
+      ...(i === 0 ? { caption: String(caption).slice(0, 1000) } : {}),
+    }));
+    const parts = [];
+    const field = (name, value) => parts.push(Buffer.from(
+      `--${b}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+    field('chat_id', chatId);
+    field('media', JSON.stringify(media));
+    photos.forEach((buf, i) => {
+      parts.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="p${i}"; `
+        + `filename="p${i}.png"\r\nContent-Type: image/png\r\n\r\n`));
+      parts.push(buf, Buffer.from('\r\n'));
+    });
+    parts.push(Buffer.from(`--${b}--\r\n`));
+    const body = Buffer.concat(parts);
+    const base = CFG.telegram && CFG.telegram.apiBase
+      ? String(CFG.telegram.apiBase) : 'https://api.telegram.org';
+    const u = new URL(`${base}/bot${token}/sendMediaGroup`);
+    const lib = u.protocol === 'http:' ? require('http') : require('https');
+    const req = lib.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'http:' ? 80 : 443),
+      path: u.pathname, method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${b}`, 'Content-Length': body.length },
+    }, res => {
+      let out = '';
+      res.on('data', d => { out += d; });
+      res.on('end', () => {
+        let j = null; try { j = JSON.parse(out); } catch (e) {}
+        if (res.statusCode === 200 && j && j.ok) return resolve(j);
+        reject(new Error(`Telegram ответил ${res.statusCode}: ${(j && j.description) || out.slice(0, 200)}`));
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+// Снимок журнала из своей же панели. Открываем её отдельной вкладкой и
+// сразу с нужными фильтрами: отчёт по ветке MEXC не должен показывать
+// чужие строки.
+async function shotJournal(exName) {
+  const ctx = page ? page.context() : null;
+  if (!ctx) { log('снимок журнала: браузер ещё не открыт'); return null; }
+  const url = `http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`
+    + `?ex=${encodeURIComponent(exName)}&f=all&tf=all&report=1`;
+  const p2 = await ctx.newPage();
+  try {
+    await p2.setViewportSize({ width: 1180, height: 1500 });
+    await p2.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
+    await p2.waitForTimeout(1800);
+    const card = p2.locator('#bets').locator('xpath=ancestor::div[contains(@class,"card")][1]');
+    const buf = await card.screenshot({ timeout: 8000 });
+    return buf;
+  } catch (e) {
+    log('снимок журнала не получился: ' + e.message);
+    return null;
+  } finally {
+    await p2.close().catch(() => {});
+  }
+}
+
+// Снимок окна «PNL History - Today» с самой биржи.
+async function shotPnlToday(exName) {
+  const E = exCfg(exName);
+  const url = homeUrl(E);
+  if (!url) return null;
+  EX = E;
+  page = await pageFor(exName);
+  await page.bringToFront().catch(() => {});
+  if (!page.url().startsWith(url)) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+  }
+  await waitForPanel().catch(() => {});
+  if (!(await openPnlDialog('Today'))) {
+    log(`отчёт ${E.title}: окно «PNL History» не открылось`);
+    return null;
+  }
+  // Снимаем само окно, а не всю страницу: на скриншоте с телефона мелкий
+  // диалог посреди графика не прочитать.
+  let buf = null;
+  try {
+    const box = await page.evaluate(() => {
+      const vis = el => { const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0; };
+      let best = null;
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el)) continue;
+        const t = el.innerText || '';
+        if (!/PNL\s*History/i.test(t) || !/Total\s*PNL/i.test(t)) continue;
+        if (t.length > 1200) continue;
+        if (!best || t.length < (best.innerText || '').length) best = el;
+      }
+      if (!best) return null;
+      const r = best.getBoundingClientRect();
+      return { x: Math.max(0, r.x - 8), y: Math.max(0, r.y - 8),
+               width: Math.min(r.width + 16, 1400), height: Math.min(r.height + 16, 1400) };
+    });
+    buf = box && box.width > 40 && box.height > 40
+      ? await page.screenshot({ clip: box })
+      : await page.screenshot();
+  } catch (e) {
+    log('снимок сводки не получился: ' + e.message);
+  }
+  // Окно закрываем за собой: оставленное поверх страницы оно помешает
+  // следующей ставке найти кнопки.
+  const close = page.getByText(/^\s*(Confirm|OK|Подтвердить)\s*$/i).first();
+  if (await close.count() > 0 && await close.isVisible().catch(() => false)) {
+    await humanClick(close).catch(() => {});
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  await page.waitForTimeout(400);
+  return buf;
+}
+
+// Подпись к отчёту: то же, что видно на снимке, но словами - в ленте
+// подпись читается раньше картинки.
+function reportCaption(exName) {
+  const E = exCfg(exName);
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const rows = recentBets(400).filter(b =>
+    b.exchange === exName && new Date(b.time) >= day);
+  const n = st => rows.filter(b => b.status === st).length;
+  const placed = n('placed') + n('placed-unconfirmed') + n('placed-unverified') + n('dry-run');
+  const by = {};
+  for (const b of rows) if (!/^placed|^dry-run/.test(b.status)) by[b.status] = (by[b.status] || 0) + 1;
+  const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(([k, v]) => `${k} ${v}`).join(', ');
+  const hhmmNow = new Date().toTimeString().slice(0, 5);
+  return `${E.title} · ${hhmmNow}\n`
+    + `сигналов за сутки: ${rows.length}, открыто ${placed}\n`
+    + (top ? `не сыграло: ${top}` : 'отказов нет')
+    + (state.dryRun ? '\nрежим DRY-RUN - ставок на бирже нет' : '');
+}
+
+async function sendReport(exName) {
+  const T = tgCfg();
+  const name = exName || T.exchanges[0] || defaultEx();
+  if (!T.token || !T.chatId) { log('отчёт: не задан token или chatId в telegram'); return false; }
+  if (!exNames().includes(name)) { log(`отчёт: биржи «${name}» в конфиге нет`); return false; }
+  // Порядок работ и порядок картинок разный. Сначала идём на биржу: она
+  // поднимает браузер, а снимок журнала берётся вкладкой того же браузера
+  // и без него не выйдет вовсе. В сообщение же журнал ставим первым - с
+  // него отчёт и читают.
+  const p = await shotPnlToday(name).catch(e => { log('сводка: ' + e.message); return null; });
+  const j = await shotJournal(name).catch(e => { log('журнал: ' + e.message); return null; });
+  const shots = [j, p].filter(Boolean);
+  if (!shots.length) { log('отчёт: ни одного снимка не вышло - не отправляю'); return false; }
+  try {
+    await tgSend(T.token, T.chatId, reportCaption(name), shots);
+    log(`отчёт ${exCfg(name).title} отправлен в Telegram (${shots.length} снимка)`);
+    state.reportAt = Date.now();
+    saveState();
+    return true;
+  } catch (e) {
+    log('отчёт не ушёл: ' + e.message);
+    return false;
+  }
+}
+
+// Расписание отчётов: несколько раз в сутки, время местное.
+async function reportTick() {
+  const T = tgCfg();
+  if (!T.enabled) return;
+  const now = new Date();
+  const due = T.at.find(x => x.hour === now.getHours() && x.min === now.getMinutes());
+  if (!due) return;
+  const stamp = `${now.toDateString()}|${due.at}`;
+  if (typeof state.reportDone !== 'object' || !state.reportDone) state.reportDone = {};
+  const key = T.exchanges.join(',');
+  if (state.reportDone[key] === stamp) return;   // тик раз в 30 секунд
+  state.reportDone[key] = stamp;
+  saveState();
+  if (state.busy || state.queue.length) {
+    log('время отчёта, но идёт ставка - отправлю при следующем заходе');
+    delete state.reportDone[key];
+    return;
+  }
+  state.busy = true;
+  try {
+    for (const n of T.exchanges) {
+      if (!exNames().includes(n)) continue;
+      await sendReport(n).catch(e => log(`отчёт ${n} не собрался: ${e.message}`));
+    }
+    await restoreHome('после отчёта');
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+  }
 }
 
 // Раз в сутки в назначенную минуту. Время местное - исполнитель и так
@@ -3780,6 +3997,8 @@ function snapshot() {
     consecutiveErrors: state.consecutiveErrors,
     execTimings: CFG.execTimings || [10],
     requireKnownTag: !!CFG.requireKnownTag,
+    report: (() => { const T = tgCfg();
+      return { enabled: T.enabled, times: T.times, exchanges: T.exchanges, at: state.reportAt || null }; })(),
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
     lastIdle: state.lastIdle,
@@ -4195,6 +4414,17 @@ const server = http.createServer((req, res) => {
                                state.busy = false; if (state.queue.length) setImmediate(pump); });
       return sendJson(200, { ok: true });
     }
+    // Отчёт прямо сейчас: связку с Telegram надо чем-то проверять, не
+    // дожидаясь семи утра.
+    if (req.method === 'POST' && action === 'report-now') {
+      if (state.busy || state.queue.length) return sendJson(200, { ok: false, why: 'идёт ставка' });
+      state.busy = true;
+      sendReport(new URL(req.url, 'http://x').searchParams.get('ex') || undefined)
+        .catch(e => log('ручной отчёт упал: ' + e.message))
+        .finally(async () => { await restoreHome('после отчёта').catch(() => {});
+                               state.busy = false; if (state.queue.length) setImmediate(pump); });
+      return sendJson(200, { ok: true });
+    }
     if (req.method === 'POST' && action === 'pause')  { state.paused = true;  log('панель: пауза'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'resume') { state.paused = false; log('панель: снято с паузы'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'dry-on')  { state.dryRun = true;  log('панель: DRY-RUN включён'); return sendJson(200, snapshot()); }
@@ -4573,6 +4803,27 @@ async function loginMode() {
 // ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──
 // Ручной сбор: чтобы не ждать назначенного часа и увидеть, что именно
 // прочиталось из окна биржи.
+// Отправить отчёт руками: тем же путём, что и по расписанию, но сразу.
+// Панель для снимка журнала поднимаем свою же - иначе снимать нечего.
+async function reportMode(exName) {
+  const T = tgCfg();
+  const name = exName || T.exchanges[0] || defaultEx();
+  console.log(`Собираю отчёт по ${exCfg(name).title} и отправляю в Telegram. Ставки НЕ делаются.`);
+  if (!T.token || !T.chatId) {
+    console.error('\nВ config.json не заполнен раздел telegram:');
+    console.error('  "telegram": { "enabled": true, "token": "123:ABC", "chatId": "-1001234567890",');
+    console.error('                "at": ["07:10","12:10","17:10","22:10"], "exchanges": ["mexc"] }');
+    process.exit(1);
+  }
+  const srv = server.listen(CFG.port ?? 8787);
+  await new Promise(r => srv.once('listening', r).once('error', r));
+  const ok = await sendReport(name);
+  await closeBrowser().catch(() => {});
+  try { server.close(); } catch (e) {}
+  console.log(ok ? '\nОтправлено.' : '\nНе отправлено - смотри строки выше.');
+  process.exit(ok ? 0 : 1);
+}
+
 async function pnlMode(exName) {
   const name = exName || defaultEx();
   console.log(`Открываю ${exCfg(name).title} и собираю сводку за вчера. Ставки НЕ делаются.`);
@@ -4847,6 +5098,8 @@ if (process.argv[2] === 'timings') {
   loginMode();
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
+} else if (process.argv[2] === 'report') {
+  reportMode(process.argv[3]).catch(e => { console.error('отчёт упал:', e.message); process.exit(1); });
 } else if (process.argv[2] === 'pnl') {
   pnlMode(process.argv[3]).catch(e => { console.error('сбор сводки упал:', e.message); process.exit(1); });
 } else {
@@ -4900,6 +5153,8 @@ if (process.argv[2] === 'timings') {
     // Раз в полминуты: минута назначенного часа не должна проскочить
     // между тиками, а сама проверка стоит одно сравнение чисел.
     const pnlT = setInterval(() => pnlTick().catch(e => log('сводка не собралась: ' + e.message)), 30000);
+    const repT = setInterval(() => reportTick().catch(e => log('отчёт не собрался: ' + e.message)), 30000);
+    if (repT.unref) repT.unref();
     if (pnlT.unref) pnlT.unref();
     if (sil.unref) sil.unref();
     // Окно биржи по расписанию - тем же тиком.

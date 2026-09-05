@@ -2251,9 +2251,21 @@ async function placeBet(sig) {
     await humanClick(btn);
     await page.waitForTimeout(randInt(500, 900));
     // возможное окно подтверждения
+    // Окно подтверждения. Промах по нему НЕ должен губить ставку: клик по
+    // направлению уже прошёл, и брошенное исключение записывало ставку в
+    // ошибки, хотя на бирже она могла и открыться. Доказательство всё
+    // равно одно - счётчик позиций ниже; сюда же попадает случай, когда
+    // кнопка мигнула и исчезла сама.
     if (EX.selectors.confirm) {
-      const c = page.locator(EX.selectors.confirm).first();
-      if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
+      try {
+        const c = page.locator(EX.selectors.confirm).first();
+        if (await c.count() > 0 && await c.isVisible().catch(() => false)) {
+          await humanClick(c, 3000);
+        }
+      } catch (e) {
+        log(`подтверждение не нажалось (${String(e.message).split('\n')[0]})`
+          + ' - смотрю на счётчик позиций');
+      }
     }
 
     // Клик сам по себе не доказывает, что ставка открылась: он мог не
@@ -2681,7 +2693,7 @@ function enqueueSignal(sig) {
   const B = burstCfg();
   if (!B.enabled || !B.windowMs) {
     sig.mult = 1; sig.burstCount = 1;
-    state.queue.push(sig);
+    enqueue(sig);
     setImmediate(pump);
     return 'queued';
   }
@@ -2709,7 +2721,7 @@ function enqueueSignal(sig) {
     groups.delete(k);
     ng.sig.burstCount = ng.count;
     ng.sig.mult = Math.min(ng.count, B.max);
-    state.queue.push(ng.sig);
+    enqueue(ng.sig);
     if (ng.count > 1) {
       log(`пачка ${k}: сигналов ${ng.count}, ставка x${ng.sig.mult} = ${betStake(ng.sig)} USDT`);
     }
@@ -2720,6 +2732,38 @@ function enqueueSignal(sig) {
 }
 
 // ── очередь (ставки строго по одной) ──
+// Долгие дела - сводка, отчёт, холостые действия - держат занятость на
+// всё время работы, и пришедший сигнал ждёт их конца. Двадцать секунд на
+// десятиминутной свече это другая цена входа, поэтому такие дела
+// проверяют очередь на каждом шаге и уступают.
+function signalWaiting() { return state.queue.length > 0; }
+function bailForSignal(what) {
+  if (!signalWaiting()) return false;
+  log(`${what}: пришёл сигнал - бросаю и уступаю очередь`);
+  return true;
+}
+
+// Какие биржи идут вне очереди. У десятиминутной свечи цена уходит за
+// секунды, и ставка, простоявшая за чужой, открывается уже по другой
+// цене - если вообще успевает. Список задаётся в конфиге; пусто -
+// очередь обычная, в порядке прихода.
+function priorityEx() {
+  const v = CFG.priorityExchanges;
+  return Array.isArray(v) ? v.filter(n => exNames().includes(n)) : [];
+}
+// Кладём сигнал в очередь с учётом приоритета: приоритетный встаёт
+// ПЕРЕД первым неприоритетным, но за такими же - иначе два сигнала
+// MEXC подряд поменялись бы местами.
+function enqueue(sig) {
+  const pri = priorityEx();
+  if (!pri.length || !pri.includes(sig.ex)) { state.queue.push(sig); return; }
+  let i = state.queue.findIndex(q => !pri.includes(q.ex));
+  if (i < 0) { state.queue.push(sig); return; }
+  state.queue.splice(i, 0, sig);
+  log(`${exCfg(sig.ex).title} ${sig.asset} ${sig.direction} идёт вне очереди`
+    + ` - перед ним ${state.queue.length - i - 1} чужих сигналов`);
+}
+
 async function pump() {
   if (state.busy) return;
   const sig = state.queue.shift();
@@ -3419,6 +3463,7 @@ async function collectPnl(exName) {
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
   }
   await waitForPanel();
+  if (bailForSignal('сводка')) return null;
 
   // У биржи может не быть сводного окна - тогда складываем сами по
   // списку закрытых позиций.
@@ -3565,6 +3610,7 @@ async function shotPnlToday(exName) {
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
   }
   await waitForPanel().catch(() => {});
+  if (bailForSignal('отчёт')) return null;
   if (!(await openPnlDialog('Today'))) {
     log(`отчёт ${E.title}: окно «PNL History» не открылось`);
     return null;
@@ -3677,6 +3723,7 @@ async function sendReport(exName) {
   // и без него не выйдет вовсе. В сообщение же журнал ставим первым - с
   // него отчёт и читают.
   const p = await shotPnlToday(name).catch(e => { log('сводка: ' + e.message); return null; });
+  if (signalWaiting()) return fail('пришёл сигнал - отчёт откладываю');
   const j = await shotJournal(name).catch(e => { log('журнал: ' + e.message); return null; });
   const shots = [j, p && p.buf].filter(Boolean);
   if (!shots.length) return fail('ни одного снимка не вышло - не отправляю');
@@ -4526,7 +4573,7 @@ const server = http.createServer((req, res) => {
         // запрос можно отправить и мимо неё, а верхняя граница - биржевая.
         const stake = m.stake == null ? null
           : Math.round(clamp(m.stake, MANUAL_STAKE_MIN, stakeMax(asset, ex), stakeFor(asset, ex)));
-        state.queue.push({ ex, asset, direction, timing, stake, receivedAt: Date.now(),
+        enqueue({ ex, asset, direction, timing, stake, receivedAt: Date.now(),
           label: 'manual', mult: 1, burstCount: 1 });
         log(`панель: ручная ставка ${exCfg(ex).title} ${asset} ${direction} ${timing}м `
           + `на ${stake ?? stakeFor(asset, ex)} USDT`);

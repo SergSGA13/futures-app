@@ -3,6 +3,9 @@
   "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
   "dryRun": true,
   "defaultExchange": "mexc",
+  "priorityExchanges": [
+    "mexc"
+  ],
   "exchanges": {
     "mexc": {
       "title": "MEXC",

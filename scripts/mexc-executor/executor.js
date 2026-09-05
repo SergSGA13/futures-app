@@ -2449,9 +2449,10 @@ function normalizeSignal(sig) {
     // меткам, - но в логе это должно быть видно: чужой поток, случайно
     // направленный в исполнитель, иначе торговал бы молча.
     const raw = String(sig.timing ?? '').trim();
-    if (raw && exNames().some(n => exCfg(n).signalTimings.length)
+    if (exNames().some(n => exCfg(n).signalTimings.length)
         && !exNames().some(n => exCfg(n).signalTimings.includes(raw.toLowerCase()))) {
-      log(`!! метка потока "${raw}" не заявлена ни одной биржей - `
+      sig.tagUnknown = raw || '(пусто)';
+      log(`!! метка потока "${raw || '-'}" не заявлена ни одной биржей - `
         + `${sig.asset || 'сигнал'} идёт на ${exCfg(ex).title} по умолчанию`);
     }
   }
@@ -2540,6 +2541,16 @@ function acceptSignal(sig, src) {
     return reason;
   };
 
+  // Незаявленная метка - чужой поток. По журналу за неделю видно, чем
+  // они отличаются: у меток TOOBIT_10m/TOOBIT_30m медиана выплаты 77-78%,
+  // у безымянного «10m» и у пустой метки - 74-75%, то есть НИЖЕ порога.
+  // Пока источник не научился ставить метку, такие сигналы можно просто
+  // не брать: выключатель общий, по умолчанию выключен.
+  if (CFG.requireKnownTag && sig.tagUnknown) {
+    return skip('unknown-tag', 'skip-unknown-tag',
+      `метка потока "${sig.tagUnknown}" не заявлена ни одной биржей`
+      + ' - принимаю только заявленные');
+  }
   const allow = timingsFor(sig.asset, sig.ex);
   if (allow.indexOf(sig.timing) < 0) {
     const own = (exCfg(sig.ex).assetTimings || {})[sig.asset];
@@ -3768,6 +3779,7 @@ function snapshot() {
     queue: state.queue.length,
     consecutiveErrors: state.consecutiveErrors,
     execTimings: CFG.execTimings || [10],
+    requireKnownTag: !!CFG.requireKnownTag,
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
     lastIdle: state.lastIdle,
@@ -4056,6 +4068,11 @@ function applySettings(s) {
     // Сразу приводим окно в соответствие: включил - открылось, выключил -
     // осталось как есть, но больше не закроется само.
     setImmediate(() => windowBySchedule().catch(() => {}));
+  }
+  if (s.requireKnownTag != null) {
+    const v = !!s.requireKnownTag;
+    if (v !== !!CFG.requireKnownTag) changed.push('только заявленные метки ' + (v ? 'вкл' : 'выкл'));
+    CFG.requireKnownTag = v;
   }
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;

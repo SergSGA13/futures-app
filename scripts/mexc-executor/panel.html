@@ -626,6 +626,12 @@
       <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
       <label class="chk"><input type="checkbox" id="priceOn">
         Проверять цену входа</label>
+      <!-- Метка потока говорит, откуда сигнал. У заявленных меток выплата
+           заметно выше: по журналу за неделю медиана 77-78% против 74-75%
+           у безымянных. Пока источник не научился ставить метку, чужой
+           поток можно просто не брать. -->
+      <label class="chk"><input type="checkbox" id="knownTag">
+        Только заявленные метки потока</label>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
       </div>
@@ -946,7 +952,7 @@ const REASON_NAMES = {
   'error': 'ошибки', 'skip-quiet': 'не своя смена',
   'skip-payout': 'выплата мала', 'skip-payout-unknown': 'выплата не прочлась',
   'skip-price': 'цена хуже', 'skip-price-unknown': 'цена не прочлась',
-  'skip-payout-moved': 'выплата уехала',
+  'skip-payout-moved': 'выплата уехала', 'skip-unknown-tag': 'чужая метка',
   'skip-expiry': 'экспирация не ясна', 'skip-redirect': 'биржа увела',
   'skip-slots': 'нет слотов', 'skip-dir-limit': 'лимит направления',
   'skip-stale': 'сигнал устарел', 'skip-market-closed': 'рынок закрыт',
@@ -1323,7 +1329,7 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['perDay', 'priceOn'],
+  stakes: ['perDay', 'priceOn', 'knownTag'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
@@ -1498,6 +1504,7 @@ async function refresh() {
         : ' Проверка цены входа выключена: ставка уйдёт по любой цене, какой бы'
           + ' откат ни случился, пока сигнал шёл до нажатия.');
   if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
+  setChk('knownTag', !!st.requireKnownTag);
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
@@ -1649,6 +1656,7 @@ $('btnSaveStakes').onclick = async () => {
   await post('settings', {
     stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
     priceGuard: { enabled: $('priceOn').checked },
+    requireKnownTag: $('knownTag').checked,
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });

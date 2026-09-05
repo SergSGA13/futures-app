@@ -356,6 +356,11 @@
   .ctl-dim:hover button { opacity:1; }
   .ctl-sec .row { padding:1.5px 0; }
 
+  /* Три оси фильтра в одном ряду читаются как один длинный список
+     кнопок. Тонкая черта разделяет их на группы. */
+  .log-sep { width:1px; align-self:stretch; margin:2px 3px;
+             background:linear-gradient(180deg, transparent, rgba(34,232,255,.34), transparent); }
+  #logEx { display:contents; }
   .row { display:flex; justify-content:space-between; align-items:center; padding:2.5px 0; font-size:12.5px; gap:8px; }
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
@@ -550,6 +555,15 @@
   <button data-f="all" class="on">Все</button>
   <button data-f="bets">Только ставки</button>
   <button data-f="errors">Ошибки</button>
+  <span class="log-sep"></span>
+  <!-- Биржи и минуты - отдельные оси: у каждой биржи свой порог выплаты и
+       свои проблемы, и смотреть их вперемешку значит не увидеть ни одной.
+       Кнопки бирж строятся по конфигу, как и всюду в панели. -->
+  <span id="logEx" class="btns"></span>
+  <span class="log-sep"></span>
+  <button data-t="all" class="on tf">Все мин</button>
+  <button data-t="10" class="tf">10м</button>
+  <button data-t="30" class="tf">30м</button>
   <span class="hint" id="logCount" style="align-self:center"></span>
   <span id="lostPill" style="display:none"></span>
   </div>
@@ -669,7 +683,12 @@ const $ = id => document.getElementById(id);
 const BET_STATUSES = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
 const ERR_STATUSES = ['error', 'placed-unconfirmed', 'placed-unverified'];
 let logFilter = localStorage.getItem('mx_logfilter') || 'all';
-function passesFilter(st) {
+let logEx = localStorage.getItem('mx_logex') || 'all';
+let logTf = localStorage.getItem('mx_logtf') || 'all';
+function passesFilter(b) {
+  const st = b.status;
+  if (logEx !== 'all' && b.exchange !== logEx) return false;
+  if (logTf !== 'all' && String(b.timing) !== logTf) return false;
   if (logFilter === 'bets') return BET_STATUSES.includes(st);
   if (logFilter === 'errors') return ERR_STATUSES.includes(st);
   return true;
@@ -684,14 +703,22 @@ document.getElementById('logHead').addEventListener('click', e => {
   refresh();
 });
 document.getElementById('logFilter').addEventListener('click', e => {
-  const f = e.target.dataset.f;
-  if (!f) return;
-  logFilter = f;
-  localStorage.setItem('mx_logfilter', f);
-  document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  const b = e.target;
+  if (b.dataset.f) { logFilter = b.dataset.f; localStorage.setItem('mx_logfilter', logFilter); }
+  else if (b.dataset.x) { logEx = b.dataset.x; localStorage.setItem('mx_logex', logEx); }
+  else if (b.dataset.t) { logTf = b.dataset.t; localStorage.setItem('mx_logtf', logTf); }
+  else return;
+  markLogButtons();
   refresh();
 });
-document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
+function markLogButtons() {
+  document.querySelectorAll('#logFilter button').forEach(b => {
+    if (b.dataset.f) b.classList.toggle('on', b.dataset.f === logFilter);
+    if (b.dataset.x) b.classList.toggle('on', b.dataset.x === logEx);
+    if (b.dataset.t) b.classList.toggle('on', b.dataset.t === logTf);
+  });
+}
+markLogButtons();
 
 
 // ── свёрнутые настройки ──
@@ -1225,7 +1252,11 @@ function buildAssetControls(st) {
     // Чтение выплаты со страницы стоит секунду-полторы. Если источник
     // сигналов уже отобрал их по проценту, эта секунда лишняя.
     + `<div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
-          data-ex="${e.name}"> Проверять выплату на странице</label></div>`
+          data-ex="${e.name}"${e.requirePagePayout ? ' disabled' : ''}
+          title="${e.requirePagePayout
+            ? 'На этой бирже выплату обязательно читать: сигналы приходят без неё, и без чтения ставка идёт вслепую'
+            : 'Снять, если выплату уже отобрал источник сигнала - экономит секунду-полторы'}"
+          > Проверять выплату на странице${e.requirePagePayout ? ' (обязательно)' : ''}</label></div>`
     // Порог отката: на сколько процентов цена входа может уйти против
     // сигнала. У каждой биржи свой - на разных инструментах обычное
     // движение за полминуты отличается в разы.
@@ -1262,6 +1293,10 @@ function buildAssetControls(st) {
   winExTouched = false;
   $('commonHead').style.display = multi ? '' : 'none';
   $('winEx').addEventListener('change', () => { winExTouched = true; });
+  // Фильтр журнала по биржам: тот же список, что и всюду.
+  $('logEx').innerHTML = '<button data-x="all">Все биржи</button>'
+    + exs(s).map(e => `<button data-x="${e.name}">${e.title}</button>`).join('');
+  markLogButtons();
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
@@ -1415,8 +1450,11 @@ async function refresh() {
     setVal(`mp_${e.name}`, e.minPayout);
     setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
     setVal(`sj_${e.name}`, e.stakeJitterPct ?? 0);
-    setChk(`cp_${e.name}`, e.checkPayout !== false);
-    $(`mp_${e.name}`).disabled = e.checkPayout === false;
+    // Где выплата обязательна, галочка всегда стоит и не снимается:
+    // выключенная, она означала бы ставку вслепую.
+    setChk(`cp_${e.name}`, e.requirePagePayout || e.checkPayout !== false);
+    $(`cp_${e.name}`).disabled = !!e.requirePagePayout;
+    $(`mp_${e.name}`).disabled = !e.requirePagePayout && e.checkPayout === false;
     setChk(`wk_${e.name}`, (e.wake || {}).enabled);
     setVal(`wn_${e.name}`, (e.wake || {}).maxPerDay);
     $(`wn_${e.name}`).disabled = !(e.wake || {}).enabled;
@@ -1500,7 +1538,7 @@ async function refresh() {
 
   const tb = $('bets');
   const all = st.bets || [];
-  const rows = all.filter(b => passesFilter(b.status));
+  const rows = all.filter(passesFilter);
   // Журнал приходит от новых к старым. Сортировка нужна, чтобы собрать
   // вместе ставки одного актива или все ошибки, не листая полторы сотни
   // строк; числовые колонки сравниваем как числа, а не как текст.
@@ -1512,7 +1550,7 @@ async function refresh() {
       return r * sortDir;
     });
   }
-  $('logCount').textContent = logFilter === 'all'
+  $('logCount').textContent = (logFilter === 'all' && logEx === 'all' && logTf === 'all')
     ? `${all.length} строк`
     : `${rows.length} из ${all.length}`;
 
@@ -1522,6 +1560,8 @@ async function refresh() {
   // три подряд означают, что автоматика стоит и надо смотреть логи.
   const today = new Date().toDateString();
   const lost = all.filter(b => b.status === 'error'
+    && (logEx === 'all' || b.exchange === logEx)
+    && (logTf === 'all' || String(b.timing) === logTf)
     && new Date(b.time).toDateString() === today).length;
   const lp = $('lostPill');
   lp.style.display = lost ? '' : 'none';

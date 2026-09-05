@@ -956,6 +956,49 @@ async function payoutByButtons() {
   } catch (e) { return null; }
 }
 
+// Выплата, которой можно верить. Одного чтения мало: после смены
+// экспирации и после перехода на другой актив страница какое-то время
+// показывает ПРЕЖНИЕ проценты. Так 5 сентября десятиминутная ставка
+// ушла с записанными 85% - это была выплата тридцатиминутки с прошлой
+// страницы, а биржа применила 72%.
+//
+// Поэтому читаем, пока два чтения подряд не совпадут - и по числу
+// направления, и по паре целиком. Не устоялась за отведённое время -
+// возвращаем null: пропустить ставку дешевле, чем открыть её вслепую.
+let payoutTouched = 0;
+function touchPayout(why) { payoutTouched = Date.now(); if (why) lastTouch = why; }
+let lastTouch = '';
+async function payoutStable(direction, ms) {
+  const settle = Math.max(0, CFG.payoutSettleMs ?? 2000);
+  // Пока не прошло время на пересчёт после смены экспирации или загрузки
+  // страницы, совпадение двух чтений ничего не значит: оба могут быть
+  // прежними. Поэтому раньше этого срока не возвращаемся вовсе.
+  const notBefore = payoutTouched ? payoutTouched + settle : 0;
+  const until = Date.now() + Math.max(600, ms ?? CFG.payoutWaitMs ?? 6000);
+  const pair = () => (lastPayouts ? `${lastPayouts.UP}/${lastPayouts.DOWN}` : '');
+  let prev = await pagePayout(direction), prevPair = pair();
+  let tries = 1;
+  while (Date.now() < until) {
+    await page.waitForTimeout(350);
+    const now = await pagePayout(direction);
+    tries++;
+    if (now != null && now === prev && pair() === prevPair && Date.now() >= notBefore) {
+      if (tries > 2 || notBefore) {
+        log(`выплата устоялась: ${now}%`
+          + (lastTouch ? ` (${Math.round((Date.now() - payoutTouched) / 100) / 10} с после «${lastTouch}»)` : ''));
+      }
+      payoutTouched = 0; lastTouch = '';
+      return now;
+    }
+    if (prev != null && now != null && now !== prev) {
+      log(`выплата на странице ещё менялась: ${prev}% → ${now}% - жду`);
+    }
+    prev = now; prevPair = pair();
+  }
+  log('выплата на странице так и не устоялась - ставку не открываю');
+  return null;
+}
+
 async function pagePayout(direction) {
   const E = curEx();
   const word = E.dirWords[direction] || (direction === 'UP' ? 'Up' : 'Down');
@@ -1800,6 +1843,7 @@ async function placeBet(sig) {
       if (ready) log('страница уже открыта, перезагрузка не нужна');
     }
     if (!ready) {
+      touchPayout('загрузка страницы');
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
       // Биржа может увести с заданного адреса на «последний символ»: так
@@ -1809,6 +1853,7 @@ async function placeBet(sig) {
       // обычно слушается. Если и это не помогло, скажем прямо в отказе.
       if (!page.url().startsWith(url)) {
         log(`биржа увела с ${url} на ${page.url()} - повторяю переход`);
+        touchPayout('перезагрузка страницы');
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
         await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
         if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
@@ -1974,6 +2019,10 @@ async function placeBet(sig) {
       // «по памяти» видно в журнале намеренно: если однажды окажется, что
       // память врёт, найти это можно будет только по этой пометке.
       tfHow = tf.how || '';
+      // Проценты после смены минут биржа пересчитывает не мгновенно.
+      // «По разметке» без единого нажатия - страницу не трогали, ждать
+      // нечего; во всех прочих случаях чипы жали, и выплата поедет.
+      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`);
       log(`экспирация ${tfText} выбрана`
         + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
     } else if (tf.cur == null) {
@@ -2014,11 +2063,19 @@ async function placeBet(sig) {
     // Проверку можно выключить: тогда страницу не читаем вовсе и экономим
     // секунду-полторы. Смысл в этом есть только если выплату уже отобрал
     // источник сигнала - иначе ставка идёт вслепую.
-    const pv = EX.checkPayout ? await pagePayout(sig.direction) : null;
-    if (!EX.checkPayout) log('проверка выплаты выключена - беру условия страницы как есть');
+    // Выключатель проверки НЕ отменяет requirePagePayout. Туда, куда
+    // сигналы приходят без выплаты, «не проверять» означает «ставить
+    // вслепую»: 5 сентября так ушли пять ставок по 72-74% при пороге 76,
+    // и в журнале у них пустая колонка выплаты - читать её было некому.
+    const readPayout = EX.checkPayout || EX.requirePagePayout;
+    const pv = readPayout ? await payoutStable(sig.direction) : null;
+    if (!readPayout) log('проверка выплаты выключена - беру условия страницы как есть');
+    else if (!EX.checkPayout) {
+      log(`проверка выплаты выключена, но на ${EX.title} она обязательна - читаю`);
+    }
     const need = EX.minPayout;
     const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
-    if (pv == null && !EX.checkPayout) {
+    if (pv == null && !readPayout) {
       // Выключена намеренно - не жалуемся и не отказываем.
     } else if (pv == null) {
       if (EX.requirePagePayout) {
@@ -2116,7 +2173,7 @@ async function placeBet(sig) {
     // экспирацию - хоть сама, хоть из-за нашего промаха, - выплата
     // изменится на десятки пунктов, и мы это увидим. Ровно так ставка
     // ушла на 5 минут с 66%, пока журнал писал 10 минут и 80%.
-    if (pv != null && EX.checkPayout) {
+    if (pv != null && readPayout) {
       const pvNow = await pagePayout(sig.direction);
       if (pvNow != null && Math.abs(pvNow - pv) > payoutDriftPts()) {
         log(`пропуск ${sig.asset} ${sig.direction}: выплата поехала с ${pv}% на ${pvNow}% `
@@ -3891,6 +3948,12 @@ function applySettings(s) {
     for (const n of exNames()) {
       if (s.checkPayouts[n] == null) continue;
       const was = exCfg(n).checkPayout;
+      // Где выплата обязательна, выключить проверку нельзя ни из панели,
+      // ни запросом мимо неё: снятая галочка означала бы ставку вслепую.
+      if (exCfg(n).requirePagePayout && !s.checkPayouts[n]) {
+        log(`проверку выплаты ${exCfg(n).title} выключить нельзя: она там обязательна`);
+        continue;
+      }
       const v = !!s.checkPayouts[n];
       if (v !== was) changed.push(`проверка выплаты ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`);
       CFG.exchanges[n].checkPayout = v;

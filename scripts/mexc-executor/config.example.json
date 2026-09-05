@@ -77,7 +77,8 @@
         "NVDA": [
           30
         ]
-      }
+      },
+      "homeAsset": "ETH"
     },
     "toobit": {
       "title": "Toobit",
@@ -205,6 +206,7 @@
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "payoutDriftPts": 5,
+  "payoutSettleMs": 3000,
   "execTimings": [
     10,
     30

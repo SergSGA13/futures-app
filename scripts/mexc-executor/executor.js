@@ -846,12 +846,87 @@ async function findAmount(perTryMs) {
 // мало: MEXC - SPA, и через 2.5 секунды после domcontentloaded на
 // странице может не быть ещё ни одной кнопки (видно в ДАМПе: 0 полей,
 // 0 кнопок, payout "--"). Признак готовности - появившееся поле суммы.
+// ── застрявшее модальное окно ──
+// Окно поверх страницы перехватывает ВСЕ клики: и по полю суммы, и по
+// кнопке направления. В логе это выглядит как «intercepts pointer
+// events» и три ставки подряд в ошибках, хотя со страницей всё в
+// порядке - она просто накрыта. Своим же окном сводки в том числе:
+// «PNL History» у MEXC это ant-modal, и не закрывшись, оно глушит
+// торговлю до перезапуска.
+async function modalOver() {
+  try {
+    return await page.evaluate(() => {
+      const sel = '.ant-modal-wrap, .ant-drawer-open, [role="dialog"], .ant-modal-mask';
+      const w = innerWidth, h = innerHeight;
+      for (const el of document.querySelectorAll(sel)) {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < w * 0.5 || r.height < h * 0.5) continue;
+        // Накрыт ли центр страницы именно им: у ant-modal-wrap клики
+        // перехватывает сама обёртка, даже когда окошко маленькое.
+        const top = document.elementFromPoint(w / 2, h / 2);
+        if (!top || !(el === top || el.contains(top) || top.contains(el))) continue;
+        const cls = el.className && el.className.baseVal !== undefined
+          ? el.className.baseVal : String(el.className || '');
+        return (cls || el.getAttribute('role') || 'dialog').slice(0, 90);
+      }
+      return '';
+    });
+  } catch (e) { return ''; }
+}
+
+// Закрыть его: сначала как человек - крестик, потом Escape, потом клик
+// мимо окна. Не поддалось - перезагружаем страницу: ставка важнее
+// сохранённого состояния вкладки.
+async function dismissModal(why) {
+  let what = await modalOver();
+  if (!what) return false;
+  log(`страницу накрыло окно (${what}) - закрываю${why ? ', ' + why : ''}`);
+  const tries = [
+    async () => {
+      const x = page.locator('.ant-modal-close, .ant-modal-close-x, [aria-label="Close"], '
+        + '[aria-label="close"], .ant-drawer-close').first();
+      if (await x.count() > 0 && await x.isVisible().catch(() => false)) {
+        await x.click({ timeout: 2000, force: true });
+      }
+    },
+    async () => { await page.keyboard.press('Escape'); },
+    async () => {
+      const b = page.getByText(/^\s*(Confirm|OK|Got it|Close|Закрыть|Понятно)\s*$/i).first();
+      if (await b.count() > 0 && await b.isVisible().catch(() => false)) {
+        await b.click({ timeout: 2000, force: true });
+      }
+    },
+    async () => { await page.mouse.click(8, 8); },
+  ];
+  for (const t of tries) {
+    await t().catch(() => {});
+    await page.waitForTimeout(450);
+    what = await modalOver();
+    if (!what) { log('окно закрыто'); return true; }
+  }
+  log(`окно не закрылось (${what}) - перезагружаю страницу`);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    touchPayout('перезагрузка из-за окна');
+  } catch (e) { log('перезагрузка не удалась: ' + e.message); }
+  return !(await modalOver());
+}
+
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
   let found = null;
   while (Date.now() < deadline) {
     found = await findAmount(1200);
-    if (found) return found;
+    if (found) {
+      // Поле нашлось - но кликнуть по нему может быть нельзя: страницу
+      // могло накрыть окном. Разбираемся здесь, до первого клика, а не
+      // тремя таймаутами по пять секунд каждый.
+      if (await dismissModal('перед ставкой')) found = await findAmount(1200) || found;
+      return found;
+    }
     await page.waitForTimeout(400);
   }
   return null;
@@ -1915,6 +1990,21 @@ async function placeBet(sig) {
       throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
     }
     log('панель готова, поле суммы: ' + ready.sel);
+
+    // Окно, которое не удалось закрыть даже перезагрузкой, - это стоп
+    // торговли, а не одна неудачная ставка: каждый клик будет уходить в
+    // него. Отказываем сразу и говорим об этом в Telegram, вместо трёх
+    // попыток по пять секунд таймаута каждая и записи в «ошибки».
+    const stuck = await modalOver();
+    if (stuck) {
+      log(`пропуск ${sig.asset} ${sig.direction}: страницу накрыло окно (${stuck}),`
+        + ' закрыть не удалось - клики уходят в него');
+      await shot('modal-stuck');
+      await dumpPage('modal-stuck');
+      await tgAlert(`${EX.title}: страницу накрыло окно и оно не закрывается - `
+        + 'ставки не проходят, нужен взгляд глазами');
+      return { status: 'skip-modal', note: `окно поверх страницы (${stuck})` };
+    }
 
     // Ставка не на тот актив - самая дорогая из возможных ошибок, и
     // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
@@ -3494,6 +3584,10 @@ async function collectPnl(exName) {
     await page.keyboard.press('Escape').catch(() => {});
   }
   await page.waitForTimeout(500);
+  // Проверяем, что окно и правда ушло. Не ушедшее «PNL History» - это
+  // ant-modal поверх страницы, который перехватывает КАЖДЫЙ следующий
+  // клик: ровно так после отчёта встала торговля на MEXC.
+  await dismissModal('после сводки').catch(() => {});
 
   if (!got || got.pnl === undefined) {
     log(`сводка ${E.title}: числа из окна прочитать не удалось`
@@ -3652,6 +3746,10 @@ async function shotPnlToday(exName) {
     await page.keyboard.press('Escape').catch(() => {});
   }
   await page.waitForTimeout(400);
+  // Проверяем, что окно и правда ушло. Не ушедшее «PNL History» - это
+  // ant-modal поверх страницы, который перехватывает КАЖДЫЙ следующий
+  // клик: ровно так после отчёта встала торговля на MEXC.
+  await dismissModal('после сводки').catch(() => {});
   return { buf, nums };
 }
 

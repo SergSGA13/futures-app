@@ -915,6 +915,29 @@ async function dismissModal(why) {
   return !(await modalOver());
 }
 
+// ── экран «ставка принята» ──
+// После ставки MEXC подменяет форму панелью результата с кнопкой «Place
+// Another». Формы на ней нет: поле суммы то же по селектору, но пустое и
+// неактивное, а клик по Up/Down ничего не открывает. В логе это выглядит
+// как «locator.fill: Timeout» и «клик прошёл, но позиций как было, так и
+// осталось» - две подряд ставки после удачной первой.
+async function clearAfterBet(why) {
+  const re = curEx().afterBetText
+    ? new RegExp(`^\\s*${curEx().afterBetText}\\s*$`, 'i')
+    : /^\s*(Place\s*Another|Bet\s*Again|Продолжить|Ещё\s*ставк\w*)\s*$/i;
+  try {
+    const b = page.getByText(re).first();
+    if (await b.count() === 0 || !(await b.isVisible().catch(() => false))) return false;
+    log(`страница показывает экран после ставки - возвращаю форму${why ? ', ' + why : ''}`);
+    await b.click({ timeout: 2500, force: true });
+    await page.waitForTimeout(randInt(500, 900));
+    return true;
+  } catch (e) {
+    log('вернуть форму не удалось: ' + String(e.message).split('\n')[0]);
+    return false;
+  }
+}
+
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
   let found = null;
@@ -925,6 +948,8 @@ async function waitForPanel() {
       // могло накрыть окном. Разбираемся здесь, до первого клика, а не
       // тремя таймаутами по пять секунд каждый.
       if (await dismissModal('перед ставкой')) found = await findAmount(1200) || found;
+      // Форма могла быть подменена панелью результата прошлой ставки.
+      if (await clearAfterBet('перед ставкой')) found = await findAmount(1200) || found;
       return found;
     }
     await page.waitForTimeout(400);
@@ -2077,8 +2102,13 @@ async function placeBet(sig) {
     // которой ставка будет нажата, и откат между «панель готова» и
     // нажатием ловит уже она.
     const guard = { ...(EX.priceGuard || {}) };
+    // Порог опоздания. Точку отсчёта берём даже при выключенной проверке
+    // цены: опоздать вход может ЛЮБОЙ, а сравнивать потом будет не с чем -
+    // цену страницы задним числом не прочитать.
+    const lateSec = Math.max(0, CFG.lateSec ?? guard.lateSec ?? 40);
+    const lagAt = () => (Date.now() - (sig.receivedAt || t0)) / 1000;
     let refPrice = null, refFrom = '';
-    if (guard.enabled !== false) {
+    if (guard.enabled !== false || lateSec > 0) {
       if (sig.price) { refPrice = sig.price; refFrom = 'из сигнала'; }
       else {
         refPrice = await pagePrice();
@@ -2295,8 +2325,18 @@ async function placeBet(sig) {
     // на который сигнал рассчитывали. Ставка вверх тем лучше, чем ниже
     // цена входа; вниз - наоборот. Сравнение стоит один вызов и делается
     // последним, чтобы цена была самой свежей.
+    // Запоздалый вход проверяем ВСЕГДА, даже когда обычная проверка цены
+    // выключена. Сигнал, дошедший до кнопки через минуту, - это уже не
+    // тот сигнал: 6 сентября первая ставка ушла через 48 секунд, и цена
+    // к тому моменту сходила заметно. Порог для таких входов свой и по
+    // умолчанию нулевой - «только если цена не хуже сигнала».
+    const lagSec = lagAt();
+    const late = lateSec > 0 && lagSec > lateSec;
     let entryPrice = null, advPct = null;
-    if (guard.enabled !== false && refPrice) {
+    if (late && guard.enabled === false && refPrice) {
+      log(`вход опаздывает на ${lagSec.toFixed(0)}с - проверяю цену, хотя проверка выключена`);
+    }
+    if ((guard.enabled !== false || late) && refPrice) {
       entryPrice = await pagePrice();
       if (entryPrice == null) {
         if (guard.strict) {
@@ -2317,17 +2357,23 @@ async function placeBet(sig) {
       } else {
         // Насколько цена ушла ПРОТИВ нас, в процентах.
         advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
-        const lim = guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05);
+        // У запоздалого входа порог свой и жёстче обычного.
+        const lim = late
+          ? Math.abs(CFG.lateMaxAdversePct ?? guard.lateMaxAdversePct ?? 0)
+          : (guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05));
         const moved = advPct > 0
           ? `хуже на ${advPct.toFixed(3)}%`
           : `лучше на ${(-advPct).toFixed(3)}%`;
         if (advPct > lim) {
           log(`пропуск ${sig.asset} ${sig.direction}: цена входа ${entryPrice} против ${refPrice} `
-            + `(${refFrom}) - ${moved}, порог ${lim}%`);
+            + `(${refFrom}) - ${moved}, порог ${lim}%`
+            + (late ? ` (вход опоздал на ${lagSec.toFixed(0)}с)` : ''));
           await shot('price-worse');
-          return { status: 'skip-price', payoutPage: pv, entryPrice, advPct };
+          return { status: 'skip-price', payoutPage: pv, entryPrice, advPct,
+                   note: late ? `опоздание ${lagSec.toFixed(0)}с, ${moved}` : '' };
         }
-        log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`);
+        log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`
+          + (late ? ` (вход опоздал на ${lagSec.toFixed(0)}с)` : ''));
       }
     }
 
@@ -2372,9 +2418,13 @@ async function placeBet(sig) {
       log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
+      await clearAfterBet('после неподтверждённой').catch(() => {});
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
+    // Возвращаем форму сразу: следующий сигнал часто идёт через секунды,
+    // и разбираться с экраном результата на его времени - потерянный вход.
+    await clearAfterBet('после ставки').catch(() => {});
     return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.

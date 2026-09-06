@@ -179,6 +179,8 @@
   "slotMarginMin": 1,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
+  "lateSec": 40,
+  "lateMaxAdversePct": 0,
   "maxConsecutiveErrors": 3,
   "signalSilenceMin": 120,
   "source": "webhook",

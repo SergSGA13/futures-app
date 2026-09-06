@@ -2803,3 +2803,16 @@ body.zones-only .app-main { bottom: 0; }
   border-color: rgba(78, 255, 160, 0.30);
   line-height: 1.7;
 }
+/* Число отсеянных выделяем жёлтым, как счётчик BLOCKEDsignal в DEV-разделе -
+   это одни и те же строки, и цвет должен читаться одинаково. */
+.era-summary b.era-alt-num { color: #FFD166; }
+.era-head2 { margin-top: 4px; }
+/* Свечение сегмента задаётся и правилом ".sig-head2 .fs-seg button.active"
+   (фиолетовое) - оно специфичнее простого ".era-src-seg", поэтому
+   переопределяем с тем же префиксом, иначе зелёная кнопка светит фиолетовым. */
+.sig-head2 .era-src-seg button.active {
+  color: #0B0E1A;
+  background: linear-gradient(135deg, #4EFFA0, #7BFFC0);
+  border-color: rgba(78, 255, 160, 0.55);
+  box-shadow: 0 0 14px rgba(78, 255, 160, 0.30);
+}

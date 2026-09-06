@@ -91,7 +91,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
-  if (pageId === 'stats-era')  { renderEraStats(); }
+  if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
   if (pageId === 'zones') { renderZones(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
@@ -444,10 +444,13 @@ async function loadPnlL30dFromSignals(canvasId, key) {
 }
 
 // Total PNL за всё время — кумулятивная кривая из ALLsignal (модель +100 / −125)
-async function loadPnlAllFromSignals(canvasId, key, mini = false, sinceDk = null) {
+// rowsOverride - уже отобранные строки листа (с заголовком). Нужен срезу
+// «Новая система»: там выборка режется и по дате, и по составу листов,
+// повторять этот отбор внутри графика незачем.
+async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride = null) {
   if (pnlChartInstances[key]) return;
   try {
-    const rows = await fetchAllSignals();
+    const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
     const dailyMap = {};
@@ -462,7 +465,6 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, sinceDk = null
       const y = parts[2].substring(0, 4);
       if (y.length < 4 || isNaN(parseInt(y))) continue;
       const dk = `${y}-${m}-${d}`;
-      if (sinceDk && dk < sinceDk) continue;
       if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
       if (result === 'WIN') dailyMap[dk].wins++;
       else if (result === 'LOSE') dailyMap[dk].losses++;
@@ -3261,22 +3263,46 @@ async function renderAllTimeSections() {
 // В июне 2026 алгоритмы подачи сигналов перестроили под новую систему, поэтому
 // более ранняя история описывает уже не ту стратегию: в общем ALL Periods она
 // размывает картину, а месяцы до июня тянут WR к старым правилам. Здесь те же
-// разрезы, что в ALL Periods, но только по ПРОТОРГОВАННЫМ сигналам (лист
-// ALLsignal, без BLOCKEDsignal) и только начиная с этой даты.
+// разрезы, что в ALL Periods, но выборка начинается с этой даты.
 // Границу держим одной константой - сдвинуть срез = поправить одну строку.
 const ERA_SINCE_DK = '2026-06-01';
 
-let eraRendered = false;
+// Источник строк. Листы называем так, как они называются в жизни:
+// 10m    - ALLsignal, сигналы, дошедшие до группы PRO;
+// ALT10  - BLOCKEDsignal, отсеянные фильтрами и лимитом окон.
+// «Все» - объединение: показывает, каким был бы результат без отсева.
+const ERA_STATE = { src: 'ALL' };
+let eraRowsCache = null;
 
-// Отдаёт строки листа с заголовком, оставляя только сигналы от ERA_SINCE_DK.
-// Заголовок сохраняем, потому что все агрегаторы ниже читают строки с индекса 1.
-function eraFilterRows_(rows) {
-  const out = [rows[0]];
-  for (let i = 1; i < rows.length; i++) {
-    const dk = devDateKey(rows[i][COL_DATE]);
-    if (dk && dk >= ERA_SINCE_DK) out.push(rows[i]);
-  }
-  return out;
+// Один поход в оба листа на всю жизнь страницы: переключатель источника
+// только пересобирает разрезы, заново качать листы незачем.
+async function eraFetchRows_() {
+  if (eraRowsCache) return eraRowsCache;
+  const [allRows, blockedRows] = await Promise.all([
+    fetchAllSignals(),
+    // Лист заблокированных может быть недоступен - тогда режим ALT10 просто
+    // окажется пустым, а «10m» обязан продолжать работать.
+    fetchBlockedSignals().catch(() => null),
+  ]);
+  if (!allRows || !allRows.length) return null;
+  const keep = r => { const dk = devDateKey(r[COL_DATE]); return dk && dk >= ERA_SINCE_DK; };
+  eraRowsCache = {
+    head: allRows[0],
+    pro: (allRows.length > 1 ? allRows.slice(1) : []).filter(keep),
+    // BLOCKEDsignal кладёт результат/время/дату/индикатор со сдвигом,
+    // поэтому строки приводим к раскладке ALLsignal перед фильтром по дате.
+    alt: (blockedRows && blockedRows.length > 1
+      ? blockedRows.slice(1).map(devNormalizeBlockedRow)
+      : []).filter(keep),
+  };
+  return eraRowsCache;
+}
+
+function eraRowsFor_(cache, src) {
+  const body = src === '10m' ? cache.pro
+             : src === 'ALT10' ? cache.alt
+             : cache.pro.concat(cache.alt);
+  return [cache.head].concat(body);
 }
 
 // PNL-модель та же, что на ALL Periods: ставка 125, выплата 0.8 -> WIN +100,
@@ -3291,7 +3317,7 @@ function eraPnl_(sigs) {
   return pnl;
 }
 
-function eraRenderSummary_(sigs) {
+function eraRenderSummary_(sigs, cache) {
   const el = document.getElementById('eraSummary');
   if (!el) return;
   let w = 0, l = 0, draw = 0, first = null, last = null;
@@ -3306,29 +3332,56 @@ function eraRenderSummary_(sigs) {
   const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
   // Срез идёт месяцами, поэтому в диапазоне нужен год - devFmtDk даёт только дд.мм.
   const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
+  // Состав строк показываем всегда: по одному итогу не видно, сколько в нём
+  // реально проторгованных сигналов, а сколько отсеянных.
+  const comp = `10m <b>${cache.pro.length}</b> + ALT10 <b class="era-alt-num">${cache.alt.length}</b>`;
   el.innerHTML =
-    `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><br>` +
+    `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b> · ${t('era.src')}: ${comp}<br>` +
     `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
     `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
     `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${pnl} USDT</b>`;
 }
 
-async function renderEraStats() {
-  if (eraRendered) return;
-  try {
-    const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) return;
-    const eraRows = eraFilterRows_(rows);
-    const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
-    if (!sigs.length) return;
-    eraRendered = true;
+// Переключение источника обязано пересобрать графики, а они защищены
+// guard-ами «уже построен» - поэтому старые экземпляры сносим явно.
+function eraDestroyCharts_() {
+  ['era', 'eraDrawdown'].forEach(k => { pnlChartInstances[k]?.destroy(); delete pnlChartInstances[k]; });
+  monthlyWrChartInstances['eraMonthlyWrChart']?.destroy();
+  delete monthlyWrChartInstances['eraMonthlyWrChart'];
+  hourWrChartInstances['eraHourWrChart']?.destroy();
+  delete hourWrChartInstances['eraHourWrChart'];
+  dowChartInstances['eraDowChart']?.destroy();
+  delete dowChartInstances['eraDowChart'];
+}
 
-    eraRenderSummary_(sigs);
+function eraShowEmpty_(empty) {
+  const el = document.getElementById('eraEmpty');
+  if (el) el.style.display = empty ? 'block' : 'none';
+  const body = document.getElementById('eraBody');
+  if (body) body.style.display = empty ? 'none' : 'block';
+}
+
+async function renderEraStats() {
+  try {
+    const cache = await eraFetchRows_();
+    if (!cache) return;
+    const eraRows = eraRowsFor_(cache, ERA_STATE.src);
+    const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
+
+    eraDestroyCharts_();
+    eraShowEmpty_(!sigs.length);
+    if (!sigs.length) {
+      const el = document.getElementById('eraSummary');
+      if (el) el.innerHTML = '';
+      return;
+    }
+
+    eraRenderSummary_(sigs, cache);
 
     // Графики независимы друг от друга и от таблиц: падение Chart.js не должно
     // гасить весь срез (так уже случалось на ветке MEXC).
-    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, ERA_SINCE_DK); } catch (e) { console.log('ERA pnl error:', e); }
-    try { renderMonthlyWrChart('eraMonthlyWrChart', ERA_SINCE_DK); } catch (e) { console.log('ERA monthly error:', e); }
+    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, eraRows); } catch (e) { console.log('ERA pnl error:', e); }
+    try { renderMonthlyWrChart('eraMonthlyWrChart', eraRows); } catch (e) { console.log('ERA monthly error:', e); }
     try {
       renderDrawdownInto({
         sigs, key: 'eraDrawdown',
@@ -3344,7 +3397,14 @@ async function renderEraStats() {
       const hourCard = document.getElementById('eraHourWrCard');
       if (hourCard) hourCard.style.display = 'block';
     } catch (e) { console.log('ERA hour WR error:', e); }
-    try { devShowTable('eraHeatmapBlock', 'eraHeatmapCard', buildAllHeatmapSection(sigs)); } catch (e) { console.log('ERA heatmap error:', e); }
+    // Тепловая карта скрывается, если ни в одной клетке не набралось порога -
+    // при переключении источника её надо гасить, а не оставлять от прошлого.
+    try {
+      const heat = buildAllHeatmapSection(sigs);
+      const heatCard = document.getElementById('eraHeatmapCard');
+      document.getElementById('eraHeatmapBlock').innerHTML = heat || '';
+      if (heatCard) heatCard.style.display = heat ? 'block' : 'none';
+    } catch (e) { console.log('ERA heatmap error:', e); }
 
     // Таблицы считаем теми же агрегаторами, что и DEV-раздел: на срезе по дате
     // готовых агрегатов из листа ANAL нет и быть не может.
@@ -3370,6 +3430,22 @@ async function renderEraStats() {
   } catch (e) {
     console.log('ERA stats error:', e);
   }
+}
+
+function initEraUI() {
+  const seg = document.getElementById('eraSrcSeg');
+  if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = '1';
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const src = btn.dataset.src;
+    if (!src || src === ERA_STATE.src) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    ERA_STATE.src = src;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    renderEraStats();
+  });
 }
 
 function devHeatmapBuild(sigs) {
@@ -4211,12 +4287,12 @@ async function renderDowChart(canvasId, daysFilter, rowsOverride) {
 }
 
 // ===== MONTHLY WINRATE CHART (ALL Periods) =====
-// canvasId/sinceDk заданы, потому что тот же разрез строится и для среза
+// canvasId/rowsOverride заданы, потому что тот же разрез строится и для среза
 // «с июня 2026»: график там свой, а логика ровно эта.
-async function renderMonthlyWrChart(canvasId = 'monthlyWrChart', sinceDk = null) {
+async function renderMonthlyWrChart(canvasId = 'monthlyWrChart', rowsOverride = null) {
   if (monthlyWrChartInstances[canvasId]) return;
   try {
-    const rows = await fetchAllSignals();
+    const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -4233,7 +4309,6 @@ async function renderMonthlyWrChart(canvasId = 'monthlyWrChart', sinceDk = null)
       const y = parseInt(parts[2].substring(0, 4), 10);
       if (isNaN(m) || isNaN(y) || m < 1 || m > 12) continue;
       const mk = `${y}-${String(m).padStart(2, '0')}`;
-      if (sinceDk && `${mk}-${parts[0].padStart(2, '0')}` < sinceDk) continue;
       if (!monthMap[mk]) monthMap[mk] = { label: [monthNames[m - 1], `'${String(y).slice(2)}`], wins: 0, losses: 0 };
       if (result === 'WIN') { monthMap[mk].wins++; totalWins++; }
       else { monthMap[mk].losses++; totalLosses++; }
@@ -4860,7 +4935,7 @@ function refreshHome() {
   wrDailyChartInstance?.destroy();
   wrDailyChartInstance = null;
   allTimeSectionsRendered = false;
-  eraRendered = false;
+  eraRowsCache = null;
   periodCmpRendered = false;
   Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
   Object.values(hourWrChartInstances).forEach(c => c?.destroy());

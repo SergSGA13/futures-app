@@ -4380,7 +4380,12 @@ async function renderMonthlyWrChart(canvasId = 'monthlyWrChart', rowsOverride = 
     }
 
     const avgWr = (totalWins + totalLosses) ? parseFloat((totalWins / (totalWins + totalLosses) * 100).toFixed(1)) : 0;
-    const yMin = 50, yMax = 90;
+    // Ось раньше была прибита к 50-90%. Реальные месячные WR живут в узкой
+    // полосе вокруг безубытка, поэтому верхняя треть шкалы всегда пустовала, а
+    // столбцы жались друг к другу и разница между месяцами не читалась.
+    // Считаем диапазон по данным, как у графика WR по часам, и всегда держим
+    // в кадре черту безубытка - без неё высота столбца ни о чём не говорит.
+    const { min: yMin, max: yMax } = wrAxisRange(wrData, 6, 6);
 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;

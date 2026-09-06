@@ -446,17 +446,24 @@ async function loadPnlL30dFromSignals(canvasId, key) {
 // Total PNL за всё время — кумулятивная кривая из ALLsignal (модель +100 / −125)
 // rowsOverride - уже отобранные строки листа (с заголовком). Нужен срезу
 // «Новая система»: там выборка режется и по дате, и по составу листов,
-// повторять этот отбор внутри графика незачем.
-async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride = null) {
+// повторять этот отбор внутри графика незачем. pnlOfRow - денежная модель.
+async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride = null, pnlOfRow = null) {
   if (pnlChartInstances[key]) return;
   try {
     const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
+    // Денежная модель по умолчанию - прежняя плоская: ставка 125, выплата 0.8.
+    // Срез «Новая система» передаёт свою: там ставка задаётся отдельно на ETH и
+    // BTC, поэтому «побед x 100 - поражений x 125» уже не работает - цена
+    // сигнала зависит от пары.
+    const pnlOf = pnlOfRow || (r => {
+      const v = r[COL_RESULT];
+      return v === 'WIN' ? 100 : v === 'LOSE' ? -125 : 0;
+    });
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
       const dateStr = (rows[i][COL_DATE] || '').trim();
-      const result  = rows[i][COL_RESULT];
       if (!dateStr) continue;
       const parts = dateStr.split('.');
       if (parts.length < 3) continue;
@@ -465,9 +472,8 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
       const y = parts[2].substring(0, 4);
       if (y.length < 4 || isNaN(parseInt(y))) continue;
       const dk = `${y}-${m}-${d}`;
-      if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
-      if (result === 'WIN') dailyMap[dk].wins++;
-      else if (result === 'LOSE') dailyMap[dk].losses++;
+      if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, pnl: 0 };
+      dailyMap[dk].pnl += pnlOf(rows[i]);
     }
 
     const sortedDays = Object.keys(dailyMap).sort();
@@ -477,8 +483,8 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
     const labels = [];
     const pctData = [];
     for (const dk of sortedDays) {
-      const { label, wins, losses } = dailyMap[dk];
-      cumPnl += wins * 100 - losses * 125;
+      const { label, pnl } = dailyMap[dk];
+      cumPnl += pnl;
       labels.push(label);
       pctData.push(Math.round((cumPnl / 5000) * 100));
     }
@@ -3271,8 +3277,33 @@ const ERA_SINCE_DK = '2026-06-01';
 // 10m    - ALLsignal, сигналы, дошедшие до группы PRO;
 // ALT10  - BLOCKEDsignal, отсеянные фильтрами и лимитом окон.
 // «Все» - объединение: показывает, каким был бы результат без отсева.
-const ERA_STATE = { src: 'ALL' };
+// Ставка на сигнал. По умолчанию 125 на оба актива - это плоская модель
+// ALL Periods, с которой срез должен сходиться цифра в цифру. Боевой вариант
+// PRO-ветки (ETH 125 / BTC 250) выбирается селекторами: WR от ставки не
+// зависит, а PNL и просадка - зависят, и разница между вариантами как раз
+// показывает, сколько даёт удвоенная ставка на BTC.
+const ERA_PAYOUT = 0.8;
+const ERA_STAKE_MAX = { ETH: 125, BTC: 250 };
+const ERA_STATE = { src: 'ALL', stakes: { ETH: 125, BTC: 125 } };
 let eraRowsCache = null;
+
+function eraStakeOf_(pair) {
+  return ERA_STATE.stakes[pair] ?? 125;
+}
+// Деньги по одному сигналу. Пара приходит либо из разобранного сигнала
+// (просадка, сводка), либо из сырой строки листа (график PNL).
+function eraPnlSig_(s) {
+  const st = eraStakeOf_(s.pair);
+  if (s.res === 'WIN') return st * ERA_PAYOUT;
+  if (s.res === 'LOSE') return -st;
+  return 0;
+}
+function eraPnlRow_(r) {
+  const res = (r[COL_RESULT] || '').trim();
+  if (res !== 'WIN' && res !== 'LOSE') return 0;
+  const st = eraStakeOf_(sigPairBase(r[1]));
+  return res === 'WIN' ? st * ERA_PAYOUT : -st;
+}
 
 // Один поход в оба листа на всю жизнь страницы: переключатель источника
 // только пересобирает разрезы, заново качать листы незачем.
@@ -3305,15 +3336,9 @@ function eraRowsFor_(cache, src) {
   return [cache.head].concat(body);
 }
 
-// PNL-модель та же, что на ALL Periods: ставка 125, выплата 0.8 -> WIN +100,
-// LOSE -125, ничья 0. Держим отдельной функцией, чтобы сводка и график не
-// разъехались, если модель когда-нибудь поменяется.
 function eraPnl_(sigs) {
   let pnl = 0;
-  for (const s of sigs) {
-    if (s.res === 'WIN') pnl += 100;
-    else if (s.res === 'LOSE') pnl -= 125;
-  }
+  for (const s of sigs) pnl += eraPnlSig_(s);
   return pnl;
 }
 
@@ -3335,11 +3360,14 @@ function eraRenderSummary_(sigs, cache) {
   // Состав строк показываем всегда: по одному итогу не видно, сколько в нём
   // реально проторгованных сигналов, а сколько отсеянных.
   const comp = `10m <b>${cache.pro.length}</b> + ALT10 <b class="era-alt-num">${cache.alt.length}</b>`;
+  // PNL без указания ставок читается как факт, хотя это расчёт по выбранной
+  // модели - показываем её рядом с числом.
+  const st = `${t('era.stake')} ETH <b>${eraStakeOf_('ETH')}</b> / BTC <b>${eraStakeOf_('BTC')}</b>`;
   el.innerHTML =
     `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b> · ${t('era.src')}: ${comp}<br>` +
     `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
     `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
-    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${pnl} USDT</b>`;
+    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${Math.round(pnl)} USDT</b> · ${st}`;
 }
 
 // Переключение источника обязано пересобрать графики, а они защищены
@@ -3380,11 +3408,11 @@ async function renderEraStats() {
 
     // Графики независимы друг от друга и от таблиц: падение Chart.js не должно
     // гасить весь срез (так уже случалось на ветке MEXC).
-    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, eraRows); } catch (e) { console.log('ERA pnl error:', e); }
+    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, eraRows, eraPnlRow_); } catch (e) { console.log('ERA pnl error:', e); }
     try { renderMonthlyWrChart('eraMonthlyWrChart', eraRows); } catch (e) { console.log('ERA monthly error:', e); }
     try {
       renderDrawdownInto({
-        sigs, key: 'eraDrawdown',
+        sigs, key: 'eraDrawdown', pnlFn: eraPnlSig_,
         canvasId: 'eraDrawdownChart', noteId: 'eraDrawdownNote',
         emptyNote: t('dd.none'),
       });
@@ -3432,7 +3460,30 @@ async function renderEraStats() {
   }
 }
 
+// Селекторы ставок строим кодом: шаг 5 и потолки те же, что в калькуляторе
+// на странице статистики (ETH до 125, BTC до 250), чтобы два места в
+// приложении не предлагали разные наборы сумм за одно и то же.
+function eraBuildStakeSelects_() {
+  for (const pair of ['ETH', 'BTC']) {
+    const sel = document.getElementById('eraStake' + pair);
+    if (!sel || sel.options.length) continue;
+    let html = '';
+    for (let v = 5; v <= ERA_STAKE_MAX[pair]; v += 5) {
+      html += `<option value="${v}"${v === ERA_STATE.stakes[pair] ? ' selected' : ''}>${v}</option>`;
+    }
+    sel.innerHTML = html;
+    sel.addEventListener('change', () => {
+      const v = parseInt(sel.value, 10);
+      if (!v || v === ERA_STATE.stakes[pair]) return;
+      ERA_STATE.stakes[pair] = v;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderEraStats();
+    });
+  }
+}
+
 function initEraUI() {
+  eraBuildStakeSelects_();
   const seg = document.getElementById('eraSrcSeg');
   if (!seg || seg.dataset.wired) return;
   seg.dataset.wired = '1';

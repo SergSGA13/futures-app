@@ -1197,6 +1197,18 @@
         </div>
         <p class="mexc-slot-note" data-i18n="era.src.note">10m - сигналы, дошедшие до группы PRO (лист ALLsignal). ALT10 - отсеянные фильтрами и лимитом одновременных окон (лист BLOCKEDsignal): они не торговались, поэтому их результат показывает, чего отсев стоил. «Все» - объединение обоих листов.</p>
 
+        <!-- Ставка на сигнал. 125/125 - плоская модель ALL Periods,
+             ETH 125 / BTC 250 - боевые ставки PRO-ветки. -->
+        <div class="sig-head2 era-head2">
+          <span class="mexc-src-lbl" data-i18n="era.stake">Ставка</span>
+          <span class="sig-div"></span>
+          <span class="era-stake-fields">
+            <label class="era-stake-item">ETH <select id="eraStakeETH" class="mexc-stake-select"></select></label>
+            <label class="era-stake-item">BTC <select id="eraStakeBTC" class="mexc-stake-select"></select></label>
+          </span>
+        </div>
+        <p class="mexc-slot-note" data-i18n="era.stake.note">По умолчанию 125 на оба актива - как в ALL Periods. Вариант ETH 125 / BTC 250 повторяет боевые ставки PRO-ветки. Выплата 0.8, ничья считается нулём. Ставка меняет PNL и просадку, но не винрейт: безубыток остаётся 55.6% при любой сумме.</p>
+
         <div class="dev-src-summary era-summary" id="eraSummary"></div>
         <div class="dev-urgent-empty" id="eraEmpty" style="display:none" data-i18n="era.empty">В этом источнике нет сигналов за выбранный период.</div>
 
@@ -1205,7 +1217,7 @@
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="era.pnl">Total PNL - новая система</span></div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartEra"></canvas></div>
-          <p class="pnl-chart-footnote" data-i18n="era.pnl.note">Расчёт на стартовом депозите 5000 USDT, фиксированная ставка на сигнал 125 USDT. Отсчёт ведётся от нуля на 1 июня 2026, а не от накопленного результата прошлых периодов.</p>
+          <p class="pnl-chart-footnote" data-i18n="era.pnl.note">Расчёт на стартовом депозите 5000 USDT по выбранным выше ставкам. Отсчёт ведётся от нуля на 1 июня 2026, а не от накопленного результата прошлых периодов.</p>
         </div>
 
         <div class="pnl-chart-card">

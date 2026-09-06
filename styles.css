@@ -2816,3 +2816,8 @@ body.zones-only .app-main { bottom: 0; }
   border-color: rgba(78, 255, 160, 0.55);
   box-shadow: 0 0 14px rgba(78, 255, 160, 0.30);
 }
+.era-stake-fields { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.era-stake-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+}

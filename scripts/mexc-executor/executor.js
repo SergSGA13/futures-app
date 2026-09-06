@@ -41,9 +41,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
 let playwright;
 try { playwright = require('playwright'); }
 catch (e) {
-  // migrate только переписывает config.json - браузер ему не нужен, и
-  // требовать установку Playwright ради правки файла незачем.
-  if (process.argv[2] !== 'migrate') {
+  // migrate и add-asset только переписывают config.json - браузер им не
+  // нужен, и требовать установку Playwright ради правки файла незачем.
+  if (!['migrate', 'add-asset', 'timings'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -158,6 +158,17 @@ function exCfg(name) {
     // Пусто - холостое действие ограничится курсором и колесом.
     chartIntervals: e.chartIntervals || CFG.chartIntervals || [],
     chartAnchor: e.chartAnchor ?? CFG.chartAnchor ?? '',
+    // Рабочий актив: к нему возвращаемся после ставки и блужданий. Не
+    // задан - первый по списку urls. Ключ пробрасываем здесь: exCfg
+    // отдаёт наружу только перечисленное, и без этой строки настройка
+    // молча не работала - окно возвращалось на первый актив.
+    homeAsset: e.homeAsset ?? CFG.homeAsset ?? '',
+    // Чьи сутки считает биржа. dayTz - часы от UTC (у MEXC 8: её день
+    // начинается в 18:00 по Варшаве летом и в 17:00 зимой, и сдвиг
+    // доезжает сам). dayStart - тот же час, но заданный местным
+    // временем, если так понятнее.
+    dayTz: e.dayTz ?? CFG.dayTz ?? null,
+    dayStart: e.dayStart ?? CFG.dayStart ?? '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -204,7 +215,8 @@ const state = {
 // в stakeLimits, а нижняя граница общая.
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
-const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone'];
+const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone',
+                 'reportDone', 'reportAt', 'reportLast'];
 function saveState() {
   try {
     const o = {};
@@ -834,12 +846,112 @@ async function findAmount(perTryMs) {
 // мало: MEXC - SPA, и через 2.5 секунды после domcontentloaded на
 // странице может не быть ещё ни одной кнопки (видно в ДАМПе: 0 полей,
 // 0 кнопок, payout "--"). Признак готовности - появившееся поле суммы.
+// ── застрявшее модальное окно ──
+// Окно поверх страницы перехватывает ВСЕ клики: и по полю суммы, и по
+// кнопке направления. В логе это выглядит как «intercepts pointer
+// events» и три ставки подряд в ошибках, хотя со страницей всё в
+// порядке - она просто накрыта. Своим же окном сводки в том числе:
+// «PNL History» у MEXC это ant-modal, и не закрывшись, оно глушит
+// торговлю до перезапуска.
+async function modalOver() {
+  try {
+    return await page.evaluate(() => {
+      const sel = '.ant-modal-wrap, .ant-drawer-open, [role="dialog"], .ant-modal-mask';
+      const w = innerWidth, h = innerHeight;
+      for (const el of document.querySelectorAll(sel)) {
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < w * 0.5 || r.height < h * 0.5) continue;
+        // Накрыт ли центр страницы именно им: у ant-modal-wrap клики
+        // перехватывает сама обёртка, даже когда окошко маленькое.
+        const top = document.elementFromPoint(w / 2, h / 2);
+        if (!top || !(el === top || el.contains(top) || top.contains(el))) continue;
+        const cls = el.className && el.className.baseVal !== undefined
+          ? el.className.baseVal : String(el.className || '');
+        return (cls || el.getAttribute('role') || 'dialog').slice(0, 90);
+      }
+      return '';
+    });
+  } catch (e) { return ''; }
+}
+
+// Закрыть его: сначала как человек - крестик, потом Escape, потом клик
+// мимо окна. Не поддалось - перезагружаем страницу: ставка важнее
+// сохранённого состояния вкладки.
+async function dismissModal(why) {
+  let what = await modalOver();
+  if (!what) return false;
+  log(`страницу накрыло окно (${what}) - закрываю${why ? ', ' + why : ''}`);
+  const tries = [
+    async () => {
+      const x = page.locator('.ant-modal-close, .ant-modal-close-x, [aria-label="Close"], '
+        + '[aria-label="close"], .ant-drawer-close').first();
+      if (await x.count() > 0 && await x.isVisible().catch(() => false)) {
+        await x.click({ timeout: 2000, force: true });
+      }
+    },
+    async () => { await page.keyboard.press('Escape'); },
+    async () => {
+      const b = page.getByText(/^\s*(Confirm|OK|Got it|Close|Закрыть|Понятно)\s*$/i).first();
+      if (await b.count() > 0 && await b.isVisible().catch(() => false)) {
+        await b.click({ timeout: 2000, force: true });
+      }
+    },
+    async () => { await page.mouse.click(8, 8); },
+  ];
+  for (const t of tries) {
+    await t().catch(() => {});
+    await page.waitForTimeout(450);
+    what = await modalOver();
+    if (!what) { log('окно закрыто'); return true; }
+  }
+  log(`окно не закрылось (${what}) - перезагружаю страницу`);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    touchPayout('перезагрузка из-за окна');
+  } catch (e) { log('перезагрузка не удалась: ' + e.message); }
+  return !(await modalOver());
+}
+
+// ── экран «ставка принята» ──
+// После ставки MEXC подменяет форму панелью результата с кнопкой «Place
+// Another». Формы на ней нет: поле суммы то же по селектору, но пустое и
+// неактивное, а клик по Up/Down ничего не открывает. В логе это выглядит
+// как «locator.fill: Timeout» и «клик прошёл, но позиций как было, так и
+// осталось» - две подряд ставки после удачной первой.
+async function clearAfterBet(why) {
+  const re = curEx().afterBetText
+    ? new RegExp(`^\\s*${curEx().afterBetText}\\s*$`, 'i')
+    : /^\s*(Place\s*Another|Bet\s*Again|Продолжить|Ещё\s*ставк\w*)\s*$/i;
+  try {
+    const b = page.getByText(re).first();
+    if (await b.count() === 0 || !(await b.isVisible().catch(() => false))) return false;
+    log(`страница показывает экран после ставки - возвращаю форму${why ? ', ' + why : ''}`);
+    await b.click({ timeout: 2500, force: true });
+    await page.waitForTimeout(randInt(500, 900));
+    return true;
+  } catch (e) {
+    log('вернуть форму не удалось: ' + String(e.message).split('\n')[0]);
+    return false;
+  }
+}
+
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
   let found = null;
   while (Date.now() < deadline) {
     found = await findAmount(1200);
-    if (found) return found;
+    if (found) {
+      // Поле нашлось - но кликнуть по нему может быть нельзя: страницу
+      // могло накрыть окном. Разбираемся здесь, до первого клика, а не
+      // тремя таймаутами по пять секунд каждый.
+      if (await dismissModal('перед ставкой')) found = await findAmount(1200) || found;
+      // Форма могла быть подменена панелью результата прошлой ставки.
+      if (await clearAfterBet('перед ставкой')) found = await findAmount(1200) || found;
+      return found;
+    }
     await page.waitForTimeout(400);
   }
   return null;
@@ -954,6 +1066,49 @@ async function payoutByButtons() {
                blocks: blocks.length };
     }, { words, re });
   } catch (e) { return null; }
+}
+
+// Выплата, которой можно верить. Одного чтения мало: после смены
+// экспирации и после перехода на другой актив страница какое-то время
+// показывает ПРЕЖНИЕ проценты. Так 5 сентября десятиминутная ставка
+// ушла с записанными 85% - это была выплата тридцатиминутки с прошлой
+// страницы, а биржа применила 72%.
+//
+// Поэтому читаем, пока два чтения подряд не совпадут - и по числу
+// направления, и по паре целиком. Не устоялась за отведённое время -
+// возвращаем null: пропустить ставку дешевле, чем открыть её вслепую.
+let payoutTouched = 0;
+function touchPayout(why) { payoutTouched = Date.now(); if (why) lastTouch = why; }
+let lastTouch = '';
+async function payoutStable(direction, ms) {
+  const settle = Math.max(0, CFG.payoutSettleMs ?? 2000);
+  // Пока не прошло время на пересчёт после смены экспирации или загрузки
+  // страницы, совпадение двух чтений ничего не значит: оба могут быть
+  // прежними. Поэтому раньше этого срока не возвращаемся вовсе.
+  const notBefore = payoutTouched ? payoutTouched + settle : 0;
+  const until = Date.now() + Math.max(600, ms ?? CFG.payoutWaitMs ?? 6000);
+  const pair = () => (lastPayouts ? `${lastPayouts.UP}/${lastPayouts.DOWN}` : '');
+  let prev = await pagePayout(direction), prevPair = pair();
+  let tries = 1;
+  while (Date.now() < until) {
+    await page.waitForTimeout(350);
+    const now = await pagePayout(direction);
+    tries++;
+    if (now != null && now === prev && pair() === prevPair && Date.now() >= notBefore) {
+      if (tries > 2 || notBefore) {
+        log(`выплата устоялась: ${now}%`
+          + (lastTouch ? ` (${Math.round((Date.now() - payoutTouched) / 100) / 10} с после «${lastTouch}»)` : ''));
+      }
+      payoutTouched = 0; lastTouch = '';
+      return now;
+    }
+    if (prev != null && now != null && now !== prev) {
+      log(`выплата на странице ещё менялась: ${prev}% → ${now}% - жду`);
+    }
+    prev = now; prevPair = pair();
+  }
+  log('выплата на странице так и не устоялась - ставку не открываю');
+  return null;
 }
 
 async function pagePayout(direction) {
@@ -1800,6 +1955,7 @@ async function placeBet(sig) {
       if (ready) log('страница уже открыта, перезагрузка не нужна');
     }
     if (!ready) {
+      touchPayout('загрузка страницы');
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
       // Биржа может увести с заданного адреса на «последний символ»: так
@@ -1809,6 +1965,7 @@ async function placeBet(sig) {
       // обычно слушается. Если и это не помогло, скажем прямо в отказе.
       if (!page.url().startsWith(url)) {
         log(`биржа увела с ${url} на ${page.url()} - повторяю переход`);
+        touchPayout('перезагрузка страницы');
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
         await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
         if (!page.url().startsWith(url)) log(`адрес снова ${page.url()} - похоже, в конфиге неверный URL актива`);
@@ -1858,6 +2015,21 @@ async function placeBet(sig) {
       throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
     }
     log('панель готова, поле суммы: ' + ready.sel);
+
+    // Окно, которое не удалось закрыть даже перезагрузкой, - это стоп
+    // торговли, а не одна неудачная ставка: каждый клик будет уходить в
+    // него. Отказываем сразу и говорим об этом в Telegram, вместо трёх
+    // попыток по пять секунд таймаута каждая и записи в «ошибки».
+    const stuck = await modalOver();
+    if (stuck) {
+      log(`пропуск ${sig.asset} ${sig.direction}: страницу накрыло окно (${stuck}),`
+        + ' закрыть не удалось - клики уходят в него');
+      await shot('modal-stuck');
+      await dumpPage('modal-stuck');
+      await tgAlert(`${EX.title}: страницу накрыло окно и оно не закрывается - `
+        + 'ставки не проходят, нужен взгляд глазами');
+      return { status: 'skip-modal', note: `окно поверх страницы (${stuck})` };
+    }
 
     // Ставка не на тот актив - самая дорогая из возможных ошибок, и
     // единственное, что её ловит, это сверка страницы с сигналом. Ждём,
@@ -1930,8 +2102,13 @@ async function placeBet(sig) {
     // которой ставка будет нажата, и откат между «панель готова» и
     // нажатием ловит уже она.
     const guard = { ...(EX.priceGuard || {}) };
+    // Порог опоздания. Точку отсчёта берём даже при выключенной проверке
+    // цены: опоздать вход может ЛЮБОЙ, а сравнивать потом будет не с чем -
+    // цену страницы задним числом не прочитать.
+    const lateSec = Math.max(0, CFG.lateSec ?? guard.lateSec ?? 40);
+    const lagAt = () => (Date.now() - (sig.receivedAt || t0)) / 1000;
     let refPrice = null, refFrom = '';
-    if (guard.enabled !== false) {
+    if (guard.enabled !== false || lateSec > 0) {
       if (sig.price) { refPrice = sig.price; refFrom = 'из сигнала'; }
       else {
         refPrice = await pagePrice();
@@ -1974,6 +2151,10 @@ async function placeBet(sig) {
       // «по памяти» видно в журнале намеренно: если однажды окажется, что
       // память врёт, найти это можно будет только по этой пометке.
       tfHow = tf.how || '';
+      // Проценты после смены минут биржа пересчитывает не мгновенно.
+      // «По разметке» без единого нажатия - страницу не трогали, ждать
+      // нечего; во всех прочих случаях чипы жали, и выплата поедет.
+      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`);
       log(`экспирация ${tfText} выбрана`
         + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
     } else if (tf.cur == null) {
@@ -2014,11 +2195,19 @@ async function placeBet(sig) {
     // Проверку можно выключить: тогда страницу не читаем вовсе и экономим
     // секунду-полторы. Смысл в этом есть только если выплату уже отобрал
     // источник сигнала - иначе ставка идёт вслепую.
-    const pv = EX.checkPayout ? await pagePayout(sig.direction) : null;
-    if (!EX.checkPayout) log('проверка выплаты выключена - беру условия страницы как есть');
+    // Выключатель проверки НЕ отменяет requirePagePayout. Туда, куда
+    // сигналы приходят без выплаты, «не проверять» означает «ставить
+    // вслепую»: 5 сентября так ушли пять ставок по 72-74% при пороге 76,
+    // и в журнале у них пустая колонка выплаты - читать её было некому.
+    const readPayout = EX.checkPayout || EX.requirePagePayout;
+    const pv = readPayout ? await payoutStable(sig.direction) : null;
+    if (!readPayout) log('проверка выплаты выключена - беру условия страницы как есть');
+    else if (!EX.checkPayout) {
+      log(`проверка выплаты выключена, но на ${EX.title} она обязательна - читаю`);
+    }
     const need = EX.minPayout;
     const cmp = EX.minPayoutStrict ? 'больше' : 'не меньше';
-    if (pv == null && !EX.checkPayout) {
+    if (pv == null && !readPayout) {
       // Выключена намеренно - не жалуемся и не отказываем.
     } else if (pv == null) {
       if (EX.requirePagePayout) {
@@ -2116,7 +2305,7 @@ async function placeBet(sig) {
     // экспирацию - хоть сама, хоть из-за нашего промаха, - выплата
     // изменится на десятки пунктов, и мы это увидим. Ровно так ставка
     // ушла на 5 минут с 66%, пока журнал писал 10 минут и 80%.
-    if (pv != null && EX.checkPayout) {
+    if (pv != null && readPayout) {
       const pvNow = await pagePayout(sig.direction);
       if (pvNow != null && Math.abs(pvNow - pv) > payoutDriftPts()) {
         log(`пропуск ${sig.asset} ${sig.direction}: выплата поехала с ${pv}% на ${pvNow}% `
@@ -2136,8 +2325,18 @@ async function placeBet(sig) {
     // на который сигнал рассчитывали. Ставка вверх тем лучше, чем ниже
     // цена входа; вниз - наоборот. Сравнение стоит один вызов и делается
     // последним, чтобы цена была самой свежей.
+    // Запоздалый вход проверяем ВСЕГДА, даже когда обычная проверка цены
+    // выключена. Сигнал, дошедший до кнопки через минуту, - это уже не
+    // тот сигнал: 6 сентября первая ставка ушла через 48 секунд, и цена
+    // к тому моменту сходила заметно. Порог для таких входов свой и по
+    // умолчанию нулевой - «только если цена не хуже сигнала».
+    const lagSec = lagAt();
+    const late = lateSec > 0 && lagSec > lateSec;
     let entryPrice = null, advPct = null;
-    if (guard.enabled !== false && refPrice) {
+    if (late && guard.enabled === false && refPrice) {
+      log(`вход опаздывает на ${lagSec.toFixed(0)}с - проверяю цену, хотя проверка выключена`);
+    }
+    if ((guard.enabled !== false || late) && refPrice) {
       entryPrice = await pagePrice();
       if (entryPrice == null) {
         if (guard.strict) {
@@ -2158,17 +2357,23 @@ async function placeBet(sig) {
       } else {
         // Насколько цена ушла ПРОТИВ нас, в процентах.
         advPct = ((entryPrice - refPrice) / refPrice) * 100 * (sig.direction === 'UP' ? 1 : -1);
-        const lim = guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05);
+        // У запоздалого входа порог свой и жёстче обычного.
+        const lim = late
+          ? Math.abs(CFG.lateMaxAdversePct ?? guard.lateMaxAdversePct ?? 0)
+          : (guard.requireBetter ? 0 : Math.abs(guard.maxAdversePct ?? 0.05));
         const moved = advPct > 0
           ? `хуже на ${advPct.toFixed(3)}%`
           : `лучше на ${(-advPct).toFixed(3)}%`;
         if (advPct > lim) {
           log(`пропуск ${sig.asset} ${sig.direction}: цена входа ${entryPrice} против ${refPrice} `
-            + `(${refFrom}) - ${moved}, порог ${lim}%`);
+            + `(${refFrom}) - ${moved}, порог ${lim}%`
+            + (late ? ` (вход опоздал на ${lagSec.toFixed(0)}с)` : ''));
           await shot('price-worse');
-          return { status: 'skip-price', payoutPage: pv, entryPrice, advPct };
+          return { status: 'skip-price', payoutPage: pv, entryPrice, advPct,
+                   note: late ? `опоздание ${lagSec.toFixed(0)}с, ${moved}` : '' };
         }
-        log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`);
+        log(`цена входа ${entryPrice} против ${refPrice} (${refFrom}) - ${moved}, порог ${lim}%`
+          + (late ? ` (вход опоздал на ${lagSec.toFixed(0)}с)` : ''));
       }
     }
 
@@ -2182,9 +2387,21 @@ async function placeBet(sig) {
     await humanClick(btn);
     await page.waitForTimeout(randInt(500, 900));
     // возможное окно подтверждения
+    // Окно подтверждения. Промах по нему НЕ должен губить ставку: клик по
+    // направлению уже прошёл, и брошенное исключение записывало ставку в
+    // ошибки, хотя на бирже она могла и открыться. Доказательство всё
+    // равно одно - счётчик позиций ниже; сюда же попадает случай, когда
+    // кнопка мигнула и исчезла сама.
     if (EX.selectors.confirm) {
-      const c = page.locator(EX.selectors.confirm).first();
-      if (await c.count() > 0 && await c.isVisible().catch(() => false)) await humanClick(c);
+      try {
+        const c = page.locator(EX.selectors.confirm).first();
+        if (await c.count() > 0 && await c.isVisible().catch(() => false)) {
+          await humanClick(c, 3000);
+        }
+      } catch (e) {
+        log(`подтверждение не нажалось (${String(e.message).split('\n')[0]})`
+          + ' - смотрю на счётчик позиций');
+      }
     }
 
     // Клик сам по себе не доказывает, что ставка открылась: он мог не
@@ -2201,9 +2418,13 @@ async function placeBet(sig) {
       log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
+      await clearAfterBet('после неподтверждённой').catch(() => {});
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
+    // Возвращаем форму сразу: следующий сигнал часто идёт через секунды,
+    // и разбираться с экраном результата на его времени - потерянный вход.
+    await clearAfterBet('после ставки').catch(() => {});
     return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.
@@ -2392,9 +2613,10 @@ function normalizeSignal(sig) {
     // меткам, - но в логе это должно быть видно: чужой поток, случайно
     // направленный в исполнитель, иначе торговал бы молча.
     const raw = String(sig.timing ?? '').trim();
-    if (raw && exNames().some(n => exCfg(n).signalTimings.length)
+    if (exNames().some(n => exCfg(n).signalTimings.length)
         && !exNames().some(n => exCfg(n).signalTimings.includes(raw.toLowerCase()))) {
-      log(`!! метка потока "${raw}" не заявлена ни одной биржей - `
+      sig.tagUnknown = raw || '(пусто)';
+      log(`!! метка потока "${raw || '-'}" не заявлена ни одной биржей - `
         + `${sig.asset || 'сигнал'} идёт на ${exCfg(ex).title} по умолчанию`);
     }
   }
@@ -2483,6 +2705,16 @@ function acceptSignal(sig, src) {
     return reason;
   };
 
+  // Незаявленная метка - чужой поток. По журналу за неделю видно, чем
+  // они отличаются: у меток TOOBIT_10m/TOOBIT_30m медиана выплаты 77-78%,
+  // у безымянного «10m» и у пустой метки - 74-75%, то есть НИЖЕ порога.
+  // Пока источник не научился ставить метку, такие сигналы можно просто
+  // не брать: выключатель общий, по умолчанию выключен.
+  if (CFG.requireKnownTag && sig.tagUnknown) {
+    return skip('unknown-tag', 'skip-unknown-tag',
+      `метка потока "${sig.tagUnknown}" не заявлена ни одной биржей`
+      + ' - принимаю только заявленные');
+  }
   const allow = timingsFor(sig.asset, sig.ex);
   if (allow.indexOf(sig.timing) < 0) {
     const own = (exCfg(sig.ex).assetTimings || {})[sig.asset];
@@ -2601,7 +2833,7 @@ function enqueueSignal(sig) {
   const B = burstCfg();
   if (!B.enabled || !B.windowMs) {
     sig.mult = 1; sig.burstCount = 1;
-    state.queue.push(sig);
+    enqueue(sig);
     setImmediate(pump);
     return 'queued';
   }
@@ -2629,7 +2861,7 @@ function enqueueSignal(sig) {
     groups.delete(k);
     ng.sig.burstCount = ng.count;
     ng.sig.mult = Math.min(ng.count, B.max);
-    state.queue.push(ng.sig);
+    enqueue(ng.sig);
     if (ng.count > 1) {
       log(`пачка ${k}: сигналов ${ng.count}, ставка x${ng.sig.mult} = ${betStake(ng.sig)} USDT`);
     }
@@ -2640,6 +2872,38 @@ function enqueueSignal(sig) {
 }
 
 // ── очередь (ставки строго по одной) ──
+// Долгие дела - сводка, отчёт, холостые действия - держат занятость на
+// всё время работы, и пришедший сигнал ждёт их конца. Двадцать секунд на
+// десятиминутной свече это другая цена входа, поэтому такие дела
+// проверяют очередь на каждом шаге и уступают.
+function signalWaiting() { return state.queue.length > 0; }
+function bailForSignal(what) {
+  if (!signalWaiting()) return false;
+  log(`${what}: пришёл сигнал - бросаю и уступаю очередь`);
+  return true;
+}
+
+// Какие биржи идут вне очереди. У десятиминутной свечи цена уходит за
+// секунды, и ставка, простоявшая за чужой, открывается уже по другой
+// цене - если вообще успевает. Список задаётся в конфиге; пусто -
+// очередь обычная, в порядке прихода.
+function priorityEx() {
+  const v = CFG.priorityExchanges;
+  return Array.isArray(v) ? v.filter(n => exNames().includes(n)) : [];
+}
+// Кладём сигнал в очередь с учётом приоритета: приоритетный встаёт
+// ПЕРЕД первым неприоритетным, но за такими же - иначе два сигнала
+// MEXC подряд поменялись бы местами.
+function enqueue(sig) {
+  const pri = priorityEx();
+  if (!pri.length || !pri.includes(sig.ex)) { state.queue.push(sig); return; }
+  let i = state.queue.findIndex(q => !pri.includes(q.ex));
+  if (i < 0) { state.queue.push(sig); return; }
+  state.queue.splice(i, 0, sig);
+  log(`${exCfg(sig.ex).title} ${sig.asset} ${sig.direction} идёт вне очереди`
+    + ` - перед ним ${state.queue.length - i - 1} чужих сигналов`);
+}
+
 async function pump() {
   if (state.busy) return;
   const sig = state.queue.shift();
@@ -3065,7 +3329,8 @@ async function readPnlDialog() {
 // Открыть окно сводки и переключить его на «вчера». Селектор кнопки у
 // биржи не задан - ищем по смыслу: сначала явный selectors.pnlOpen, если
 // его прописали, потом любой мелкий значок рядом с заголовком позиций.
-async function openPnlDialog() {
+async function openPnlDialog(tabName) {
+  const tabWord = tabName || 'Yesterday';
   const E = curEx();
   const already = await page.evaluate(() =>
     /PNL\s*History/i.test(document.body.innerText || ''));
@@ -3118,13 +3383,13 @@ async function openPnlDialog() {
     }
     await page.waitForTimeout(600);
   }
-  // Вкладка «Yesterday».
-  const tab = page.getByText(/^\s*Yesterday\s*$/i).first();
+  // Вкладка: «Yesterday» для ночной сводки, «Today» для отчёта в течение дня.
+  const tab = page.getByText(new RegExp(`^\\s*${tabWord}\\s*$`, 'i')).first();
   if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
     await humanClick(tab).catch(() => {});
     await page.waitForTimeout(1200);
   } else {
-    log('в окне сводки не нашлась вкладка «Yesterday» - читаю то, что открыто');
+    log(`в окне сводки не нашлась вкладка «${tabWord}» - читаю то, что открыто`);
   }
   return await page.evaluate(() => /PNL\s*History/i.test(document.body.innerText || ''));
 }
@@ -3338,6 +3603,7 @@ async function collectPnl(exName) {
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
   }
   await waitForPanel();
+  if (bailForSignal('сводка')) return null;
 
   // У биржи может не быть сводного окна - тогда складываем сами по
   // списку закрытых позиций.
@@ -3368,6 +3634,10 @@ async function collectPnl(exName) {
     await page.keyboard.press('Escape').catch(() => {});
   }
   await page.waitForTimeout(500);
+  // Проверяем, что окно и правда ушло. Не ушедшее «PNL History» - это
+  // ant-modal поверх страницы, который перехватывает КАЖДЫЙ следующий
+  // клик: ровно так после отчёта встала торговля на MEXC.
+  await dismissModal('после сводки').catch(() => {});
 
   if (!got || got.pnl === undefined) {
     log(`сводка ${E.title}: числа из окна прочитать не удалось`
@@ -3385,6 +3655,272 @@ async function collectPnl(exName) {
   log(`сводка ${E.title} за ${rec.date}: PNL ${rec.pnl} USDT, контрактов ${rec.contracts}, `
     + `прибыльных ${rec.win_rate}%, оборот ${rec.amount} USDT`);
   return rec;
+}
+
+// ── отчёт в Telegram ──
+// Четыре раза в день - два снимка: журнал ставок из панели (сколько
+// сигналов и что с ними стало) и окно «PNL History - Today» с самой
+// биржи. Числами то же самое сказать нельзя: смысл отчёта в том, чтобы
+// смотреть на него глазами с телефона, не заходя ни в панель, ни на биржу.
+function tgCfg() {
+  const t = CFG.telegram || {};
+  const at = (Array.isArray(t.at) && t.at.length ? t.at : ['07:10', '12:10', '17:10', '22:10'])
+    .map(v => hhmm(v, '07:10'));
+  return {
+    enabled: t.enabled === true && !!t.token && !!t.chatId,
+    token: String(t.token || ''), chatId: String(t.chatId || ''),
+    at, times: at.map(x => x.at),
+    exchanges: Array.isArray(t.exchanges) && t.exchanges.length ? t.exchanges : ['mexc'],
+  };
+}
+
+// Отправка без единой зависимости: multipart собираем руками. Два снимка
+// уходят одним сообщением - в ленте это одна карточка, а не две.
+function tgSend(token, chatId, caption, photos) {
+  return new Promise((resolve, reject) => {
+    const b = '----executor' + Math.random().toString(36).slice(2);
+    const media = photos.map((p, i) => ({
+      type: 'photo', media: `attach://p${i}`,
+      ...(i === 0 ? { caption: String(caption).slice(0, 1000) } : {}),
+    }));
+    const parts = [];
+    const field = (name, value) => parts.push(Buffer.from(
+      `--${b}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+    field('chat_id', chatId);
+    field('media', JSON.stringify(media));
+    photos.forEach((buf, i) => {
+      parts.push(Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="p${i}"; `
+        + `filename="p${i}.png"\r\nContent-Type: image/png\r\n\r\n`));
+      parts.push(buf, Buffer.from('\r\n'));
+    });
+    parts.push(Buffer.from(`--${b}--\r\n`));
+    const body = Buffer.concat(parts);
+    const base = CFG.telegram && CFG.telegram.apiBase
+      ? String(CFG.telegram.apiBase) : 'https://api.telegram.org';
+    const u = new URL(`${base}/bot${token}/sendMediaGroup`);
+    const lib = u.protocol === 'http:' ? require('http') : require('https');
+    const req = lib.request({
+      hostname: u.hostname, port: u.port || (u.protocol === 'http:' ? 80 : 443),
+      path: u.pathname, method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${b}`, 'Content-Length': body.length },
+    }, res => {
+      let out = '';
+      res.on('data', d => { out += d; });
+      res.on('end', () => {
+        let j = null; try { j = JSON.parse(out); } catch (e) {}
+        if (res.statusCode === 200 && j && j.ok) return resolve(j);
+        reject(new Error(`Telegram ответил ${res.statusCode}: ${(j && j.description) || out.slice(0, 200)}`));
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+// Снимок журнала из своей же панели. Открываем её отдельной вкладкой и
+// сразу с нужными фильтрами: отчёт по ветке MEXC не должен показывать
+// чужие строки.
+async function shotJournal(exName) {
+  const ctx = page ? page.context() : null;
+  if (!ctx) { log('снимок журнала: браузер ещё не открыт'); return null; }
+  const url = `http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`
+    + `?ex=${encodeURIComponent(exName)}&f=all&tf=all&report=1`;
+  const p2 = await ctx.newPage();
+  try {
+    await p2.setViewportSize({ width: 1180, height: 1500 });
+    await p2.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
+    await p2.waitForTimeout(1800);
+    const card = p2.locator('#bets').locator('xpath=ancestor::div[contains(@class,"card")][1]');
+    const buf = await card.screenshot({ timeout: 8000 });
+    return buf;
+  } catch (e) {
+    log('снимок журнала не получился: ' + e.message);
+    return null;
+  } finally {
+    await p2.close().catch(() => {});
+  }
+}
+
+// Снимок окна «PNL History - Today» с самой биржи.
+async function shotPnlToday(exName) {
+  const E = exCfg(exName);
+  const url = homeUrl(E);
+  if (!url) return null;
+  EX = E;
+  page = await pageFor(exName);
+  await page.bringToFront().catch(() => {});
+  if (!page.url().startsWith(url)) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+  }
+  await waitForPanel().catch(() => {});
+  if (bailForSignal('отчёт')) return null;
+  if (!(await openPnlDialog('Today'))) {
+    log(`отчёт ${E.title}: окно «PNL History» не открылось`);
+    return null;
+  }
+  // Снимаем само окно, а не всю страницу: на скриншоте с телефона мелкий
+  // диалог посреди графика не прочитать.
+  let buf = null;
+  try {
+    const box = await page.evaluate(() => {
+      const vis = el => { const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0; };
+      let best = null;
+      for (const el of document.querySelectorAll('*')) {
+        if (!vis(el)) continue;
+        const t = el.innerText || '';
+        if (!/PNL\s*History/i.test(t) || !/Total\s*PNL/i.test(t)) continue;
+        if (t.length > 1200) continue;
+        if (!best || t.length < (best.innerText || '').length) best = el;
+      }
+      if (!best) return null;
+      const r = best.getBoundingClientRect();
+      return { x: Math.max(0, r.x - 8), y: Math.max(0, r.y - 8),
+               width: Math.min(r.width + 16, 1400), height: Math.min(r.height + 16, 1400) };
+    });
+    buf = box && box.width > 40 && box.height > 40
+      ? await page.screenshot({ clip: box })
+      : await page.screenshot();
+  } catch (e) {
+    log('снимок сводки не получился: ' + e.message);
+  }
+  // Числа из того же окна: по ним подпись сверяет журнал с биржей.
+  const nums = await readPnlDialog().catch(() => null);
+  // Окно закрываем за собой: оставленное поверх страницы оно помешает
+  // следующей ставке найти кнопки.
+  const close = page.getByText(/^\s*(Confirm|OK|Подтвердить)\s*$/i).first();
+  if (await close.count() > 0 && await close.isVisible().catch(() => false)) {
+    await humanClick(close).catch(() => {});
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  await page.waitForTimeout(400);
+  // Проверяем, что окно и правда ушло. Не ушедшее «PNL History» - это
+  // ant-modal поверх страницы, который перехватывает КАЖДЫЙ следующий
+  // клик: ровно так после отчёта встала торговля на MEXC.
+  await dismissModal('после сводки').catch(() => {});
+  return { buf, nums };
+}
+
+// Начало текущих суток БИРЖИ, а не наших. MEXC режет сутки по UTC+8:
+// вкладка «Today» в её сводке считает с 18:00 по Варшаве, и если журнал
+// считать с местной полуночи, числа в подписи не сойдутся с картинкой
+// под ней. Пояс задаётся как dayTz (часы от UTC); не задан - сутки местные.
+function exDayStart(name) {
+  const E = exCfg(name);
+  const day = 86400000;
+  // Явный час местного времени - если так понятнее. Минус: при переходе
+  // на зимнее время его придётся поправить руками, а dayTz доедет сам.
+  if (E.dayStart) {
+    const { hour, min } = hhmm(E.dayStart, '00:00');
+    const d = new Date(); d.setHours(hour, min, 0, 0);
+    if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
+    return d.getTime();
+  }
+  const tz = E.dayTz;
+  if (tz == null) { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  const shifted = Date.now() + tz * 3600000;
+  return Math.floor(shifted / day) * day - tz * 3600000;
+}
+
+// Подпись к отчёту: то же, что видно на снимке, но словами - в ленте
+// подпись читается раньше картинки.
+function reportCaption(exName, nums) {
+  const E = exCfg(exName);
+  const since = exDayStart(exName);
+  const rows = recentBets(400).filter(b =>
+    b.exchange === exName && new Date(b.time).getTime() >= since);
+  const n = st => rows.filter(b => b.status === st).length;
+  // «Без подтверждения» - это ставка, после которой счётчик открытых
+  // позиций не вырос. Считать её просто открытой нельзя: именно из этих
+  // строк и берутся расхождения с биржей.
+  const unconf = n('placed-unconfirmed') + n('placed-unverified');
+  const placed = n('placed') + n('dry-run') + unconf;
+  const by = {};
+  for (const b of rows) if (!/^placed|^dry-run/.test(b.status)) by[b.status] = (by[b.status] || 0) + 1;
+  const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(([k, v]) => `${k} ${v}`).join(', ');
+  // Сколько ставок биржа насчитала САМА - число из того же окна, что и
+  // на втором снимке. Журнал знает, сколько мы нажали; расходятся они
+  // ровно на потерянные ставки, и молчать об этом нельзя.
+  const real = nums && Number.isFinite(nums.contracts) ? nums.contracts : null;
+  const lost = real != null && !state.dryRun ? placed - real : 0;
+  const hm = t => new Date(t).toTimeString().slice(0, 5);
+  const sameDay = new Date(since).toDateString() === new Date().toDateString();
+  const opened = real != null && !state.dryRun ? real : placed;
+  return `${E.title} · с ${hm(since)}${sameDay ? '' : ' вчера'} до ${hm(Date.now())}\n`
+    + `сигналов за сутки: ${rows.length}, открыто ${opened}`
+    + (unconf ? ` (${unconf} без подтверждения)` : '') + '\n'
+    + (lost > 0 ? `до биржи не дошло: ${lost}\n` : '')
+    + (lost < 0 ? `на бирже больше на ${-lost} - были ставки руками\n` : '')
+    + (top ? `не сыграло: ${top}` : 'отказов нет')
+    + (state.dryRun ? '\nрежим DRY-RUN - ставок на бирже нет' : '');
+}
+
+async function sendReport(exName) {
+  const T = tgCfg();
+  const name = exName || T.exchanges[0] || defaultEx();
+  const fail = (why) => { log('отчёт: ' + why);
+    state.reportLast = { at: Date.now(), ok: false, ex: name, shots: 0, why }; saveState();
+    return false; };
+  if (!T.token || !T.chatId) return fail('не задан token или chatId в разделе telegram');
+  if (!exNames().includes(name)) return fail(`биржи «${name}» в конфиге нет`);
+  // Порядок работ и порядок картинок разный. Сначала идём на биржу: она
+  // поднимает браузер, а снимок журнала берётся вкладкой того же браузера
+  // и без него не выйдет вовсе. В сообщение же журнал ставим первым - с
+  // него отчёт и читают.
+  const p = await shotPnlToday(name).catch(e => { log('сводка: ' + e.message); return null; });
+  if (signalWaiting()) return fail('пришёл сигнал - отчёт откладываю');
+  const j = await shotJournal(name).catch(e => { log('журнал: ' + e.message); return null; });
+  const shots = [j, p && p.buf].filter(Boolean);
+  if (!shots.length) return fail('ни одного снимка не вышло - не отправляю');
+  try {
+    await tgSend(T.token, T.chatId, reportCaption(name, p && p.nums), shots);
+    log(`отчёт ${exCfg(name).title} отправлен в Telegram (${shots.length} снимка)`);
+    state.reportAt = Date.now();
+    state.reportLast = { at: Date.now(), ok: true, ex: name, shots: shots.length,
+                         why: shots.length < 2 ? 'один снимок из двух' : '' };
+    saveState();
+    return true;
+  } catch (e) {
+    log('отчёт не ушёл: ' + e.message);
+    state.reportLast = { at: Date.now(), ok: false, ex: name, shots: shots.length,
+                         why: String(e.message).slice(0, 160) };
+    saveState();
+    return false;
+  }
+}
+
+// Расписание отчётов: несколько раз в сутки, время местное.
+async function reportTick() {
+  const T = tgCfg();
+  if (!T.enabled) return;
+  const now = new Date();
+  const due = T.at.find(x => x.hour === now.getHours() && x.min === now.getMinutes());
+  if (!due) return;
+  const stamp = `${now.toDateString()}|${due.at}`;
+  if (typeof state.reportDone !== 'object' || !state.reportDone) state.reportDone = {};
+  const key = T.exchanges.join(',');
+  if (state.reportDone[key] === stamp) return;   // тик раз в 30 секунд
+  state.reportDone[key] = stamp;
+  saveState();
+  if (state.busy || state.queue.length) {
+    log('время отчёта, но идёт ставка - отправлю при следующем заходе');
+    delete state.reportDone[key];
+    return;
+  }
+  state.busy = true;
+  try {
+    for (const n of T.exchanges) {
+      if (!exNames().includes(n)) continue;
+      await sendReport(n).catch(e => log(`отчёт ${n} не собрался: ${e.message}`));
+    }
+    await restoreHome('после отчёта');
+  } finally {
+    state.busy = false;
+    if (state.queue.length) setImmediate(pump);
+  }
 }
 
 // Раз в сутки в назначенную минуту. Время местное - исполнитель и так
@@ -3711,6 +4247,10 @@ function snapshot() {
     queue: state.queue.length,
     consecutiveErrors: state.consecutiveErrors,
     execTimings: CFG.execTimings || [10],
+    requireKnownTag: !!CFG.requireKnownTag,
+    report: (() => { const T = tgCfg();
+      return { enabled: T.enabled, ready: !!(T.token && T.chatId), times: T.times,
+               exchanges: T.exchanges, last: state.reportLast || null }; })(),
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     humanize: CFG.humanize !== false,
     lastIdle: state.lastIdle,
@@ -3731,6 +4271,11 @@ function snapshot() {
           name: n, title: e.title, assets,
           stakes: Object.fromEntries(assets.map(a => [a, stakeFor(a, n)])),
           stakeLimits: Object.fromEntries(assets.map(a => [a, stakeMax(a, n)])),
+          // Какие минуты реально играются по каждому активу. Панель
+          // рисует их галочками: до сих пор это была единственная
+          // настройка актива, которую нельзя было увидеть, не открыв
+          // config.json.
+          assetTimings: Object.fromEntries(assets.map(a => [a, timingsFor(a, n)])),
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           stakeJitterPct: e.stakeJitterPct,
@@ -3886,6 +4431,12 @@ function applySettings(s) {
     for (const n of exNames()) {
       if (s.checkPayouts[n] == null) continue;
       const was = exCfg(n).checkPayout;
+      // Где выплата обязательна, выключить проверку нельзя ни из панели,
+      // ни запросом мимо неё: снятая галочка означала бы ставку вслепую.
+      if (exCfg(n).requirePagePayout && !s.checkPayouts[n]) {
+        log(`проверку выплаты ${exCfg(n).title} выключить нельзя: она там обязательна`);
+        continue;
+      }
       const v = !!s.checkPayouts[n];
       if (v !== was) changed.push(`проверка выплаты ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`);
       CFG.exchanges[n].checkPayout = v;
@@ -3988,6 +4539,11 @@ function applySettings(s) {
     // Сразу приводим окно в соответствие: включил - открылось, выключил -
     // осталось как есть, но больше не закроется само.
     setImmediate(() => windowBySchedule().catch(() => {}));
+  }
+  if (s.requireKnownTag != null) {
+    const v = !!s.requireKnownTag;
+    if (v !== !!CFG.requireKnownTag) changed.push('только заявленные метки ' + (v ? 'вкл' : 'выкл'));
+    CFG.requireKnownTag = v;
   }
   if (s.humanize != null) {
     CFG.humanize = !!s.humanize;
@@ -4110,6 +4666,17 @@ const server = http.createServer((req, res) => {
                                state.busy = false; if (state.queue.length) setImmediate(pump); });
       return sendJson(200, { ok: true });
     }
+    // Отчёт прямо сейчас: связку с Telegram надо чем-то проверять, не
+    // дожидаясь семи утра.
+    if (req.method === 'POST' && action === 'report-now') {
+      if (state.busy || state.queue.length) return sendJson(200, { ok: false, why: 'идёт ставка' });
+      state.busy = true;
+      sendReport(new URL(req.url, 'http://x').searchParams.get('ex') || undefined)
+        .catch(e => log('ручной отчёт упал: ' + e.message))
+        .finally(async () => { await restoreHome('после отчёта').catch(() => {});
+                               state.busy = false; if (state.queue.length) setImmediate(pump); });
+      return sendJson(200, { ok: true });
+    }
     if (req.method === 'POST' && action === 'pause')  { state.paused = true;  log('панель: пауза'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'resume') { state.paused = false; log('панель: снято с паузы'); return sendJson(200, snapshot()); }
     if (req.method === 'POST' && action === 'dry-on')  { state.dryRun = true;  log('панель: DRY-RUN включён'); return sendJson(200, snapshot()); }
@@ -4140,11 +4707,21 @@ const server = http.createServer((req, res) => {
         const asset = m.asset;
         const direction = String(m.direction).toUpperCase() === 'DOWN' ? 'DOWN' : 'UP';
         const timing = Number(m.timing) === 30 ? 30 : 10;
+        // Ручная ставка идёт мимо приёма сигналов, а значит и мимо его
+        // проверки экспирации. У акций MEXC десятиминутного события на
+        // бирже нет вовсе: такая ставка ушла бы в никуда.
+        const allow = timingsFor(asset, ex);
+        if (!allow.includes(timing)) {
+          return sendJson(400, {
+            error: `${asset} на ${exCfg(ex).title} не играется по ${timing} минутам`,
+            known: allow,
+          });
+        }
         // Сумму присылает панель. Клампим здесь, а не только в панели:
         // запрос можно отправить и мимо неё, а верхняя граница - биржевая.
         const stake = m.stake == null ? null
           : Math.round(clamp(m.stake, MANUAL_STAKE_MIN, stakeMax(asset, ex), stakeFor(asset, ex)));
-        state.queue.push({ ex, asset, direction, timing, stake, receivedAt: Date.now(),
+        enqueue({ ex, asset, direction, timing, stake, receivedAt: Date.now(),
           label: 'manual', mult: 1, burstCount: 1 });
         log(`панель: ручная ставка ${exCfg(ex).title} ${asset} ${direction} ${timing}м `
           + `на ${stake ?? stakeFor(asset, ex)} USDT`);
@@ -4478,6 +5055,45 @@ async function loginMode() {
 // ── режим diag: открыть страницу и рассказать, что на ней, без ставки ──
 // Ручной сбор: чтобы не ждать назначенного часа и увидеть, что именно
 // прочиталось из окна биржи.
+// Отправить отчёт руками: тем же путём, что и по расписанию, но сразу.
+// Панель для снимка журнала поднимаем свою же - иначе снимать нечего.
+async function reportMode(exName) {
+  const T = tgCfg();
+  const name = exName || T.exchanges[0] || defaultEx();
+  console.log(`Собираю отчёт по ${exCfg(name).title} и отправляю в Telegram. Ставки НЕ делаются.`);
+  if (!T.token || !T.chatId) {
+    console.error('\nВ config.json не заполнен раздел telegram:');
+    console.error('  "telegram": { "enabled": true, "token": "123:ABC", "chatId": "-1001234567890",');
+    console.error('                "at": ["07:10","12:10","17:10","22:10"], "exchanges": ["mexc"] }');
+    process.exit(1);
+  }
+  // Профиль браузера занят, пока исполнитель запущен, - вторым процессом
+  // к нему не подступиться. Раньше команда просто молча падала; теперь
+  // говорим прямо, что делать.
+  const port = CFG.port ?? 8787;
+  const busy = await new Promise(r => {
+    const t = require('net').createServer();
+    t.once('error', () => r(true));
+    t.once('listening', () => t.close(() => r(false)));
+    t.listen(port, '127.0.0.1');
+  });
+  if (busy) {
+    console.error(`\nНа порту ${port} уже слушает запущенный исполнитель.`);
+    console.error('Профиль браузера у него занят, и второй процесс к нему не подступится.');
+    console.error('Отправь отчёт кнопкой «Отправить сейчас» в панели - она делает то же самое,');
+    console.error(`но внутри работающего процесса: http://127.0.0.1:${port}/panel/<секрет>`);
+    console.error('Либо останови исполнитель (Ctrl+C) и повтори команду.');
+    process.exit(1);
+  }
+  const srv = server.listen(port);
+  await new Promise(r => srv.once('listening', r).once('error', r));
+  const ok = await sendReport(name);
+  await closeBrowser().catch(() => {});
+  try { server.close(); } catch (e) {}
+  console.log(ok ? '\nОтправлено.' : '\nНе отправлено - смотри строки выше.');
+  process.exit(ok ? 0 : 1);
+}
+
 async function pnlMode(exName) {
   const name = exName || defaultEx();
   console.log(`Открываю ${exCfg(name).title} и собираю сводку за вчера. Ставки НЕ делаются.`);
@@ -4627,12 +5243,133 @@ async function diagMode() {
   process.exit(0);
 }
 
-if (process.argv[2] === 'migrate') {
+// ── режим add-asset: новый инструмент в конфиг ──
+// Актив живёт сразу в четырёх местах: urls, symbols, stakes,
+// stakeLimits, и иногда в assetTimings. Сводить их руками в JSON - ровно
+// та операция, на которой уже был SPCX: адрес написали, символ забыли, и
+// полтора месяца ставки уходили на BTC. Панель тут не помощник: строки
+// она строит ПО конфигу, придумать адрес ей неоткуда.
+//
+//   node executor.js add-asset mexc MU MUSTOCK 30 30
+//                              биржа ключ символ ставка минуты
+//
+// Адрес не спрашиваем: берём его у соседнего актива этой же биржи и
+// подставляем новый символ. Так новый адрес получается той же формы, что
+// и работающие, - а форма у бирж разная (у MEXC «/BTC_USDT», у Toobit
+// «/BTC-SWAP-USDT»), и именно на ней легче всего ошибиться.
+function addAssetMode(exName, key, symbol, stake, minutes) {
+  const die = (m) => { console.error(m); process.exit(1); };
+  if (!exName || !key) {
+    die('как звать: node executor.js add-asset <биржа> <ключ> [символ] [ставка] [минуты]\n'
+      + 'пример:   node executor.js add-asset mexc MU MUSTOCK 30 30');
+  }
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const E = (raw.exchanges || {})[exName];
+  if (!E) die(`биржи «${exName}» в конфиге нет; есть: ${Object.keys(raw.exchanges || {}).join(', ')}`);
+  key = String(key).toUpperCase();
+  const sym = String(symbol || key).toUpperCase();
+  E.urls = E.urls || {};
+  if (E.urls[key]) die(`актив ${key} у биржи ${E.title || exName} уже есть: ${E.urls[key]}`);
+
+  // Образец адреса: сосед, чей символ в адресе действительно виден.
+  let sample = null, sampleSym = '';
+  for (const [k, u] of Object.entries(E.urls)) {
+    const ks = String((E.symbols || {})[k] || k).toUpperCase();
+    if (String(u).toUpperCase().includes(ks)) { sample = u; sampleSym = ks; break; }
+  }
+  if (!sample) die(`у биржи ${E.title || exName} нет ни одного адреса, с которого можно взять образец`);
+  const i = String(sample).toUpperCase().lastIndexOf(sampleSym);
+  const url = sample.slice(0, i) + sym + sample.slice(i + sampleSym.length);
+
+  E.urls[key] = url;
+  if (sym !== key) { E.symbols = E.symbols || {}; E.symbols[key] = sym; }
+  // Ставку и потолок берём у соседа, если не сказано иначе: пятёрка по
+  // умолчанию - не то, чем стоит начинать торговать молча. Из соседей
+  // берём САМОГО скромного: у MEXC потолки разъехались от 150 до 250, и
+  // новый инструмент лучше начать с меньшего - поднять его в панели
+  // проще, чем заметить, что он стоит больше задуманного.
+  const near = (o) => {
+    const v = Object.values(o || {}).map(Number).filter(Number.isFinite);
+    return v.length ? Math.min(...v) : null;
+  };
+  E.stakes = E.stakes || {};
+  E.stakes[key] = stake != null && stake !== '' ? Number(stake) : (near(E.stakes) ?? 5);
+  E.stakeLimits = E.stakeLimits || {};
+  E.stakeLimits[key] = near(E.stakeLimits) ?? 150;
+  const mins = String(minutes || '').split(/[^0-9]+/).map(Number).filter(x => x === 10 || x === 30);
+  if (mins.length) { E.assetTimings = E.assetTimings || {}; E.assetTimings[key] = mins; }
+
+  const bak = path.join(ROOT, `config.pre-${key}.json`);
+  fs.copyFileSync(CFG_PATH, bak);
+  fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  JSON.parse(fs.readFileSync(CFG_PATH, 'utf8'));   // читаем обратно: писать битый конфиг нельзя
+  console.log(`${E.title || exName}: добавлен ${key}`);
+  console.log(`  адрес   ${url}`);
+  if (sym !== key) console.log(`  символ  ${sym}`);
+  console.log(`  ставка  ${E.stakes[key]} USDT, потолок ${E.stakeLimits[key]}`);
+  console.log(`  минуты  ${mins.length ? mins.join(', ') : 'как у всей биржи'}`);
+  console.log(`  копия старого конфига: ${path.basename(bak)}`);
+  console.log(`Проверь адрес глазами и перезапусти исполнитель - актив появится и в панели.`);
+}
+
+// ── режим timings: какие экспирации у актива бывают на бирже ──
+// Это свойство инструмента, а не предпочтение, поэтому в панели оно
+// только показывается. Менять его всё равно иногда надо - например,
+// когда список однажды записали неверно, - и делать это правкой JSON
+// руками не стоит: ошибиться там легче, чем кажется.
+//
+//   node executor.js timings mexc SPCX 30     только тридцатиминутки
+//   node executor.js timings mexc BTC all     как у всей биржи
+function timingsMode(exName, key, minutes) {
+  const die = (m) => { console.error(m); process.exit(1); };
+  if (!exName || !key || !minutes) {
+    die('как звать: node executor.js timings <биржа> <актив> <минуты|all>\n'
+      + 'примеры:  node executor.js timings mexc SPCX 30\n'
+      + '          node executor.js timings mexc BTC all');
+  }
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+  const E = (raw.exchanges || {})[exName];
+  if (!E) die(`биржи «${exName}» в конфиге нет; есть: ${Object.keys(raw.exchanges || {}).join(', ')}`);
+  key = String(key).toUpperCase();
+  if (!(E.urls || {})[key]) {
+    die(`актива ${key} у биржи ${E.title || exName} нет; есть: ${Object.keys(E.urls || {}).join(', ')}`);
+  }
+  const all = (E.execTimings || raw.execTimings || [10]).map(Number);
+  E.assetTimings = E.assetTimings || {};
+  let what;
+  if (/^all$/i.test(String(minutes))) {
+    delete E.assetTimings[key];
+    what = `как у всей биржи (${all.join(', ')}м)`;
+  } else {
+    const v = all.filter(t => String(minutes).split(/[^0-9]+/).map(Number).includes(t));
+    if (!v.length) die(`из «${minutes}» ничего не выбрать: биржа играет ${all.join(', ')}м`);
+    if (v.length === all.length) { delete E.assetTimings[key]; what = `как у всей биржи (${v.join(', ')}м)`; }
+    else { E.assetTimings[key] = v; what = `только ${v.join(', ')}м`; }
+  }
+  if (!Object.keys(E.assetTimings).length) delete E.assetTimings;
+  const bak = path.join(ROOT, `config.pre-timings.json`);
+  fs.copyFileSync(CFG_PATH, bak);
+  fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  JSON.parse(fs.readFileSync(CFG_PATH, 'utf8'));   // читаем обратно: писать битый конфиг нельзя
+  console.log(`${E.title || exName} ${key}: ${what}`);
+  const now = E.assetTimings || {};
+  console.log('  сейчас у биржи: ' + Object.keys(E.urls).map(a =>
+    `${a} ${(now[a] || all).join('/')}м`).join(', '));
+  console.log(`  копия старого конфига: ${path.basename(bak)}`);
+}
+
+if (process.argv[2] === 'timings') {
+  timingsMode(process.argv[3], process.argv[4], process.argv[5]);
+} else if (process.argv[2] === 'add-asset') {
+  addAssetMode(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);
+} else if (process.argv[2] === 'migrate') {
   migrateMode();
 } else if (process.argv[2] === 'login') {
   loginMode();
 } else if (process.argv[2] === 'diag') {
   diagMode().catch(e => { console.error('diag упал:', e.message); process.exit(1); });
+} else if (process.argv[2] === 'report') {
+  reportMode(process.argv[3]).catch(e => { console.error('отчёт упал:', e.message); process.exit(1); });
 } else if (process.argv[2] === 'pnl') {
   pnlMode(process.argv[3]).catch(e => { console.error('сбор сводки упал:', e.message); process.exit(1); });
 } else {
@@ -4657,8 +5394,12 @@ if (process.argv[2] === 'migrate') {
     for (const n of exNames()) {
       const e = exCfg(n);
       const assets = Object.keys(e.urls || {});
+      // Минуты печатаем у каждого актива: список, записанный однажды
+      // неверно, тихо снимает актив с его настоящей экспирации, и по
+      // одним только суммам этого не видно.
       log(`  биржа ${e.title}${n === defaultEx() ? ' (по умолчанию)' : ''}: `
-        + `${assets.map(a => `${a} ${stakeFor(a, n)}`).join(' / ') || 'активов нет'} USDT `
+        + `${assets.map(a => `${a} ${stakeFor(a, n)} (${timingsFor(a, n).join('/') || 'нет минут!'}м)`)
+             .join(' / ') || 'активов нет'} `
         + `| выплата ${e.minPayoutStrict ? '>' : '>='} ${e.minPayout}%`
         + `${e.requirePagePayout ? ', обязательна со страницы' : ''} | слотов ${e.maxOpenBets}`);
       const tw = todayWindows(n);
@@ -4682,6 +5423,8 @@ if (process.argv[2] === 'migrate') {
     // Раз в полминуты: минута назначенного часа не должна проскочить
     // между тиками, а сама проверка стоит одно сравнение чисел.
     const pnlT = setInterval(() => pnlTick().catch(e => log('сводка не собралась: ' + e.message)), 30000);
+    const repT = setInterval(() => reportTick().catch(e => log('отчёт не собрался: ' + e.message)), 30000);
+    if (repT.unref) repT.unref();
     if (pnlT.unref) pnlT.unref();
     if (sil.unref) sil.unref();
     // Окно биржи по расписанию - тем же тиком.

@@ -3,6 +3,9 @@
   "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
   "dryRun": true,
   "defaultExchange": "mexc",
+  "priorityExchanges": [
+    "mexc"
+  ],
   "exchanges": {
     "mexc": {
       "title": "MEXC",
@@ -77,7 +80,9 @@
         "NVDA": [
           30
         ]
-      }
+      },
+      "homeAsset": "ETH",
+      "dayTz": 8
     },
     "toobit": {
       "title": "Toobit",
@@ -174,6 +179,8 @@
   "slotMarginMin": 1,
   "maxBetsPerDay": 40,
   "maxSignalAgeSec": 90,
+  "lateSec": 40,
+  "lateMaxAdversePct": 0,
   "maxConsecutiveErrors": 3,
   "signalSilenceMin": 120,
   "source": "webhook",
@@ -202,9 +209,24 @@
       "toobit"
     ]
   },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chatId": "",
+    "at": [
+      "07:10",
+      "12:10",
+      "17:10",
+      "22:10"
+    ],
+    "exchanges": [
+      "mexc"
+    ]
+  },
   "tfMemoMinutes": 90,
   "payoutSwitchMs": 3500,
   "payoutDriftPts": 5,
+  "payoutSettleMs": 3000,
   "execTimings": [
     10,
     30

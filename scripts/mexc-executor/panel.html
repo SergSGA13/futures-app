@@ -244,7 +244,8 @@
      приоритет задавался общей прозрачностью секции, отчего текст просто
      мутнел. Теперь: разделитель - световой луч, а важность выражена
      размером и цветом, не мутью. */
-  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(150px,.8fr) minmax(175px,.9fr);
+  /* Секций четыре: режим, слоты, окно биржи, отчёт. */
+  .ctl { display:grid; grid-template-columns:minmax(205px,1.05fr) minmax(165px,.9fr) minmax(170px,.9fr) minmax(180px,.95fr);
          gap:9px; padding:11px; }
   /* Каждая секция - своё окно с рамкой в собственном цвете. Линия-
      разделитель этого не давала: блоки читались как один сплошной текст. */
@@ -262,8 +263,12 @@
   .ctl-sec-slots { border-color:rgba(34,232,255,.30); }
   .ctl-sec-win   { border-color:rgba(102,163,255,.24);
                    background:radial-gradient(130% 110% at 0% 0%, rgba(102,163,255,.06), transparent 70%); }
-  .ctl-sec-man   { border-color:rgba(157,80,255,.32);
-                   background:radial-gradient(130% 110% at 0% 0%, rgba(157,80,255,.09), transparent 70%); }
+  .ctl-sec-tg    { border-color:rgba(34,232,255,.24);
+                   background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.06), transparent 70%); }
+  .ctl-sec-tg .ctl-note { margin:4px 0 0; color:#FF6B8A; }
+  .ok-t  { color:#31D0AA; }
+  .bad-t { color:#FF6B8A; }
+  .muted { color:var(--muted); }
   @media (max-width: 900px) { .ctl { grid-template-columns:1fr 1fr; } }
   @media (max-width: 540px) { .ctl { grid-template-columns:1fr; } }
 
@@ -356,10 +361,19 @@
   .ctl-dim:hover button { opacity:1; }
   .ctl-sec .row { padding:1.5px 0; }
 
+  /* Три оси фильтра в одном ряду читаются как один длинный список
+     кнопок. Тонкая черта разделяет их на группы. */
+  .log-sep { width:1px; align-self:stretch; margin:2px 3px;
+             background:linear-gradient(180deg, transparent, rgba(34,232,255,.34), transparent); }
+  #logEx { display:contents; }
   .row { display:flex; justify-content:space-between; align-items:center; padding:2.5px 0; font-size:12.5px; gap:8px; }
   .row > span:first-child { color:var(--muted); font-size:12px; }
   /* Цифры - главное содержимое панели, поэтому моноширинный набор:
      колонки не пляшут при обновлении раз в 5 секунд. */
+  /* Минуты актива стоят рядом с суммой: это одна настройка одного
+     инструмента, и разносить их по разным карточкам незачем. */
+  .asset-tf { margin-left:auto; font-size:11px; color:var(--muted);
+               font-family:var(--mono); white-space:nowrap; }
   .row > b { font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.3px;
              color:#DFF7FF; text-shadow:0 0 10px rgba(34,232,255,.25); }
 
@@ -505,23 +519,20 @@
       </div>
     </div>
 
-    <div class="ctl-sec ctl-dim ctl-sec-man">
-      <div class="ctl-h">Ручная ставка</div>
-      <div class="btns" style="margin-bottom:6px">
-        <select id="mEx" title="Биржа"></select>
-        <select id="mAsset"></select>
-        <select id="mDir"><option>UP</option><option>DOWN</option></select>
-        <select id="mTiming" title="Время экспирации"><option value="10">10м</option><option value="30">30м</option></select>
+    <!-- Отчёт в Telegram. Держим его на виду, а не в настройках: если
+         связка отвалилась, узнать об этом надо сразу, а не через сутки
+         молчания телефона. -->
+    <div class="ctl-sec ctl-dim ctl-sec-tg">
+      <div class="ctl-h">Отчёт в Telegram</div>
+      <div class="row"><span>Расписание</span><b id="tgTimes" style="font-size:11px">—</b></div>
+      <div class="row"><span>Куда</span><b id="tgWhere" style="font-size:11px">—</b></div>
+      <div class="row"><span>Последний</span><b id="tgLast" style="font-size:11px">—</b></div>
+      <div class="ctl-note" id="tgWhy" style="display:none"></div>
+      <div class="btns" style="margin-top:7px">
+        <button id="btnReport" title="Собрать два снимка и отправить в Telegram прямо сейчас">Отправить сейчас</button>
       </div>
-      <!-- Сумма отдельно от настроечной ставки: разовый заход руками чаще
-           всего отличается от той, что автомат ставит по сигналу. Границы
-           биржевые и у каждого актива свои - подставляются по выбору. -->
-      <div class="row"><span>Сумма, USDT</span>
-        <input type="number" id="mStake" min="5" step="5"></div>
-      <div class="ctl-note" id="mStakeHint" style="margin:2px 0 7px"></div>
-      <button class="go" id="btnManual"
-        title="Payout и режим проверяются как обычно. Лимиты слотов и направления ручная ставка обходит: ты нажал сам.">Поставить</button>
     </div>
+
   </div>
 
   <!-- Часы работы слева, журнал справа - оба на виду. Раньше эта пара
@@ -563,6 +574,15 @@
   <button data-f="all" class="on">Все</button>
   <button data-f="bets">Только ставки</button>
   <button data-f="errors">Ошибки</button>
+  <span class="log-sep"></span>
+  <!-- Биржи и минуты - отдельные оси: у каждой биржи свой порог выплаты и
+       свои проблемы, и смотреть их вперемешку значит не увидеть ни одной.
+       Кнопки бирж строятся по конфигу, как и всюду в панели. -->
+  <span id="logEx" class="btns"></span>
+  <span class="log-sep"></span>
+  <button data-t="all" class="on tf">Все мин</button>
+  <button data-t="10" class="tf">10м</button>
+  <button data-t="30" class="tf">30м</button>
   <span class="hint" id="logCount" style="align-self:center"></span>
   <span id="lostPill" style="display:none"></span>
   </div>
@@ -625,6 +645,12 @@
       <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
       <label class="chk"><input type="checkbox" id="priceOn">
         Проверять цену входа</label>
+      <!-- Метка потока говорит, откуда сигнал. У заявленных меток выплата
+           заметно выше: по журналу за неделю медиана 77-78% против 74-75%
+           у безымянных. Пока источник не научился ставить метку, чужой
+           поток можно просто не брать. -->
+      <label class="chk"><input type="checkbox" id="knownTag">
+        Только заявленные метки потока</label>
       <div class="note" id="stakeHint"></div>
       <button style="margin-top:10px" id="btnSaveStakes">Сохранить</button>
       </div>
@@ -681,8 +707,18 @@ const $ = id => document.getElementById(id);
 // в нём тонут, а смотрят журнал ради них и ради ошибок.
 const BET_STATUSES = ['placed', 'placed-unconfirmed', 'placed-unverified', 'dry-run'];
 const ERR_STATUSES = ['error', 'placed-unconfirmed', 'placed-unverified'];
-let logFilter = localStorage.getItem('mx_logfilter') || 'all';
-function passesFilter(st) {
+// Фильтры можно задать адресом: ?ex=mexc&f=bets&tf=10. Так снимает
+// журнал отчёт в Telegram - ему нужна одна ветка, а не всё подряд.
+// Из адреса они НЕ запоминаются: иначе открытая ради отчёта вкладка
+// меняла бы то, что ты видишь у себя.
+const Q = new URLSearchParams(location.search);
+let logFilter = Q.get('f') || localStorage.getItem('mx_logfilter') || 'all';
+let logEx = Q.get('ex') || localStorage.getItem('mx_logex') || 'all';
+let logTf = Q.get('tf') || localStorage.getItem('mx_logtf') || 'all';
+function passesFilter(b) {
+  const st = b.status;
+  if (logEx !== 'all' && b.exchange !== logEx) return false;
+  if (logTf !== 'all' && String(b.timing) !== logTf) return false;
   if (logFilter === 'bets') return BET_STATUSES.includes(st);
   if (logFilter === 'errors') return ERR_STATUSES.includes(st);
   return true;
@@ -697,14 +733,22 @@ document.getElementById('logHead').addEventListener('click', e => {
   refresh();
 });
 document.getElementById('logFilter').addEventListener('click', e => {
-  const f = e.target.dataset.f;
-  if (!f) return;
-  logFilter = f;
-  localStorage.setItem('mx_logfilter', f);
-  document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  const b = e.target;
+  if (b.dataset.f) { logFilter = b.dataset.f; localStorage.setItem('mx_logfilter', logFilter); }
+  else if (b.dataset.x) { logEx = b.dataset.x; localStorage.setItem('mx_logex', logEx); }
+  else if (b.dataset.t) { logTf = b.dataset.t; localStorage.setItem('mx_logtf', logTf); }
+  else return;
+  markLogButtons();
   refresh();
 });
-document.querySelectorAll('#logFilter button').forEach(b => b.classList.toggle('on', b.dataset.f === logFilter));
+function markLogButtons() {
+  document.querySelectorAll('#logFilter button').forEach(b => {
+    if (b.dataset.f) b.classList.toggle('on', b.dataset.f === logFilter);
+    if (b.dataset.x) b.classList.toggle('on', b.dataset.x === logEx);
+    if (b.dataset.t) b.classList.toggle('on', b.dataset.t === logTf);
+  });
+}
+markLogButtons();
 
 
 // ── свёрнутые настройки ──
@@ -932,7 +976,8 @@ const REASON_NAMES = {
   'error': 'ошибки', 'skip-quiet': 'не своя смена',
   'skip-payout': 'выплата мала', 'skip-payout-unknown': 'выплата не прочлась',
   'skip-price': 'цена хуже', 'skip-price-unknown': 'цена не прочлась',
-  'skip-payout-moved': 'выплата уехала',
+  'skip-payout-moved': 'выплата уехала', 'skip-unknown-tag': 'чужая метка',
+  'skip-modal': 'окно поверх страницы',
   'skip-expiry': 'экспирация не ясна', 'skip-redirect': 'биржа увела',
   'skip-slots': 'нет слотов', 'skip-dir-limit': 'лимит направления',
   'skip-stale': 'сигнал устарел', 'skip-market-closed': 'рынок закрыт',
@@ -1193,6 +1238,36 @@ $('btnPnlNow').onclick = async () => {
   setTimeout(async () => { await refreshPnl(); pnlBusy = false; $('btnPnlNow').disabled = false; }, 25000);
 };
 
+// Отчёт собирается секунд двадцать: браузер ходит на биржу, открывает
+// окно сводки и снимает панель. Кнопку держим выключенной всё это время -
+// второе нажатие означало бы вторую пару снимков и второе сообщение.
+let reportBusy = false;
+$('btnReport').onclick = async () => {
+  if (reportBusy) return;
+  reportBusy = true;
+  const btn = $('btnReport'), label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Собираю…';
+  $('tgLast').textContent = 'собираю снимки…';
+  try {
+    const r = await post('report-now');
+    if (r && r.ok === false) {
+      $('tgLast').textContent = 'не начал';
+      showWhy(r.why || 'исполнитель занят');
+      reportBusy = false; btn.disabled = false; btn.textContent = label;
+      return;
+    }
+  } catch (e) { /* итог покажет следующий опрос */ }
+  setTimeout(() => {
+    reportBusy = false; btn.disabled = false; btn.textContent = label;
+    refresh();
+  }, 24000);
+};
+function showWhy(t) {
+  const el = $('tgWhy');
+  el.style.display = t ? '' : 'none';
+  el.textContent = t || '';
+}
+
 // ── холостые действия ──
 const ACT_NAMES = {
   'switch-asset': 'Сменить актив (ETH ↔ BTC)',
@@ -1220,7 +1295,15 @@ function buildAssetControls(st) {
   $('stakeRows').innerHTML = exs(s).map(e =>
     (multi ? `<div class="ex-h">${e.title}</div>` : '')
     + e.assets.map(a =>
+      // Минуты у актива бывают уже общих - и это не предпочтение, а
+      // свойство инструмента: десятиминутного события по акциям MEXC на
+      // бирже нет вовсе. Поэтому подпись, а не переключатель: предлагать
+      // включить то, чего на бирже не существует, значит звать на ставку,
+      // которой некуда уйти.
       `<div class="row"><span>Ставка ${a}, USDT</span>
+        ${String(e.assetTimings[a]) !== String(e.execTimings)
+          ? `<span class="asset-tf" title="На бирже по ${a} бывают только такие события"
+              >только ${e.assetTimings[a].join('/')}м</span>` : ''}
         <input type="number" id="st_${e.name}_${a}" min="1" step="1"
           data-ex="${e.name}" data-asset="${a}"></div>`).join('')
     + `<div class="row"><span>Мин. выплата, %</span>
@@ -1230,7 +1313,11 @@ function buildAssetControls(st) {
     // Чтение выплаты со страницы стоит секунду-полторы. Если источник
     // сигналов уже отобрал их по проценту, эта секунда лишняя.
     + `<div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
-          data-ex="${e.name}"> Проверять выплату на странице</label></div>`
+          data-ex="${e.name}"${e.requirePagePayout ? ' disabled' : ''}
+          title="${e.requirePagePayout
+            ? 'На этой бирже выплату обязательно читать: сигналы приходят без неё, и без чтения ставка идёт вслепую'
+            : 'Снять, если выплату уже отобрал источник сигнала - экономит секунду-полторы'}"
+          > Проверять выплату на странице${e.requirePagePayout ? ' (обязательно)' : ''}</label></div>`
     // Порог отката: на сколько процентов цена входа может уйти против
     // сигнала. У каждой биржи свой - на разных инструментах обычное
     // движение за полминуты отличается в разы.
@@ -1260,18 +1347,17 @@ function buildAssetControls(st) {
     }
   }
 
-  $('mEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
-  $('mEx').style.display = multi ? '' : 'none';
-  // Тот же список для кнопки «Открыть»: смотреть глазами нужно и на ту
+  // Список бирж для кнопки «Открыть»: смотреть глазами нужно и на ту
   // биржу, что сейчас не в смене.
-  $('winEx').innerHTML = $('mEx').innerHTML;
+  $('winEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
   $('winEx').style.display = multi ? '' : 'none';
   winExTouched = false;
   $('commonHead').style.display = multi ? '' : 'none';
-  buildManualAssets(s);
   $('winEx').addEventListener('change', () => { winExTouched = true; });
-  $('mEx').addEventListener('change', () => { buildManualAssets(lastSettings || s); syncManualStake(lastSettings || s, true); });
-  $('mAsset').addEventListener('change', () => syncManualStake(lastSettings || s, true));
+  // Фильтр журнала по биржам: тот же список, что и всюду.
+  $('logEx').innerHTML = '<button data-x="all">Все биржи</button>'
+    + exs(s).map(e => `<button data-x="${e.name}">${e.title}</button>`).join('');
+  markLogButtons();
   $('tfBox').innerHTML = [10, 30].map(t =>
     `<label class="chk" style="display:inline-flex;margin-left:8px">
       <input type="checkbox" class="tfBox" value="${t}"> ${t}м</label>`).join('');
@@ -1279,40 +1365,8 @@ function buildAssetControls(st) {
     c.addEventListener('change', () => dirty.add('tfBox')));
 }
 
-// Активы в ручной ставке - только те, что торгуются на выбранной бирже.
-function buildManualAssets(s) {
-  const e = exBy(s, $('mEx').value);
-  if (!e) return;
-  const keep = $('mAsset').value;
-  $('mAsset').innerHTML = e.assets.map(a => `<option>${a}</option>`).join('');
-  if (e.assets.includes(keep)) $('mAsset').value = keep;
-}
-
-// Сумма ручной ставки. Значение подставляем по активу - но только когда
-// актив сменили, иначе автообновление раз в 5 секунд затирало бы то, что
-// ты набираешь прямо сейчас.
-const MSTAKE_MIN = 5;
-let mStakeAsset = null;
 // Пока биржу для окна не выбрали руками, она следует за сменой.
 let winExTouched = false;
-function syncManualStake(s, force) {
-  const a = $('mAsset').value;
-  const e = exBy(s, $('mEx').value);
-  if (!a || !e) return;
-  const max = e.stakeLimits[a] ?? 150;
-  $('mStake').max = max;
-  $('mStake').min = MSTAKE_MIN;
-  $('mStakeHint').textContent = `${MSTAKE_MIN}-${max} USDT`;
-  const tag = e.name + '|' + a;
-  if (force || tag !== mStakeAsset) {
-    mStakeAsset = tag;
-    // Стартуем от настроечной ставки актива на этой бирже.
-    $('mStake').value = Math.min(Math.max(e.stakes[a] ?? MSTAKE_MIN, MSTAKE_MIN), max);
-  } else {
-    const v = +$('mStake').value;
-    if (v > max) $('mStake').value = max;
-  }
-}
 
 let idleBuilt = false;
 function buildIdleActions(all, chosen) {
@@ -1330,7 +1384,7 @@ function buildIdleActions(all, chosen) {
 // фокуса вовсе) - и значение возвращалось бы к серверному прямо
 // из-под пальцев.
 const CARDS = {
-  stakes: ['perDay', 'priceOn'],
+  stakes: ['perDay', 'priceOn', 'knownTag'],
   dir:    ['limUp', 'limDown'],
   idle:   ['idleOn', 'humanize', 'idleFrom', 'idleTo'],
   burst:  ['burstOn', 'burstWin', 'burstMax'],
@@ -1449,7 +1503,6 @@ async function refresh() {
   $('win').title = exs(s).map(e => `${e.title}: ${e.todayWindows || 'круглосуточно'}`).join('\n');
 
   buildAssetControls(st);
-  syncManualStake(s, false);
   for (const e of exs(s)) {
     for (const a of e.assets) {
       setVal(`st_${e.name}_${a}`, e.stakes[a]);
@@ -1458,8 +1511,11 @@ async function refresh() {
     setVal(`mp_${e.name}`, e.minPayout);
     setVal(`pg_${e.name}`, (e.priceGuard || {}).maxAdversePct);
     setVal(`sj_${e.name}`, e.stakeJitterPct ?? 0);
-    setChk(`cp_${e.name}`, e.checkPayout !== false);
-    $(`mp_${e.name}`).disabled = e.checkPayout === false;
+    // Где выплата обязательна, галочка всегда стоит и не снимается:
+    // выключенная, она означала бы ставку вслепую.
+    setChk(`cp_${e.name}`, e.requirePagePayout || e.checkPayout !== false);
+    $(`cp_${e.name}`).disabled = !!e.requirePagePayout;
+    $(`mp_${e.name}`).disabled = !e.requirePagePayout && e.checkPayout === false;
     setChk(`wk_${e.name}`, (e.wake || {}).enabled);
     setVal(`wn_${e.name}`, (e.wake || {}).maxPerDay);
     $(`wn_${e.name}`).disabled = !(e.wake || {}).enabled;
@@ -1487,6 +1543,14 @@ async function refresh() {
               ? `более чем на ${(e.priceGuard || {}).maxAdversePct}%` : 'вовсе'}`
           : '');
   }).join('. ') + '.'
+    // Галочки минут в строке актива легко спутать с общими внизу -
+    // объясняем разницу ровно тогда, когда у кого-то список и правда уже.
+    + (exs(s).some(e => e.assets.some(a =>
+        String(e.assetTimings[a]) !== String(e.execTimings)))
+        ? ' Пометка «только 30м» в строке актива - свойство инструмента:'
+          + ' такого события по нему на бирже не бывает, и включить его'
+          + ' нельзя. Общий список ниже эти активы только сужает.'
+        : '')
     + ((s.priceGuard || {}).enabled !== false
         ? ' От сигнала до нажатия проходит от десяти секунд до минуты, и за это'
           + ' время цена откатывается: с проверкой вход по цене хуже сигнала'
@@ -1495,6 +1559,24 @@ async function refresh() {
         : ' Проверка цены входа выключена: ставка уйдёт по любой цене, какой бы'
           + ' откат ни случился, пока сигнал шёл до нажатия.');
   if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
+  setChk('knownTag', !!st.requireKnownTag);
+  // Когда уходит отчёт и чем кончился последний. Без этого о том, что
+  // связка с Telegram отвалилась, узнаёшь только по молчанию телефона.
+  const R = st.report || {}, L = R.last;
+  $('tgTimes').textContent = R.enabled ? (R.times || []).join(' · ')
+    : (R.ready ? 'выключено' : 'не настроено');
+  $('tgWhere').textContent = (R.exchanges || []).map(n =>
+    (exs(s).find(e => e.name === n) || {}).title || n).join(', ') || '—';
+  if (!reportBusy) {
+    $('tgLast').innerHTML = !L ? '<span class="muted">ещё не отправлялся</span>'
+      : (L.ok ? `<span class="ok-t">${fmtTime(L.at)}</span>`
+              : `<span class="bad-t">не ушёл · ${fmtTime(L.at)}</span>`);
+    showWhy(L && L.why ? L.why : '');
+  }
+  $('btnReport').disabled = reportBusy || !R.ready;
+  $('btnReport').title = R.ready
+    ? 'Собрать два снимка и отправить в Telegram прямо сейчас'
+    : 'В config.json не заполнен раздел telegram: token и chatId';
   setVal('perDay', s.maxBetsPerDay);
   setVal('limUp', s.dirLimits.UP); setVal('limDown', s.dirLimits.DOWN);
   $('dirHint').textContent =
@@ -1535,7 +1617,7 @@ async function refresh() {
 
   const tb = $('bets');
   const all = st.bets || [];
-  const rows = all.filter(b => passesFilter(b.status));
+  const rows = all.filter(passesFilter);
   // Журнал приходит от новых к старым. Сортировка нужна, чтобы собрать
   // вместе ставки одного актива или все ошибки, не листая полторы сотни
   // строк; числовые колонки сравниваем как числа, а не как текст.
@@ -1547,7 +1629,7 @@ async function refresh() {
       return r * sortDir;
     });
   }
-  $('logCount').textContent = logFilter === 'all'
+  $('logCount').textContent = (logFilter === 'all' && logEx === 'all' && logTf === 'all')
     ? `${all.length} строк`
     : `${rows.length} из ${all.length}`;
 
@@ -1557,6 +1639,8 @@ async function refresh() {
   // три подряд означают, что автоматика стоит и надо смотреть логи.
   const today = new Date().toDateString();
   const lost = all.filter(b => b.status === 'error'
+    && (logEx === 'all' || b.exchange === logEx)
+    && (logTf === 'all' || String(b.timing) === logTf)
     && new Date(b.time).toDateString() === today).length;
   const lp = $('lostPill');
   lp.style.display = lost ? '' : 'none';
@@ -1607,37 +1691,6 @@ $('btnDry').onclick = async () => {
   await post(st.dryRun ? 'dry-off' : 'dry-on');
   refresh();
 };
-// Ручная ставка обходит лимиты слотов и направления - значит второй клик
-// по кнопке это вторая ставка на реальные деньги, и ничто её не остановит.
-// Кнопку держим выключенной до ответа исполнителя.
-let manualBusy = false;
-$('btnManual').onclick = async () => {
-  if (manualBusy) return;
-  const asset = $('mAsset').value, direction = $('mDir').value, timing = +$('mTiming').value;
-  const exchange = $('mEx').value;
-  const max = +$('mStake').max || 150;
-  const stake = Math.round(Math.min(Math.max(+$('mStake').value || 0, MSTAKE_MIN), max));
-  $('mStake').value = stake;
-  const exTitle = (exBy(lastSettings || {}, exchange) || {}).title || exchange;
-  if (!confirm(`Поставить ${exTitle} ${asset} ${direction}, экспирация ${timing} минут, ${stake} USDT?`)) return;
-  manualBusy = true;
-  const btn = $('btnManual'), label = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Ставлю…';
-  try {
-    const r = await post('manual', { exchange, asset, direction, timing, stake });
-    if (r && r.error) alert('Не принято: ' + r.error);
-  } catch (e) {
-    alert('Не дошло до исполнителя: ' + e.message);
-  } finally {
-    // Исполнитель отвечает сразу, как только положил ставку в очередь -
-    // то есть за десятки миллисекунд. Разблокируй кнопку по ответу, и
-    // двойной клик всё равно даст две ставки, поэтому держим паузу.
-    setTimeout(() => {
-      manualBusy = false; btn.disabled = false; btn.textContent = label;
-    }, 2500);
-    refresh(); setTimeout(refresh, 800);
-  }
-};
 $('btnOpen').onclick = async () => {
   $('btnOpen').disabled = true;
   await post('browser-open?ex=' + encodeURIComponent($('winEx').value || ''));
@@ -1675,6 +1728,7 @@ $('btnSaveStakes').onclick = async () => {
   await post('settings', {
     stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
     priceGuard: { enabled: $('priceOn').checked },
+    requireKnownTag: $('knownTag').checked,
     maxBetsPerDay: +$('perDay').value,
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });

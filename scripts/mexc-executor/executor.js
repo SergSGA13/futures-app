@@ -853,7 +853,9 @@ async function findAmount(perTryMs) {
 // порядке - она просто накрыта. Своим же окном сводки в том числе:
 // «PNL History» у MEXC это ant-modal, и не закрывшись, оно глушит
 // торговлю до перезапуска.
-async function modalOver() {
+async function modalOver(tries) {
+  // Сорвавшееся чтение - не «окна нет». Раньше ошибка молча превращалась
+  // в пустую строку, и закрывать было якобы нечего.
   try {
     return await page.evaluate(() => {
       const sel = '.ant-modal-wrap, .ant-drawer-open, [role="dialog"], .ant-modal-mask';
@@ -873,14 +875,19 @@ async function modalOver() {
       }
       return '';
     });
-  } catch (e) { return ''; }
+  } catch (e) {
+    const left = (tries ?? 1) - 1;
+    if (left <= 0) { log('проверить окно поверх страницы не удалось: ' + e.message); return ''; }
+    await page.waitForTimeout(300);
+    return await modalOver(left);
+  }
 }
 
 // Закрыть его: сначала как человек - крестик, потом Escape, потом клик
 // мимо окна. Не поддалось - перезагружаем страницу: ставка важнее
 // сохранённого состояния вкладки.
 async function dismissModal(why) {
-  let what = await modalOver();
+  let what = await modalOver(2);
   if (!what) return false;
   log(`страницу накрыло окно (${what}) - закрываю${why ? ', ' + why : ''}`);
   const tries = [
@@ -906,13 +913,61 @@ async function dismissModal(why) {
     what = await modalOver();
     if (!what) { log('окно закрыто'); return true; }
   }
+  // Что именно висит - пишем поимённо: по этому списку сразу видно, чем
+  // окно закрывается, и селектор можно прописать в конфиг.
+  await dumpModal(what);
   log(`окно не закрылось (${what}) - перезагружаю страницу`);
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
     touchPayout('перезагрузка из-за окна');
   } catch (e) { log('перезагрузка не удалась: ' + e.message); }
-  return !(await modalOver());
+  if (!(await modalOver())) return true;
+  // Последний довод - пересоздать вкладку. Перезагрузка сохраняет
+  // состояние приложения, и окно, живущее в нём, переживает её. Закрытая
+  // и открытая заново вкладка не переживает ничего: ровно так это
+  // лечится руками кнопками «Закрыть» и «Открыть» в панели.
+  log('окно пережило перезагрузку - пересоздаю вкладку');
+  try {
+    const name = curEx().name;
+    const url = page.url();
+    await closePageOf(name);
+    page = await pageFor(name);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
+    touchPayout('новая вкладка из-за окна');
+    amountHit.delete(name);
+  } catch (e) { log('вкладку пересоздать не удалось: ' + e.message); }
+  const left = await modalOver();
+  if (!left) log('вкладка пересоздана, окна больше нет');
+  return !left;
+}
+
+// Что внутри застрявшего окна: текст и все кликабельные элементы с их
+// тегом и классом. Без этого подпись кнопки приходится угадывать.
+async function dumpModal(what) {
+  try {
+    const info = await page.evaluate(() => {
+      const vis = el => { const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0; };
+      const wrap = document.querySelector('.ant-modal-wrap, [role="dialog"], .ant-drawer-open');
+      if (!wrap) return null;
+      const out = { text: (wrap.innerText || '').replace(/\s+/g, ' ').slice(0, 400), items: [] };
+      for (const el of wrap.querySelectorAll('button, div[role=button], a, span, div')) {
+        if (!vis(el) || el.children.length > 1) continue;
+        const t = (el.innerText || '').trim();
+        if (!t || t.length > 30) continue;
+        const cls = el.className && el.className.baseVal !== undefined
+          ? el.className.baseVal : String(el.className || '');
+        out.items.push({ t, tag: el.tagName.toLowerCase(), cls: cls.slice(0, 60) });
+        if (out.items.length >= 25) break;
+      }
+      return out;
+    });
+    if (!info) return;
+    log(`ДАМП ОКНА [${what}] текст: ${JSON.stringify(info.text)}`);
+    log(`  что внутри (${info.items.length}): ${JSON.stringify(info.items)}`);
+  } catch (e) { /* дамп - дело добровольное */ }
 }
 
 // ── экран «ставка принята» ──
@@ -921,6 +976,10 @@ async function dismissModal(why) {
 // неактивное, а клик по Up/Down ничего не открывает. В логе это выглядит
 // как «locator.fill: Timeout» и «клик прошёл, но позиций как было, так и
 // осталось» - две подряд ставки после удачной первой.
+// Как биржа подписывает кнопку подтверждения. Список длиннее, чем
+// хотелось бы: у MEXC это не button, у других - другое слово.
+const CONFIRM_WORDS = /^\s*(Confirm|Confirm\s*Order|Place\s*Order|OK|Submit|Подтвердить|确认|確認)\s*$/i;
+
 async function clearAfterBet(why) {
   const re = curEx().afterBetText
     ? new RegExp(`^\\s*${curEx().afterBetText}\\s*$`, 'i')
@@ -2020,7 +2079,13 @@ async function placeBet(sig) {
     // торговли, а не одна неудачная ставка: каждый клик будет уходить в
     // него. Отказываем сразу и говорим об этом в Telegram, вместо трёх
     // попыток по пять секунд таймаута каждая и записи в «ошибки».
-    const stuck = await modalOver();
+    // Проверку в waitForPanel могло и не отработать: она молча пропускает
+    // окно, если чтение страницы сорвалось на полуслове. Поэтому здесь не
+    // просто смотрим, а ПРОБУЕМ закрыть - отказ без попытки был моей
+    // ошибкой: 6 сентября ставка отбилась через четыре миллисекунды после
+    // «панель готова», то есть не пытался никто.
+    let stuck = await modalOver();
+    if (stuck) { await dismissModal('перед ставкой').catch(() => {}); stuck = await modalOver(); }
     if (stuck) {
       log(`пропуск ${sig.asset} ${sig.direction}: страницу накрыло окно (${stuck}),`
         + ' закрыть не удалось - клики уходят в него');
@@ -2392,11 +2457,25 @@ async function placeBet(sig) {
     // ошибки, хотя на бирже она могла и открыться. Доказательство всё
     // равно одно - счётчик позиций ниже; сюда же попадает случай, когда
     // кнопка мигнула и исчезла сама.
+    // Ищем её так же, как кнопку направления: селектор, потом любая
+    // кнопка с таким текстом, потом ЛЮБОЙ элемент с таким текстом. В
+    // дампе от 6 сентября кнопок Confirm на странице не было вовсе -
+    // только Deposit, Place Another, Up и Down, - а окно подтверждения
+    // висело. Значит подтверждение там не button, и селектор из конфига
+    // его не видит: окно оставалось открытым и глушило все следующие
+    // ставки.
     if (EX.selectors.confirm) {
       try {
-        const c = page.locator(EX.selectors.confirm).first();
+        let c = page.locator(EX.selectors.confirm).first();
+        if (await c.count() === 0) {
+          c = page.locator('button, div[role=button], [class*=btn], [class*=button]')
+            .filter({ hasText: CONFIRM_WORDS }).first();
+        }
+        if (await c.count() === 0) c = page.getByText(CONFIRM_WORDS).first();
         if (await c.count() > 0 && await c.isVisible().catch(() => false)) {
           await humanClick(c, 3000);
+        } else {
+          log('окна подтверждения не видно - иду к счётчику позиций');
         }
       } catch (e) {
         log(`подтверждение не нажалось (${String(e.message).split('\n')[0]})`

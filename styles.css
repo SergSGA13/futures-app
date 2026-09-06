@@ -2780,3 +2780,26 @@ body.zones-only .app-main { bottom: 0; }
   font-style: normal; font-size: 9px; font-weight: 800; letter-spacing: .3px;
   color: #FFC178; opacity: .9;
 }
+
+/* ===== Срез «Новая система» (с июня 2026): зелёный акцент ===== */
+/* Отдельный цвет нужен, чтобы кнопка не читалась как ещё один вариант
+   ALL Periods - это другая выборка, а не другой период того же набора. */
+.stats-sub-btn.era {
+  border-color: rgba(78, 255, 160, 0.38);
+  box-shadow: 0 0 16px rgba(78, 255, 160, 0.10);
+}
+.stats-sub-icon.era {
+  background: rgba(78, 255, 160, 0.10);
+  border: 1px solid rgba(78, 255, 160, 0.32);
+  box-shadow: 0 0 14px rgba(78, 255, 160, 0.16);
+}
+.era-chip {
+  display: inline-block; vertical-align: 1px; margin-left: 6px; padding: 1px 6px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+  color: #4EFFA0; background: rgba(78, 255, 160, 0.10);
+  border: 1px solid rgba(78, 255, 160, 0.32); border-radius: 5px;
+}
+.era-summary {
+  border-color: rgba(78, 255, 160, 0.30);
+  line-height: 1.7;
+}

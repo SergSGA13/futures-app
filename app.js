@@ -46,6 +46,7 @@ const navMap = {
   'stats-l30d': 'nav-statistics',
   'stats-l30d-dev': 'nav-statistics',
   'stats-all': 'nav-statistics',
+  'stats-era': 'nav-statistics',
   'stats-mexc': 'nav-statistics',
   'zones': 'nav-home',
   'articles': 'nav-articles',
@@ -59,6 +60,7 @@ const pageTitleKeys = {
   'stats-l30d': 'title.stats.l30d',
   'stats-l30d-dev': 'title.stats.l30d.dev',
   'stats-all': 'title.stats.all',
+  'stats-era': 'title.stats.era',
   'stats-mexc': 'title.stats.mexc',
   'zones': 'title.zones',
   'article-tilt': 'title.art',
@@ -89,6 +91,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
   if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
+  if (pageId === 'stats-era')  { renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
   if (pageId === 'zones') { renderZones(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
@@ -189,7 +192,7 @@ let allSignalRows = null;
 let blockedSignalRows = null;
 let mexcSignalRows = null;
 let mexc30SignalRows = null;
-let monthlyWrChartInstance = null;
+const monthlyWrChartInstances = {};
 
 // Индексы колонок ALLsignal (0-based). Лист уже минимум дважды правили руками
 // (вставляли колонки), из-за чего результат/время/дата/индикатор уезжали
@@ -441,7 +444,7 @@ async function loadPnlL30dFromSignals(canvasId, key) {
 }
 
 // Total PNL за всё время — кумулятивная кривая из ALLsignal (модель +100 / −125)
-async function loadPnlAllFromSignals(canvasId, key, mini = false) {
+async function loadPnlAllFromSignals(canvasId, key, mini = false, sinceDk = null) {
   if (pnlChartInstances[key]) return;
   try {
     const rows = await fetchAllSignals();
@@ -459,6 +462,7 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false) {
       const y = parts[2].substring(0, 4);
       if (y.length < 4 || isNaN(parseInt(y))) continue;
       const dk = `${y}-${m}-${d}`;
+      if (sinceDk && dk < sinceDk) continue;
       if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
       if (result === 'WIN') dailyMap[dk].wins++;
       else if (result === 'LOSE') dailyMap[dk].losses++;
@@ -3090,10 +3094,10 @@ function buildAllHeatmapSection(sigs) {
 // Таблица «By Hour Zone» рядом даёт те же данные с разбивкой UP/DOWN,
 // но чтобы увидеть в ней провальные часы, надо прочитать 24 строки.
 // График с чертой безубытка отвечает на это одним взглядом.
-let hourWrChartInstance = null;
+const hourWrChartInstances = {};
 
 function renderHourWrChart(canvasId, sigs) {
-  if (hourWrChartInstance) return;
+  if (hourWrChartInstances[canvasId]) return;
   const buckets = Array.from({ length: 24 }, () => ({ w: 0, l: 0 }));
   for (const s of sigs) {
     if ((s.res !== 'WIN' && s.res !== 'LOSE') || s.hour == null) continue;
@@ -3116,7 +3120,7 @@ function renderHourWrChart(canvasId, sigs) {
   if (!ctx) return;
   const range = wrAxisRange(data.filter(v => v != null), 6, 6);
 
-  hourWrChartInstance = new Chart(ctx, {
+  hourWrChartInstances[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3, barPercentage: 0.9, categoryPercentage: 0.92 }] },
     options: {
@@ -3250,6 +3254,121 @@ async function renderAllTimeSections() {
     }
   } catch (e) {
     console.log('ALL periods sections error:', e);
+  }
+}
+
+// ===== СРЕЗ «НОВАЯ СИСТЕМА» (с июня 2026) =====
+// В июне 2026 алгоритмы подачи сигналов перестроили под новую систему, поэтому
+// более ранняя история описывает уже не ту стратегию: в общем ALL Periods она
+// размывает картину, а месяцы до июня тянут WR к старым правилам. Здесь те же
+// разрезы, что в ALL Periods, но только по ПРОТОРГОВАННЫМ сигналам (лист
+// ALLsignal, без BLOCKEDsignal) и только начиная с этой даты.
+// Границу держим одной константой - сдвинуть срез = поправить одну строку.
+const ERA_SINCE_DK = '2026-06-01';
+
+let eraRendered = false;
+
+// Отдаёт строки листа с заголовком, оставляя только сигналы от ERA_SINCE_DK.
+// Заголовок сохраняем, потому что все агрегаторы ниже читают строки с индекса 1.
+function eraFilterRows_(rows) {
+  const out = [rows[0]];
+  for (let i = 1; i < rows.length; i++) {
+    const dk = devDateKey(rows[i][COL_DATE]);
+    if (dk && dk >= ERA_SINCE_DK) out.push(rows[i]);
+  }
+  return out;
+}
+
+// PNL-модель та же, что на ALL Periods: ставка 125, выплата 0.8 -> WIN +100,
+// LOSE -125, ничья 0. Держим отдельной функцией, чтобы сводка и график не
+// разъехались, если модель когда-нибудь поменяется.
+function eraPnl_(sigs) {
+  let pnl = 0;
+  for (const s of sigs) {
+    if (s.res === 'WIN') pnl += 100;
+    else if (s.res === 'LOSE') pnl -= 125;
+  }
+  return pnl;
+}
+
+function eraRenderSummary_(sigs) {
+  const el = document.getElementById('eraSummary');
+  if (!el) return;
+  let w = 0, l = 0, draw = 0, first = null, last = null;
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++; else draw++;
+    if (!first || s.dk < first) first = s.dk;
+    if (!last || s.dk > last) last = s.dk;
+  }
+  const dec = w + l;
+  const wr = dec ? (w / dec * 100).toFixed(1) : '-';
+  const pnl = eraPnl_(sigs);
+  const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
+  // Срез идёт месяцами, поэтому в диапазоне нужен год - devFmtDk даёт только дд.мм.
+  const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
+  el.innerHTML =
+    `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><br>` +
+    `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
+    `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
+    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${pnl} USDT</b>`;
+}
+
+async function renderEraStats() {
+  if (eraRendered) return;
+  try {
+    const rows = await fetchAllSignals();
+    if (!rows || rows.length < 2) return;
+    const eraRows = eraFilterRows_(rows);
+    const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
+    if (!sigs.length) return;
+    eraRendered = true;
+
+    eraRenderSummary_(sigs);
+
+    // Графики независимы друг от друга и от таблиц: падение Chart.js не должно
+    // гасить весь срез (так уже случалось на ветке MEXC).
+    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, ERA_SINCE_DK); } catch (e) { console.log('ERA pnl error:', e); }
+    try { renderMonthlyWrChart('eraMonthlyWrChart', ERA_SINCE_DK); } catch (e) { console.log('ERA monthly error:', e); }
+    try {
+      renderDrawdownInto({
+        sigs, key: 'eraDrawdown',
+        canvasId: 'eraDrawdownChart', noteId: 'eraDrawdownNote',
+        emptyNote: t('dd.none'),
+      });
+      const ddCard = document.getElementById('eraDrawdownCard');
+      if (ddCard) ddCard.style.display = 'block';
+    } catch (e) { console.log('ERA drawdown error:', e); }
+    try { renderDowChart('eraDowChart', null, eraRows); } catch (e) { console.log('ERA dow error:', e); }
+    try {
+      renderHourWrChart('eraHourWrChart', sigs);
+      const hourCard = document.getElementById('eraHourWrCard');
+      if (hourCard) hourCard.style.display = 'block';
+    } catch (e) { console.log('ERA hour WR error:', e); }
+    try { devShowTable('eraHeatmapBlock', 'eraHeatmapCard', buildAllHeatmapSection(sigs)); } catch (e) { console.log('ERA heatmap error:', e); }
+
+    // Таблицы считаем теми же агрегаторами, что и DEV-раздел: на срезе по дате
+    // готовых агрегатов из листа ANAL нет и быть не может.
+    const pairGroups = devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
+    devShowTable('eraPairsTable', 'eraPairsCard', devBuildTable(['ETH', 'BTC'], pairGroups));
+
+    const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
+    devShowTable('eraTFTable', 'eraTFCard',
+      devBuildTable(tzOrder, devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)])));
+
+    const fiveOrder = [];
+    for (let f = 0; f < 60; f += 5) fiveOrder.push(`${f}-${f + 4}`);
+    devShowTable('era5minTable', 'era5minCard',
+      devBuildTable(fiveOrder, devAggregate(sigs, s => s.minute == null ? null : fiveOrder[Math.floor(s.minute / 5)])));
+
+    const hourOrder = [];
+    for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
+    devShowTable('eraHourTable', 'eraHourCard',
+      devBuildTable(hourOrder, devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`)));
+
+    devShowTable('eraCrossTable', 'eraCrossCard',
+      buildIndicatorTable(aggregateByIndicator(eraRows, COL_INDICATOR, null, null), MIN_SAMPLE));
+  } catch (e) {
+    console.log('ERA stats error:', e);
   }
 }
 
@@ -4092,8 +4211,10 @@ async function renderDowChart(canvasId, daysFilter, rowsOverride) {
 }
 
 // ===== MONTHLY WINRATE CHART (ALL Periods) =====
-async function renderMonthlyWrChart() {
-  if (monthlyWrChartInstance) return;
+// canvasId/sinceDk заданы, потому что тот же разрез строится и для среза
+// «с июня 2026»: график там свой, а логика ровно эта.
+async function renderMonthlyWrChart(canvasId = 'monthlyWrChart', sinceDk = null) {
+  if (monthlyWrChartInstances[canvasId]) return;
   try {
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) return;
@@ -4112,6 +4233,7 @@ async function renderMonthlyWrChart() {
       const y = parseInt(parts[2].substring(0, 4), 10);
       if (isNaN(m) || isNaN(y) || m < 1 || m > 12) continue;
       const mk = `${y}-${String(m).padStart(2, '0')}`;
+      if (sinceDk && `${mk}-${parts[0].padStart(2, '0')}` < sinceDk) continue;
       if (!monthMap[mk]) monthMap[mk] = { label: [monthNames[m - 1], `'${String(y).slice(2)}`], wins: 0, losses: 0 };
       if (result === 'WIN') { monthMap[mk].wins++; totalWins++; }
       else { monthMap[mk].losses++; totalLosses++; }
@@ -4134,7 +4256,7 @@ async function renderMonthlyWrChart() {
     const avgWr = (totalWins + totalLosses) ? parseFloat((totalWins / (totalWins + totalLosses) * 100).toFixed(1)) : 0;
     const yMin = 50, yMax = 90;
 
-    const ctx = document.getElementById('monthlyWrChart')?.getContext('2d');
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
 
     const barLabelsPlugin = {
@@ -4156,7 +4278,7 @@ async function renderMonthlyWrChart() {
       }
     };
 
-    monthlyWrChartInstance = new Chart(ctx, {
+    monthlyWrChartInstances[canvasId] = new Chart(ctx, {
       type: 'bar',
       data: {
         labels,
@@ -4733,15 +4855,16 @@ function refreshHome() {
   delete dowChartInstances['devDowChart'];
   Object.values(pnlChartInstances).forEach(c => c?.destroy());
   Object.keys(pnlChartInstances).forEach(k => delete pnlChartInstances[k]);
-  monthlyWrChartInstance?.destroy();
-  monthlyWrChartInstance = null;
+  Object.values(monthlyWrChartInstances).forEach(c => c?.destroy());
+  Object.keys(monthlyWrChartInstances).forEach(k => delete monthlyWrChartInstances[k]);
   wrDailyChartInstance?.destroy();
   wrDailyChartInstance = null;
   allTimeSectionsRendered = false;
+  eraRendered = false;
   periodCmpRendered = false;
   Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);
-  hourWrChartInstance?.destroy();
-  hourWrChartInstance = null;
+  Object.values(hourWrChartInstances).forEach(c => c?.destroy());
+  Object.keys(hourWrChartInstances).forEach(k => delete hourWrChartInstances[k]);
   // графики DEV-блока охраняются собственными флагами, поэтому общий
   // сброс кэшей обязан гасить и их - иначе останутся старые числа
   devBranchPnlChartInstance?.destroy();

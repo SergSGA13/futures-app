@@ -258,7 +258,9 @@ html, body {
 }
 .stats-pnl-mini-wrap {
   position: relative;
-  height: 118px;
+  /* Кривая ушла за 900%, и на 118px десять линий сетки слипались.
+     Высота подобрана так, чтобы между сотнями оставалось место под подпись. */
+  height: 150px;
   max-width: 100%;
 }
 .stats-pnl-mini-wrap canvas {

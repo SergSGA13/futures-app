@@ -491,7 +491,7 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
-    const gradient = ctx.createLinearGradient(0, 0, 0, mini ? 90 : 200);
+    const gradient = ctx.createLinearGradient(0, 0, 0, mini ? 120 : 200);   // высота заливки под .stats-pnl-mini-wrap
     gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
     gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
 
@@ -511,9 +511,14 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
         if (!chartArea) return;
         const maxMark = Math.floor(y.max / 100) * 100;
         if (maxMark < 100) return;
+        // Порог, после которого сетка редеет. При шаге 200 из ряда выпадают
+        // все чётные сотни, поэтому «800%» не появилось бы никогда - а на
+        // подходе к 1000% интересна именно верхушка. Держим шаг 100 до
+        // десяти линий включительно; график под это подрос по высоте.
+        const MAX_LINES = 10;
         let step = 100;
         const lineCount = maxMark / 100;
-        if (lineCount > 8) step = Math.ceil(lineCount / 8) * 100;
+        if (lineCount > MAX_LINES) step = Math.ceil(lineCount / MAX_LINES) * 100;
         // Линия, прижатая к верхнему краю, не оставляет места под свою
         // подпись. Уводить подпись вниз нельзя - она сядет на подпись
         // следующей линии (так «900%» и «700%» слипались на главной).

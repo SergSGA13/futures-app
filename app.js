@@ -511,24 +511,23 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
         if (!chartArea) return;
         const maxMark = Math.floor(y.max / 100) * 100;
         if (maxMark < 100) return;
-        // Порог, после которого сетка редеет. При шаге 200 из ряда выпадают
-        // все чётные сотни, поэтому «800%» не появилось бы никогда - а на
-        // подходе к 1000% интересна именно верхушка. Держим шаг 100 до
-        // десяти линий включительно; график под это подрос по высоте.
-        const MAX_LINES = 10;
+        // После восьми линий сетка редеет вдвое: десять подписей по 9px в
+        // мини-графике сливаются в столбик. На подходе к 1000% это даёт ряд
+        // 100/300/500/700/900 - верхняя линия при этом должна быть видна,
+        // ради неё график и подрос по высоте.
         let step = 100;
         const lineCount = maxMark / 100;
-        if (lineCount > MAX_LINES) step = Math.ceil(lineCount / MAX_LINES) * 100;
-        // Линия, прижатая к верхнему краю, не оставляет места под свою
-        // подпись. Уводить подпись вниз нельзя - она сядет на подпись
-        // следующей линии (так «900%» и «700%» слипались на главной).
-        // Поэтому такую линию просто не рисуем: это декоративная сетка
-        // выше фактических данных, терять там нечего.
+        if (lineCount > 8) step = Math.ceil(lineCount / 8) * 100;
+        // Подпись рисуется НАД линией, поэтому линии у самого верха нужно
+        // место. Меряем его до края канваса, а не до края области графика:
+        // сверху специально оставлена полоса padding под эту подпись. Раньше
+        // мерили до chartArea.top, и верхняя линия («900%» на главной)
+        // отбрасывалась, хотя место под неё было.
         const LABEL_H = 11;
         for (let v = 100; v <= maxMark; v += step) {
           if (v < y.min) continue;
           const py = y.getPixelForValue(v);
-          if (py < chartArea.top + LABEL_H || py > chartArea.bottom) continue;
+          if (py - LABEL_H < 0 || py > chartArea.bottom) continue;
           c.save();
           c.setLineDash([3, 3]);
           c.strokeStyle = 'rgba(123, 132, 176, 0.4)';
@@ -553,6 +552,9 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
       plugins: mini ? [refLinesHundreds] : [],
       options: {
         responsive: true, maintainAspectRatio: false,
+        // Полоса над областью графика - место для подписи самой верхней линии
+        // сетки. Без неё «900%» упиралось в край канваса и не рисовалось.
+        layout: mini ? { padding: { top: 12 } } : {},   // 12 = высота подписи 11px + 1px запаса
         plugins: { legend: { display: false }, tooltip: { enabled: !mini, callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
         scales: mini ? {
           x: {

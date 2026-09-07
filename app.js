@@ -5398,7 +5398,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
-const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, charts: {} };
+const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, alt: 'ALL', charts: {} };
 
 // Источники ветки: 10-минутные сигналы и 30-минутные лежат в разных листах.
 // Экспирация у них разная, поэтому по умолчанию показываем их вместе, но
@@ -5415,14 +5415,31 @@ const MEXC_SOURCES = {
 // считаться по объединённому потоку: 10- и 30-минутные ставки делят один
 // и тот же пул из 5 слотов биржи MEXC, так что фильтрация по одному листу
 // должна происходить ПОСЛЕ симуляции лимита, а не до неё.
+// Колонка тега ALT в MEXCsignal (заголовок «ALT10»). Ищем по заголовку, а не
+// по номеру: колонки этого листа уже переезжали, а фиксированный индекс
+// молча начал бы читать соседнюю колонку. На листе 30-минутных такой колонки
+// нет - тогда все его сигналы считаются без тега, и это правда: тег ставится
+// только десятиминуткам.
+function mexcAltIdx_(rows) {
+  const head = (rows && rows[0]) || [];
+  for (let i = 0; i < head.length; i++) {
+    if (/^alt/i.test(String(head[i] || '').trim())) return i;
+  }
+  return -1;
+}
+
 async function mexcStatsSignals(days) {
   const cutoff = cutoffDk(days);
   const parts = await Promise.all(Object.keys(MEXC_SOURCES).map(async k => {
     const rows = await MEXC_SOURCES[k].fetch();
     if (!rows || rows.length < 2) return [];
+    const altIdx = mexcAltIdx_(rows);
     return rows.slice(1).map(r => {
       const s = mexcParseSignal(r);
-      if (s) s.src = k;
+      if (s) {
+        s.src = k;
+        s.alt = altIdx >= 0 && /^alt/i.test(String(r[altIdx] || '').trim());
+      }
       return s;
     }).filter(s => s && s.dk >= cutoff);
   }));
@@ -5680,7 +5697,9 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
   if (src === 'ALL' || !src) {
     const n10 = sigs.filter(s => s.src === '10m').length;
     const n30 = sigs.filter(s => s.src === '30m').length;
-    srcLine = `<div class="mexc-src-line">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b></div>`;
+    const nAlt = sigs.filter(s => s.alt).length;
+    srcLine = `<div class="mexc-src-line">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b>` +
+              ` &nbsp;·&nbsp; с ALT10m: <b>${nAlt}</b></div>`;
   }
 
   // При включённом лимите слотов показываем, сколько сигналов реально
@@ -5752,6 +5771,12 @@ async function renderMexcStats() {
     // список сузится до выбранного в «Экспирации» листа - иначе 30-минутные
     // ставки перестанут занимать слоты для 10-минутных и наоборот.
     let sigs = await mexcStatsSignals(days);
+    // Тег ALT отсекаем ДО симуляции слотов: «выключить ALT» - это решение не
+    // брать такие сигналы, а значит и слотов они бы не занимали, и на их
+    // месте прошли бы другие. Экспирация ниже, наоборот, только вид на
+    // отобранное, поэтому она применяется последней.
+    if (MEXC_STATS.alt === 'NO')   sigs = sigs.filter(s => !s.alt);
+    if (MEXC_STATS.alt === 'ONLY') sigs = sigs.filter(s => s.alt);
     let slotExcluded = null;
     if (MEXC_STATS.slotFilter) {
       const before = sigs.length;
@@ -5872,6 +5897,21 @@ function initMexcStatsUI() {
       if (!src || src === MEXC_STATS.src) return;
       srcSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
       MEXC_STATS.src = src;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+
+  const altSeg = document.getElementById('mexcAltSeg');
+  if (altSeg && !altSeg.dataset.wired) {
+    altSeg.dataset.wired = '1';
+    altSeg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const mode = btn.dataset.alt;
+      if (!mode || mode === MEXC_STATS.alt) return;
+      altSeg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      MEXC_STATS.alt = mode;
       if (tg) tg.HapticFeedback?.selectionChanged();
       renderMexcStats();
     });

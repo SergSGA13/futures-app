@@ -720,6 +720,18 @@
               <button data-src="30m">30м</button>
             </div>
           </div>
+          <!-- Тег ALT10m: колонка «ALT10» листа MEXCsignal. Ставится только
+               десятиминуткам, поэтому у 30-минутных его нет никогда. -->
+          <div class="sig-head2">
+            <span class="mexc-src-lbl" data-i18n="mexc.alt">ALT10m</span>
+            <span class="sig-div"></span>
+            <div class="fs-seg compact mexc-alt-seg" id="mexcAltSeg">
+              <button class="active" data-alt="ALL" data-i18n="mexc.alt.all">Все</button>
+              <button data-alt="NO" data-i18n="mexc.alt.no">Без ALT</button>
+              <button data-alt="ONLY" data-i18n="mexc.alt.only">Только ALT</button>
+            </div>
+          </div>
+          <p class="mexc-slot-note" data-i18n="mexc.alt.note">Тег ALT10m берётся из колонки «ALT10» листа MEXCsignal и стоит только у десятиминуток. «Без ALT» отсекает такие сигналы до расчёта лимита слотов - раз мы их не берём, то и слотов они не занимают, и на их месте проходят другие.</p>
           <!-- Лимит слотов биржи: одновременно не больше 5 открытых ставок,
                10м и 30м делят один пул - переключатель просто вкл/выкл -->
           <div class="sig-head2">

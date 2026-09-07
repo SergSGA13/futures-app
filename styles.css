@@ -2830,3 +2830,15 @@ body.zones-only .app-main { bottom: 0; }
 .allp-head2 { margin-top: 4px; }
 .sig-head2 .allp-period-seg.compact button { padding: 4px 6px; font-size: 10px; letter-spacing: 0.2px; }
 .allp-summary { border-color: rgba(102, 163, 255, 0.30); line-height: 1.7; }
+
+/* Клетка тепловой карты ниже порога значимости: показываем счётчик, но не
+   винрейт - на трёх сигналах он ничего не значит. Без этого счётчика строка
+   не сходилась с итогом Σ и читалась как ошибка расчёта. */
+.dev-heatmap-table td.hm-low, .heatmap-table td.hm-low {
+  color: var(--text-muted);
+  background: rgba(123, 132, 176, 0.07);
+}
+.dev-heatmap-table td.hm-low .hm-n, .heatmap-table td.hm-low .hm-n {
+  margin-top: 0;
+  opacity: 0.85;
+}

@@ -2866,19 +2866,29 @@ function buildAllHeatmapSection(sigs) {
 
   let shown = 0;
   for (let h = 0; h < 24; h++) {
-    // час, в котором не набралось ни одной значимой клетки, строкой не рисуем -
-    // иначе карта наполовину состоит из прочерков
-    const anyData = grid[h].some(c => c.w + c.l >= ALL_HEATMAP_MIN);
-    if (!anyData) continue;
+    // Раньше строка рисовалась, только если хоть одна клетка дотягивала до
+    // порога раскраски, - иначе карта состояла из прочерков. Теперь клетки
+    // ниже порога показывают счётчик, а итог Σ порога не имеет и осмыслен
+    // сам по себе, поэтому строку даёт любой час, где сигналы вообще были.
+    // Благодаря этому карта не исчезает на коротких окнах (3M, 30D), где до
+    // 10 сигналов не дотягивает ни одна клетка суток.
+    let rowW = 0, rowL = 0;
+    for (let d = 0; d < 7; d++) { rowW += grid[h][d].w; rowL += grid[h][d].l; }
+    if (!(rowW + rowL)) continue;
     shown++;
     html += `<tr><td class="hm-day">${String(h).padStart(2, '0')}</td>`;
-    let rowW = 0, rowL = 0;
     for (let d = 0; d < 7; d++) {
       const { w, l } = grid[h][d];
       const dec = w + l;
-      rowW += w; rowL += l;
       if (dec < ALL_HEATMAP_MIN) {
-        html += '<td class="hm-empty">-</td>';
+        // Клетка ниже порога: WR по трём сигналам - шум, его не показываем,
+        // но сам счётчик оставляем. Иначе на коротком окне строка выглядела
+        // сломанной: одна клетка n=17 при итоге Σ n=26, а остальные прочерки -
+        // и непонятно, откуда взялась разница. Прочерк теперь означает ровно
+        // «сигналов не было».
+        html += dec
+          ? `<td class="hm-low"><span class="hm-n">n=${dec}</span></td>`
+          : '<td class="hm-empty">-</td>';
       } else {
         const wr = Math.round(w / dec * 100);
         html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;
@@ -2890,12 +2900,8 @@ function buildAllHeatmapSection(sigs) {
     // клеткам строки, включая слишком мелкие для раскраски: по отдельности
     // им верить рано, а в сумме они часть того же часа.
     const rowDec = rowW + rowL;
-    if (rowDec) {
-      const rowWr = Math.round(rowW / rowDec * 100);
-      html += `<td class="hm-sum" style="background:${wrRgba(rowWr)}">${rowWr}%<span class="hm-n">n=${rowDec}</span></td>`;
-    } else {
-      html += '<td class="hm-empty">-</td>';
-    }
+    const rowWr = Math.round(rowW / rowDec * 100);
+    html += `<td class="hm-sum" style="background:${wrRgba(rowWr)}">${rowWr}%<span class="hm-n">n=${rowDec}</span></td>`;
     html += '</tr>';
   }
   html += '</tbody></table></div>';
@@ -3480,7 +3486,9 @@ function devBuildHeatmapSection(sigs) {
       const { w, l } = grid[d][h];
       const dec = w + l;
       if (dec < DEV_HEATMAP_MIN) {
-        html += '<td class="hm-empty">-</td>';
+        html += dec
+          ? `<td class="hm-low"><span class="hm-n">n=${dec}</span></td>`
+          : '<td class="hm-empty">-</td>';
       } else {
         const wr = Math.round(w / dec * 100);
         html += `<td style="background:${wrRgba(wr)}">${wr}%<span class="hm-n">n=${dec}</span></td>`;

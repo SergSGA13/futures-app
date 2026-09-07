@@ -2823,3 +2823,10 @@ body.zones-only .app-main { bottom: 0; }
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11px; font-weight: 700; color: var(--text-muted);
 }
+
+/* ===== ALL Periods: переключатель окна ===== */
+/* Пять кнопок в одну строку - на узком экране им нужен шрифт помельче,
+   иначе «YEAR» переносит сегмент на вторую строку. */
+.allp-head2 { margin-top: 4px; }
+.sig-head2 .allp-period-seg.compact button { padding: 4px 6px; font-size: 10px; letter-spacing: 0.2px; }
+.allp-summary { border-color: rgba(102, 163, 255, 0.30); line-height: 1.7; }

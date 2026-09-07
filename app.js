@@ -43,7 +43,6 @@ const navMap = {
   'home': 'nav-home',
   'futures-prediction': 'nav-futures-prediction',
   'statistics': 'nav-statistics',
-  'stats-l30d': 'nav-statistics',
   'stats-l30d-dev': 'nav-statistics',
   'stats-all': 'nav-statistics',
   'stats-era': 'nav-statistics',
@@ -57,7 +56,6 @@ const pageTitleKeys = {
   'futures-strategy': 'title.fs',
   'articles': 'title.art',
   'statistics': 'title.stats',
-  'stats-l30d': 'title.stats.l30d',
   'stats-l30d-dev': 'title.stats.l30d.dev',
   'stats-all': 'title.stats.all',
   'stats-era': 'title.stats.era',
@@ -88,9 +86,8 @@ function navigate(pageId) {
   updateNav(pageId);
 
   if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
-  if (pageId === 'stats-l30d') { loadPnlL30dFromSignals('pnlChartL30d', 'l30d'); renderL30dTables(); }
   if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
-  if (pageId === 'stats-all')  { loadPnlAllFromSignals('pnlChartAll', 'allp'); renderAllTables(); renderMonthlyWrChart(); renderAllTimeSections(); }
+  if (pageId === 'stats-all')  { initAllPeriodsUI(); renderAllPeriods(); }
   if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
   if (pageId === 'zones') { renderZones(); }
@@ -375,71 +372,6 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
     });
   } catch(e) {
     console.log('PNL chart not available', e);
-  }
-}
-
-async function loadPnlL30dFromSignals(canvasId, key) {
-  if (pnlChartInstances[key]) return;
-  try {
-    const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) return;
-
-    // Build cutoff as YYYY-MM-DD string (avoids UTC vs local-midnight mismatch)
-    const now = new Date();
-    const cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-    const cutoffKey = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth()+1).padStart(2,'0')}-${String(cutoffDate.getDate()).padStart(2,'0')}`;
-
-    const dailyMap = {};
-    for (let i = 1; i < rows.length; i++) {
-      const dateStr = (rows[i][COL_DATE] || '').trim();
-      const result  = rows[i][COL_RESULT];
-      if (!dateStr) continue;
-      const parts = dateStr.split('.');
-      if (parts.length < 3) continue;
-      const d = parts[0].padStart(2,'0');
-      const m = parts[1].padStart(2,'0');
-      const y = parts[2].substring(0, 4);
-      if (y.length < 4 || isNaN(parseInt(y))) continue;
-      const dk = `${y}-${m}-${d}`;
-      if (dk < cutoffKey) continue;
-      if (!dailyMap[dk]) dailyMap[dk] = { label: `${d}.${m}`, wins: 0, losses: 0 };
-      if (result === 'WIN') dailyMap[dk].wins++;
-      else if (result === 'LOSE') dailyMap[dk].losses++;
-    }
-
-    const sortedDays = Object.keys(dailyMap).sort();
-    if (!sortedDays.length) return;
-
-    let cumPnl = 0;
-    const labels = [];
-    const pctData = [];
-    for (const dk of sortedDays) {
-      const { label, wins, losses } = dailyMap[dk];
-      cumPnl += wins * 100 - losses * 125;
-      labels.push(label);
-      pctData.push(Math.round((cumPnl / 5000) * 100));
-    }
-
-    const ctx = document.getElementById(canvasId)?.getContext('2d');
-    if (!ctx) return;
-    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, 'rgba(157, 80, 255, 0.35)');
-    gradient.addColorStop(1, 'rgba(157, 80, 255, 0.0)');
-
-    pnlChartInstances[key] = new Chart(ctx, {
-      type: 'line',
-      data: { labels, datasets: [{ data: pctData, borderColor: '#9D50FF', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
-        scales: {
-          x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-          y: { grace: '8%', ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
-        }
-      }
-    });
-  } catch(e) {
-    console.log('L30D PNL from signals error:', e);
   }
 }
 
@@ -916,19 +848,6 @@ function buildIndicatorTable(combos, minSample) {
   return `<div class="stats-table-wrap">${html}</div>` + wrLegendHtml();
 }
 
-async function renderCrossTable(targetTableId, targetCardId, daysFilter) {
-  try {
-    const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) return;
-    const html = buildIndicatorTable(aggregateByIndicator(rows, COL_INDICATOR, daysFilter), MIN_SAMPLE);
-    if (!html) return;
-    document.getElementById(targetTableId).innerHTML = html;
-    document.getElementById(targetCardId).style.display = 'block';
-  } catch (e) {
-    console.log('Indicator table error:', e);
-  }
-}
-
 // ===== ВЫВОД ПО НАПРАВЛЕНИЯМ (над таблицей пар) =====
 // Расхождение UP/DOWN — самое дорогое, что бывает в недельной статистике,
 // но в таблице оно разложено на шесть чисел и на глаз не читается.
@@ -995,128 +914,6 @@ async function renderAnalTables() {
 
   } catch(e) {
     console.log('Anal tables error:', e);
-  }
-}
-
-async function renderL30dTables() {
-  try {
-    const rows = await fetchAnalL7d();
-    if (!rows || !rows.length) return;
-
-    // By Trading Pair L30D — dataColStart=25, JS rows = python+1
-    const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
-    ], 25);
-    document.getElementById('l30dPairsTable').innerHTML = pairsHtml;
-    document.getElementById('l30dPairsCard').style.display = 'block';
-
-    // WinRate by Day of Week — L30D
-    renderDowChart('l30dDowChart', 30);
-
-    // By Time Zone L30D — dataColStart=25
-    const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
-    ], 25);
-    document.getElementById('l30dTFTable').innerHTML = tzHtml;
-    document.getElementById('l30dTFCard').style.display = 'block';
-
-    // By 5min Zone L30D — A60:H72 → rows[60-72] в JS, dataColStart=1
-    const fiveMinL30dHtml = buildAnalTableCols([
-      { label: '0-4',   row: rows[59] },
-      { label: '5-9',   row: rows[60] },
-      { label: '10-14', row: rows[61] },
-      { label: '15-19', row: rows[62] },
-      { label: '20-24', row: rows[63] },
-      { label: '25-29', row: rows[64] },
-      { label: '30-34', row: rows[65] },
-      { label: '35-39', row: rows[66] },
-      { label: '40-44', row: rows[67] },
-      { label: '45-49', row: rows[68] },
-      { label: '50-54', row: rows[69] },
-      { label: '55-59', row: rows[70] },
-      { label: 'TOTAL', row: rows[71] },
-    ], 1);
-    document.getElementById('l30d5minTable').innerHTML = fiveMinL30dHtml;
-    document.getElementById('l30d5minCard').style.display = 'block';
-
-    // By Hour Zone L30D — hourCol=24, dataColStart=25, срез rows[33..57] в JS = rows.slice(33,58)
-    const hourSlice = rows.slice(33, 58);
-    const hourHtml = buildHourTableCols(hourSlice, 24, 25);
-    if (hourHtml) {
-      document.getElementById('l30dHourTable').innerHTML = hourHtml;
-      document.getElementById('l30dHourCard').style.display = 'block';
-    }
-    // Indicator × Timeframe cross-cut — L30D
-    await renderCrossTable('l30dCrossTable', 'l30dCrossCard', 30);
-  } catch(e) {
-    console.log('L30D tables error:', e);
-  }
-}
-
-async function renderAllTables() {
-  try {
-    const rows = await fetchAnalL7d();
-    if (!rows || !rows.length) return;
-
-    // By Trading Pair ALL — L19:S22, row19=header → data at rows[16-18]
-    const pairsHtml = buildAnalTableCols([
-      { label: 'ETH',   row: rows[16] },
-      { label: 'BTC',   row: rows[17] },
-      { label: 'TOTAL', row: rows[18] },
-    ], 12);
-    document.getElementById('allPairsTable').innerHTML = pairsHtml;
-    document.getElementById('allPairsCard').style.display = 'block';
-
-    // WinRate by Day of Week — ALL Periods
-    renderDowChart('allDowChart', null);
-
-    // By Time Zone ALL — L36:S41, row36=header → data at rows[36-40]
-    const tzHtml = buildAnalTableCols([
-      { label: '0-14',  row: rows[27] },
-      { label: '15-29', row: rows[28] },
-      { label: '30-44', row: rows[29] },
-      { label: '45-59', row: rows[30] },
-      { label: 'TOTAL', row: rows[31] },
-    ], 12);
-    document.getElementById('allTFTable').innerHTML = tzHtml;
-    document.getElementById('allTFCard').style.display = 'block';
-
-    // By 5min Zone ALL — L60:S72 → rows[59-71], cols 11-17, dataColStart=12
-const fiveMinAllHtml = buildAnalTableCols([
-  { label: '0-4',   row: rows[59] },
-  { label: '5-9',   row: rows[60] },
-  { label: '10-14', row: rows[61] },
-  { label: '15-19', row: rows[62] },
-  { label: '20-24', row: rows[63] },
-  { label: '25-29', row: rows[64] },
-  { label: '30-34', row: rows[65] },
-  { label: '35-39', row: rows[66] },
-  { label: '40-44', row: rows[67] },
-  { label: '45-49', row: rows[68] },
-  { label: '50-54', row: rows[69] },
-  { label: '55-59', row: rows[70] },
-  { label: 'TOTAL', row: rows[71] },
-], 12);
-document.getElementById('all5minTable').innerHTML = fiveMinAllHtml;
-document.getElementById('all5minCard').style.display = 'block';
-
-       // ✅ By Hour Zone ALL — L34:U58 → rows[33..57], hourCol=11, dataColStart=12
-    const hourSlice = rows.slice(33, 58); // 0..24 внутри среза
-    const hourHtml = buildHourTableCols(hourSlice, 11, 12);
-    if (hourHtml) {
-      document.getElementById('allHourTable').innerHTML = hourHtml;
-      document.getElementById('allHourCard').style.display = 'block';
-    }
-    // Indicator × Timeframe cross-cut — ALL Periods
-    await renderCrossTable('allCrossTable', 'allCrossCard', null);
-  } catch(e) {
-    console.log('ALL tables error:', e);
   }
 }
 
@@ -3237,39 +3034,228 @@ async function renderPeriodComparison() {
   }
 }
 
-// ===== СБОРКА РАЗДЕЛА ALL PERIODS =====
-// Обе секции считаются из одного разбора ALLsignal, поэтому парсим один раз.
-let allTimeSectionsRendered = false;
+// ===== ОБЩИЙ РЕНДЕР СРЕЗА СТАТИСТИКИ =====
+// ALL Periods и «Новая система» показывают один и тот же набор разрезов -
+// различаются только выборкой строк, денежной моделью и id элементов. Раньше
+// ALL Periods читал готовые агрегаты из листа ANAL, но там посчитаны лишь
+// фиксированные окна (7 дней / 30 дней / всё время), а переключатель периода
+// требует произвольной отсечки по дате. Поэтому обе страницы считаются здесь
+// из сырых строк листа - теми же агрегаторами, что и DEV-раздел.
+//
+// cfg - id элементов страницы, opts - денежная модель:
+//   pnlOfRow(строка листа) для графика PNL, pnlFn(сигнал) для просадки.
 
-async function renderAllTimeSections() {
-  if (allTimeSectionsRendered) return;
-  try {
-    const rows = await fetchAllSignals();
-    if (!rows || rows.length < 2) return;
-    const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
-    if (!sigs.length) return;
-    allTimeSectionsRendered = true;
+function statsShowTable_(tableId, cardId, html) {
+  const el = document.getElementById(tableId);
+  const card = document.getElementById(cardId);
+  if (!el || !card) return;
+  el.innerHTML = html || '';
+  // Пустую карточку прячем, а не оставляем со старым содержимым: при смене
+  // периода прошлые числа читались бы как результат нового среза.
+  card.style.display = html ? 'block' : 'none';
+}
 
-    renderDrawdownInto({
-      sigs, key: 'allDrawdown',
-      canvasId: 'allDrawdownChart', noteId: 'allDrawdownNote',
-      emptyNote: t('dd.none'),
-    });
-    const ddCard = document.getElementById('allDrawdownCard');
-    if (ddCard) ddCard.style.display = 'block';
-
-    renderHourWrChart('allHourWrChart', sigs);
-    const hourCard = document.getElementById('allHourWrCard');
-    if (hourCard) hourCard.style.display = 'block';
-
-    const heatHtml = buildAllHeatmapSection(sigs);
-    if (heatHtml) {
-      document.getElementById('allHeatmapBlock').innerHTML = heatHtml;
-      document.getElementById('allHeatmapCard').style.display = 'block';
-    }
-  } catch (e) {
-    console.log('ALL periods sections error:', e);
+function statsDestroySlice_(cfg) {
+  for (const k of [cfg.pnlKey, cfg.ddKey]) {
+    if (!k) continue;
+    pnlChartInstances[k]?.destroy();
+    delete pnlChartInstances[k];
   }
+  if (cfg.monthCanvas) { monthlyWrChartInstances[cfg.monthCanvas]?.destroy(); delete monthlyWrChartInstances[cfg.monthCanvas]; }
+  if (cfg.hourWrCanvas) { hourWrChartInstances[cfg.hourWrCanvas]?.destroy(); delete hourWrChartInstances[cfg.hourWrCanvas]; }
+  if (cfg.dowCanvas) { dowChartInstances[cfg.dowCanvas]?.destroy(); delete dowChartInstances[cfg.dowCanvas]; }
+}
+
+function statsRenderSlice_(cfg, rows, sigs, opts) {
+  const o = opts || {};
+  const log = (what, e) => console.log(`${cfg.tag} ${what} error:`, e);
+
+  // Каждый блок независим: падение Chart.js или ошибка в одном разрезе не
+  // должны гасить остальную страницу (так уже случалось на ветке MEXC).
+  try { loadPnlAllFromSignals(cfg.pnlCanvas, cfg.pnlKey, false, rows, o.pnlOfRow || null); } catch (e) { log('pnl', e); }
+
+  try {
+    // На коротком окне график по месяцам вырождается в один столбец и ничего
+    // не показывает - тогда прячем карточку целиком.
+    const months = new Set(sigs.map(s => s.dk.slice(0, 7)));
+    const card = cfg.monthCard && document.getElementById(cfg.monthCard);
+    if (months.size >= 2) {
+      renderMonthlyWrChart(cfg.monthCanvas, rows);
+      if (card) card.style.display = 'block';
+    } else if (card) {
+      card.style.display = 'none';
+    }
+  } catch (e) { log('monthly', e); }
+
+  try {
+    renderDrawdownInto({
+      sigs, key: cfg.ddKey, pnlFn: o.pnlFn || null,
+      canvasId: cfg.ddCanvas, noteId: cfg.ddNote, emptyNote: t('dd.none'),
+    });
+    const card = document.getElementById(cfg.ddCard);
+    if (card) card.style.display = 'block';
+  } catch (e) { log('drawdown', e); }
+
+  try { renderDowChart(cfg.dowCanvas, null, rows); } catch (e) { log('dow', e); }
+
+  try {
+    renderHourWrChart(cfg.hourWrCanvas, sigs);
+    const card = document.getElementById(cfg.hourWrCard);
+    if (card) card.style.display = 'block';
+  } catch (e) { log('hour WR', e); }
+
+  try {
+    // Тепловая карта скрывается, если ни в одной клетке не набралось порога -
+    // при смене периода её надо гасить, а не оставлять от прошлого среза.
+    const heat = buildAllHeatmapSection(sigs);
+    const block = document.getElementById(cfg.heatBlock);
+    const card = document.getElementById(cfg.heatCard);
+    if (block) block.innerHTML = heat || '';
+    if (card) card.style.display = heat ? 'block' : 'none';
+  } catch (e) { log('heatmap', e); }
+
+  statsShowTable_(cfg.pairsTable, cfg.pairsCard,
+    devBuildTable(['ETH', 'BTC'], devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null)));
+
+  const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
+  statsShowTable_(cfg.tfTable, cfg.tfCard,
+    devBuildTable(tzOrder, devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)])));
+
+  const fiveOrder = [];
+  for (let f = 0; f < 60; f += 5) fiveOrder.push(`${f}-${f + 4}`);
+  statsShowTable_(cfg.fiveTable, cfg.fiveCard,
+    devBuildTable(fiveOrder, devAggregate(sigs, s => s.minute == null ? null : fiveOrder[Math.floor(s.minute / 5)])));
+
+  const hourOrder = [];
+  for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
+  statsShowTable_(cfg.hourTable, cfg.hourCard,
+    devBuildTable(hourOrder, devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`)));
+
+  statsShowTable_(cfg.crossTable, cfg.crossCard,
+    buildIndicatorTable(aggregateByIndicator(rows, COL_INDICATOR, null, null), MIN_SAMPLE));
+}
+
+// ===== ALL PERIODS С ПЕРЕКЛЮЧАТЕЛЕМ ПЕРИОДА =====
+// «Last 30 Days» и «ALL Periods» были отдельными страницами с одинаковым
+// набором разрезов - разница только в окне. Теперь это одна страница, а окно
+// выбирается кнопками. Данные - сигналы, поступившие в группу PRO (10m).
+// Периоды: null = вся история, остальное - число дней назад от сегодня.
+const ALLP_PERIODS = [
+  { code: 'ALL',  days: null },
+  { code: 'YEAR', days: 365 },
+  { code: '6M',   days: 182 },
+  { code: '3M',   days: 91 },
+  { code: '30D',  days: 30 },
+];
+const ALLP_STATE = { code: 'ALL' };
+let allpRowsCache = null;
+
+const ALLP_SLICE = {
+  tag: 'ALLP',
+  pnlCanvas: 'pnlChartAll', pnlKey: 'allp',
+  monthCanvas: 'monthlyWrChart', monthCard: 'allMonthCard',
+  ddCanvas: 'allDrawdownChart', ddNote: 'allDrawdownNote', ddCard: 'allDrawdownCard', ddKey: 'allDrawdown',
+  dowCanvas: 'allDowChart',
+  hourWrCanvas: 'allHourWrChart', hourWrCard: 'allHourWrCard',
+  heatBlock: 'allHeatmapBlock', heatCard: 'allHeatmapCard',
+  pairsTable: 'allPairsTable', pairsCard: 'allPairsCard',
+  tfTable: 'allTFTable', tfCard: 'allTFCard',
+  fiveTable: 'all5minTable', fiveCard: 'all5minCard',
+  hourTable: 'allHourTable', hourCard: 'allHourCard',
+  crossTable: 'allCrossTable', crossCard: 'allCrossCard',
+};
+
+async function allpFetchRows_() {
+  if (allpRowsCache) return allpRowsCache;
+  const rows = await fetchAllSignals();
+  if (!rows || rows.length < 2) return null;
+  allpRowsCache = rows;
+  return rows;
+}
+
+function allpDaysOf_(code) {
+  const p = ALLP_PERIODS.find(x => x.code === code);
+  return p ? p.days : null;
+}
+
+// Строки выбранного окна, с заголовком - агрегаторы читают с индекса 1.
+function allpRowsFor_(rows, code) {
+  const days = allpDaysOf_(code);
+  if (days == null) return rows;
+  const cutoff = cutoffDk(days);
+  const out = [rows[0]];
+  for (let i = 1; i < rows.length; i++) {
+    const dk = devDateKey(rows[i][COL_DATE]);
+    if (dk && dk >= cutoff) out.push(rows[i]);
+  }
+  return out;
+}
+
+function allpRenderSummary_(sigs, code) {
+  const el = document.getElementById('allSummary');
+  if (!el) return;
+  let w = 0, l = 0, draw = 0, first = null, last = null;
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++; else draw++;
+    if (!first || s.dk < first) first = s.dk;
+    if (!last || s.dk > last) last = s.dk;
+  }
+  const dec = w + l;
+  const wr = dec ? (w / dec * 100).toFixed(1) : '-';
+  // Модель та же, что была на обеих страницах до слияния: ставка 125,
+  // выплата 0.8, ничья - ноль.
+  const pnl = w * 100 - l * 125;
+  const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
+  const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
+  el.innerHTML =
+    `${t('allp.period')}: <b>${code}</b> · ${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><br>` +
+    `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
+    `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
+    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${pnl} USDT</b>`;
+}
+
+function allpShowEmpty_(empty) {
+  const el = document.getElementById('allEmpty');
+  if (el) el.style.display = empty ? 'block' : 'none';
+  const body = document.getElementById('allBody');
+  if (body) body.style.display = empty ? 'none' : 'block';
+}
+
+async function renderAllPeriods() {
+  try {
+    const rows = await allpFetchRows_();
+    if (!rows) return;
+    const slice = allpRowsFor_(rows, ALLP_STATE.code);
+    const sigs = slice.slice(1).map(devParseSignal).filter(Boolean);
+
+    statsDestroySlice_(ALLP_SLICE);
+    allpShowEmpty_(!sigs.length);
+    if (!sigs.length) {
+      const el = document.getElementById('allSummary');
+      if (el) el.innerHTML = '';
+      return;
+    }
+    allpRenderSummary_(sigs, ALLP_STATE.code);
+    statsRenderSlice_(ALLP_SLICE, slice, sigs);
+  } catch (e) {
+    console.log('ALL Periods error:', e);
+  }
+}
+
+function initAllPeriodsUI() {
+  const seg = document.getElementById('allPeriodSeg');
+  if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = '1';
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const code = btn.dataset.period;
+    if (!code || code === ALLP_STATE.code) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    ALLP_STATE.code = code;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    renderAllPeriods();
+  });
 }
 
 // ===== СРЕЗ «НОВАЯ СИСТЕМА» (с июня 2026) =====
@@ -3377,17 +3363,21 @@ function eraRenderSummary_(sigs, cache) {
     `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${Math.round(pnl)} USDT</b> · ${st}`;
 }
 
-// Переключение источника обязано пересобрать графики, а они защищены
-// guard-ами «уже построен» - поэтому старые экземпляры сносим явно.
-function eraDestroyCharts_() {
-  ['era', 'eraDrawdown'].forEach(k => { pnlChartInstances[k]?.destroy(); delete pnlChartInstances[k]; });
-  monthlyWrChartInstances['eraMonthlyWrChart']?.destroy();
-  delete monthlyWrChartInstances['eraMonthlyWrChart'];
-  hourWrChartInstances['eraHourWrChart']?.destroy();
-  delete hourWrChartInstances['eraHourWrChart'];
-  dowChartInstances['eraDowChart']?.destroy();
-  delete dowChartInstances['eraDowChart'];
-}
+// id элементов страницы «Новая система» для общего рендера среза.
+const ERA_SLICE = {
+  tag: 'ERA',
+  pnlCanvas: 'pnlChartEra', pnlKey: 'era',
+  monthCanvas: 'eraMonthlyWrChart', monthCard: 'eraMonthCard',
+  ddCanvas: 'eraDrawdownChart', ddNote: 'eraDrawdownNote', ddCard: 'eraDrawdownCard', ddKey: 'eraDrawdown',
+  dowCanvas: 'eraDowChart',
+  hourWrCanvas: 'eraHourWrChart', hourWrCard: 'eraHourWrCard',
+  heatBlock: 'eraHeatmapBlock', heatCard: 'eraHeatmapCard',
+  pairsTable: 'eraPairsTable', pairsCard: 'eraPairsCard',
+  tfTable: 'eraTFTable', tfCard: 'eraTFCard',
+  fiveTable: 'era5minTable', fiveCard: 'era5minCard',
+  hourTable: 'eraHourTable', hourCard: 'eraHourCard',
+  crossTable: 'eraCrossTable', crossCard: 'eraCrossCard',
+};
 
 function eraShowEmpty_(empty) {
   const el = document.getElementById('eraEmpty');
@@ -3403,7 +3393,9 @@ async function renderEraStats() {
     const eraRows = eraRowsFor_(cache, ERA_STATE.src);
     const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
 
-    eraDestroyCharts_();
+    // Смена источника или ставки обязана пересобрать графики, а они защищены
+    // guard-ами «уже построен» - поэтому старые экземпляры сносим явно.
+    statsDestroySlice_(ERA_SLICE);
     eraShowEmpty_(!sigs.length);
     if (!sigs.length) {
       const el = document.getElementById('eraSummary');
@@ -3412,56 +3404,7 @@ async function renderEraStats() {
     }
 
     eraRenderSummary_(sigs, cache);
-
-    // Графики независимы друг от друга и от таблиц: падение Chart.js не должно
-    // гасить весь срез (так уже случалось на ветке MEXC).
-    try { loadPnlAllFromSignals('pnlChartEra', 'era', false, eraRows, eraPnlRow_); } catch (e) { console.log('ERA pnl error:', e); }
-    try { renderMonthlyWrChart('eraMonthlyWrChart', eraRows); } catch (e) { console.log('ERA monthly error:', e); }
-    try {
-      renderDrawdownInto({
-        sigs, key: 'eraDrawdown', pnlFn: eraPnlSig_,
-        canvasId: 'eraDrawdownChart', noteId: 'eraDrawdownNote',
-        emptyNote: t('dd.none'),
-      });
-      const ddCard = document.getElementById('eraDrawdownCard');
-      if (ddCard) ddCard.style.display = 'block';
-    } catch (e) { console.log('ERA drawdown error:', e); }
-    try { renderDowChart('eraDowChart', null, eraRows); } catch (e) { console.log('ERA dow error:', e); }
-    try {
-      renderHourWrChart('eraHourWrChart', sigs);
-      const hourCard = document.getElementById('eraHourWrCard');
-      if (hourCard) hourCard.style.display = 'block';
-    } catch (e) { console.log('ERA hour WR error:', e); }
-    // Тепловая карта скрывается, если ни в одной клетке не набралось порога -
-    // при переключении источника её надо гасить, а не оставлять от прошлого.
-    try {
-      const heat = buildAllHeatmapSection(sigs);
-      const heatCard = document.getElementById('eraHeatmapCard');
-      document.getElementById('eraHeatmapBlock').innerHTML = heat || '';
-      if (heatCard) heatCard.style.display = heat ? 'block' : 'none';
-    } catch (e) { console.log('ERA heatmap error:', e); }
-
-    // Таблицы считаем теми же агрегаторами, что и DEV-раздел: на срезе по дате
-    // готовых агрегатов из листа ANAL нет и быть не может.
-    const pairGroups = devAggregate(sigs, s => (s.pair === 'ETH' || s.pair === 'BTC') ? s.pair : null);
-    devShowTable('eraPairsTable', 'eraPairsCard', devBuildTable(['ETH', 'BTC'], pairGroups));
-
-    const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
-    devShowTable('eraTFTable', 'eraTFCard',
-      devBuildTable(tzOrder, devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)])));
-
-    const fiveOrder = [];
-    for (let f = 0; f < 60; f += 5) fiveOrder.push(`${f}-${f + 4}`);
-    devShowTable('era5minTable', 'era5minCard',
-      devBuildTable(fiveOrder, devAggregate(sigs, s => s.minute == null ? null : fiveOrder[Math.floor(s.minute / 5)])));
-
-    const hourOrder = [];
-    for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
-    devShowTable('eraHourTable', 'eraHourCard',
-      devBuildTable(hourOrder, devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`)));
-
-    devShowTable('eraCrossTable', 'eraCrossCard',
-      buildIndicatorTable(aggregateByIndicator(eraRows, COL_INDICATOR, null, null), MIN_SAMPLE));
+    statsRenderSlice_(ERA_SLICE, eraRows, sigs, { pnlOfRow: eraPnlRow_, pnlFn: eraPnlSig_ });
   } catch (e) {
     console.log('ERA stats error:', e);
   }
@@ -4997,7 +4940,7 @@ function refreshHome() {
   Object.keys(monthlyWrChartInstances).forEach(k => delete monthlyWrChartInstances[k]);
   wrDailyChartInstance?.destroy();
   wrDailyChartInstance = null;
-  allTimeSectionsRendered = false;
+  allpRowsCache = null;
   eraRowsCache = null;
   periodCmpRendered = false;
   Object.keys(devBranchSigCache).forEach(k => delete devBranchSigCache[k]);

@@ -4017,13 +4017,15 @@ function styleIcons(f) {
 // Стиль 3 - итог смены: сначала деньги, потом как до них дошли.
 function styleResult(f) {
   const L = [];
-  L.push(`${f.pnl == null ? '📊' : (f.pnl >= 0 ? '🟢' : '🔴')} ${f.title} · смена ${f.from} → ${f.to}`);
-  L.push('━━━━━━━━━━━━━━━━━━');
+  const head = `${f.pnl == null ? '📊' : (f.pnl >= 0 ? '🟢' : '🔴')} ${f.title} · смена ${f.from} → ${f.to}`;
+  L.push(head);
+  // Черта ровно по длине заголовка: по символам, а не на глаз. Значок в
+  // начале - один символ, поэтому [...head] считает верно.
+  L.push('━'.repeat([...head].length));
   if (f.pnl != null) {
     L.push(`${f.pnl >= 0 ? '💰' : '🩸'} ${money(f.pnl)} USDT`
       + (f.contracts != null ? ` · ${f.contracts} контр.` : '')
       + (f.winRate != null ? ` · ${f.winRate}% в плюс` : ''));
-    if (f.amount != null) L.push(`   оборот ${String(f.amount).replace('.', ',')} USDT`);
     L.push('');
   }
   L.push(`📨 ${f.signals} сигналов → ✅ ${f.placed} ставок`

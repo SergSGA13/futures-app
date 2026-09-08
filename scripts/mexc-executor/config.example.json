@@ -213,6 +213,7 @@
     "enabled": false,
     "token": "",
     "chatId": "",
+    "style": 3,
     "at": [
       "07:10",
       "12:10",

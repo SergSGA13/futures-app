@@ -5038,78 +5038,133 @@ function calcResetPeriod() {
 // группы относительно безубытка. Час читаем ровно теми же колонками, что и
 // сам калькулятор, - иначе рекомендация советовала бы одно, а расчёт считал
 // по другому.
-const CALC_REC = { key: null, good: [], bad: [], flat: [], min: 0, decided: 0, days: '' };
+const CALC_REC = {
+  key: null, decided: 0,
+  hours: { good: [], bad: [], flat: [], min: 0, basis: '' },
+  days:  { good: [], bad: [], flat: [], min: 0, basis: '' },
+};
 
-// Отмеченные дни недели как множество (1=Пн … 7=Вс) - в том же виде, в каком
-// их читает сам расчёт.
+// Отмеченные дни (1=Пн … 7=Вс) и часы - в том же виде, в каком их читает расчёт.
 function calcActiveDays_() {
   const on = new Set();
   for (let d = 1; d <= 7; d++) if (document.getElementById(`calcD${d}`)?.checked) on.add(d);
   return on;
 }
+function calcActiveHours_() {
+  const on = new Set();
+  for (let h = 0; h < 24; h++) if (document.getElementById(`calcH${h}`)?.checked) on.add(h);
+  return on;
+}
+
+function calcDayNames_() {
+  return [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'),
+          t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
+}
+
+// Раскладывает выборку на корзины и делит их на три группы относительно
+// безубытка. Порог значимости привязан к объёму: на трёх месяцах и на двух
+// годах «достаточно сигналов» - это разные числа.
+function calcSplitBuckets_(buckets, decided, cap) {
+  const min = Math.min(cap, Math.max(12, Math.round(decided / buckets.length * 0.35)));
+  const good = [], bad = [], flat = [];
+  buckets.forEach((b, i) => {
+    const n = b.w + b.l;
+    if (n < min) return;
+    const wr = b.w / n * 100;
+    const item = { i, wr, n };
+    if (wr >= WR_GREEN) good.push(item);
+    else if (wr < WR_BREAKEVEN) bad.push(item);
+    else flat.push(item);
+  });
+  good.sort((x, y) => y.wr - x.wr);
+  bad.sort((x, y) => x.wr - y.wr);
+  return { good, bad, flat, min };
+}
 
 async function calcComputeRecommendations_() {
-  // Рекомендация обязана считаться по тем же дням, что отмечены в расчёте:
-  // иначе час, вытянутый выходными, попадёт в «лучшие», а расчёт пойдёт по
-  // будням - и совет разойдётся с результатом. Дни входят в ключ кэша,
-  // поэтому смена галочек пересчитывает список.
+  // Каждая ось считается при текущем выборе другой: часы - по отмеченным дням,
+  // дни - по отмеченным часам. Иначе совет расходится с расчётом: час,
+  // вытянутый выходными, попадал бы в «лучшие», а считалось бы по будням.
+  // Дни в рейтинге перебираются ВСЕ, включая снятые, - иначе снятый день
+  // никогда не смог бы вернуться в рекомендацию.
   const days = calcActiveDays_();
-  const key = [...days].sort().join(',');
+  const hours = calcActiveHours_();
+  const key = [...days].sort().join(',') + '|' + [...hours].sort((x, y) => x - y).join(',');
   if (CALC_REC.key === key) return CALC_REC;
+
   const rows = await fetchAllSignals();
   if (!rows || rows.length < 2) return CALC_REC;
   const since = new Date(+ERA_SINCE_DK.slice(0, 4), +ERA_SINCE_DK.slice(5, 7) - 1, +ERA_SINCE_DK.slice(8, 10));
-  const buckets = Array.from({ length: 24 }, () => ({ w: 0, l: 0 }));
-  let decided = 0;
+
+  const hourBuckets = Array.from({ length: 24 }, () => ({ w: 0, l: 0 }));
+  const dayBuckets  = Array.from({ length: 7 },  () => ({ w: 0, l: 0 }));
+  let decided = 0, hourDecided = 0, dayDecided = 0;
+
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const res = row[COL_RESULT] || '';
     if (res !== 'WIN' && res !== 'LOSE') continue;
     const dt = calcParseDate(row[COL_DATE]);
     if (!dt || dt < since) continue;
-    if (days.size) {
-      const raw = dt.getDay();                 // 0=Вс
-      if (!days.has(raw === 0 ? 7 : raw)) continue;
-    }
     const hour = calcExtractHour(row[COL_TIME] || row[19] || row[17]);
     if (isNaN(hour)) continue;
-    if (res === 'WIN') buckets[hour].w++; else buckets[hour].l++;
+    const raw = dt.getDay();                   // 0=Вс
+    const dow = raw === 0 ? 7 : raw;           // 1=Пн … 7=Вс
+    const win = res === 'WIN';
     decided++;
+    if (!days.size || days.has(dow)) {
+      if (win) hourBuckets[hour].w++; else hourBuckets[hour].l++;
+      hourDecided++;
+    }
+    if (!hours.size || hours.has(hour)) {
+      if (win) dayBuckets[dow - 1].w++; else dayBuckets[dow - 1].l++;
+      dayDecided++;
+    }
   }
-  // Порог значимости привязан к объёму выборки: на трёх месяцах и на двух
-  // годах «достаточно сигналов» - это разные числа.
-  const min = Math.min(40, Math.max(12, Math.round(decided / 24 * 0.35)));
-  const good = [], bad = [], flat = [];
-  for (let h = 0; h < 24; h++) {
-    const { w, l } = buckets[h];
-    const n = w + l;
-    if (n < min) continue;
-    const wr = w / n * 100;
-    const item = { h, wr, n };
-    if (wr >= WR_GREEN) good.push(item);
-    else if (wr < WR_BREAKEVEN) bad.push(item);
-    else flat.push(item);
-  }
-  good.sort((a, b) => b.wr - a.wr);
-  bad.sort((a, b) => a.wr - b.wr);
-  const dayNames = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'), t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
-  const daysTxt = days.size === 7 || !days.size ? t('calc.rec.alldays') : [...days].sort().map(d => dayNames[d - 1]).join(', ');
-  Object.assign(CALC_REC, { key, good, bad, flat, min, decided, days: daysTxt });
+
+  const names = calcDayNames_();
+  const listDays = set => (set.size === 7 || !set.size) ? t('calc.rec.alldays')
+                                                       : [...set].sort().map(d => names[d - 1]).join(', ');
+  const listHours = set => (set.size === 24 || !set.size) ? t('calc.rec.allhours')
+                                                         : `${set.size} ${t('calc.rec.hoursword')}`;
+
+  const hourSplit = calcSplitBuckets_(hourBuckets, hourDecided, 40);
+  const daySplit  = calcSplitBuckets_(dayBuckets,  dayDecided, 200);
+
+  Object.assign(CALC_REC, {
+    key, decided,
+    hours: { ...hourSplit, basis: listDays(days) },
+    days:  { ...daySplit,  basis: listHours(hours) },
+  });
   return CALC_REC;
 }
 
 function calcRecHtml_(rec) {
   if (!rec.decided) return `<div class="calc-rec-empty">${t('calc.rec.nodata')}</div>`;
-  const fmt = x => `<span class="calc-rec-h">${String(x.h).padStart(2, '0')}</span> ${Math.round(x.wr)}%<span class="calc-rec-n">n=${x.n}</span>`;
-  const parts = [];
-  parts.push(`<p class="calc-rec-line">${t('calc.rec.base')} <b>${rec.decided}</b> ${t('calc.rec.base2')} <b>${rec.min}</b>. ${t('calc.rec.days')}: <b>${rec.days}</b>.</p>`);
-  parts.push(rec.good.length
-    ? `<p class="calc-rec-line good">${t('calc.rec.good')}: ${rec.good.map(fmt).join(' · ')}</p>`
-    : `<p class="calc-rec-line">${t('calc.rec.nogood')}</p>`);
-  if (rec.bad.length) parts.push(`<p class="calc-rec-line bad">${t('calc.rec.bad')}: ${rec.bad.map(fmt).join(' · ')}</p>`);
-  if (rec.flat.length) parts.push(`<p class="calc-rec-line">${t('calc.rec.flat')}: ${rec.flat.map(x => String(x.h).padStart(2, '0')).join(', ')}.</p>`);
-  parts.push(`<p class="calc-rec-line calc-rec-warn">${t('calc.rec.warn')}</p>`);
-  return parts.join('');
+  const names = calcDayNames_();
+  const hLbl = x => String(x.i).padStart(2, '0');
+  const dLbl = x => names[x.i];
+  const fmt = lbl => x => `<span class="calc-rec-h">${lbl(x)}</span> ${Math.round(x.wr)}%<span class="calc-rec-n">n=${x.n}</span>`;
+  const p = (cls, html) => `<p class="calc-rec-line${cls ? ' ' + cls : ''}">${html}</p>`;
+
+  // Одна секция: заголовок оси, под ним основа расчёта и три группы.
+  const section = (title, basisLabel, basisValue, part, lbl, emptyKey) => {
+    const out = [p('calc-rec-hdr',
+      `${title} <span class="calc-rec-basis">(${basisLabel} ${basisValue} · ${t('calc.rec.min')} ${part.min} ${t('calc.rec.signals')})</span>`)];
+    out.push(part.good.length
+      ? p('good', `${t('calc.rec.good')}: ${part.good.map(fmt(lbl)).join(' · ')}`)
+      : p('', t(emptyKey)));
+    if (part.bad.length) out.push(p('bad', `${t('calc.rec.bad')}: ${part.bad.map(fmt(lbl)).join(' · ')}`));
+    if (part.flat.length) out.push(p('', `${t('calc.rec.flat')}: ${part.flat.map(lbl).join(', ')}.`));
+    return out.join('');
+  };
+
+  return [
+    p('', `${t('calc.rec.intro')} <b>${rec.decided}</b>.`),
+    section(t('calc.rec.hdr.hours'), t('calc.rec.basis.days'), rec.hours.basis, rec.hours, hLbl, 'calc.rec.nogood'),
+    section(t('calc.rec.hdr.days'), t('calc.rec.basis.hours'), rec.days.basis, rec.days, dLbl, 'calc.rec.nogoodday'),
+    p('calc-rec-warn', t('calc.rec.warn')),
+  ].join('');
 }
 
 async function calcToggleRec() {
@@ -5128,27 +5183,59 @@ async function calcToggleRec() {
 // Отмечает ровно рекомендованные часы и снимает остальные. Часы «около
 // безубытка» не включаем: они не портят результат, но и не улучшают его,
 // а смысл кнопки - показать, что даёт отбор по успешности.
-async function calcApplyBestHours() {
-  const btn = document.getElementById('calcRecApply');
+// Отмечает ровно рекомендованные корзины и снимает остальные. «Около
+// безубытка» не включаем: они не портят результат, но и не улучшают его, а
+// смысл кнопки - показать, что даёт отбор по успешности.
+async function calcApplyBest(axis) {
+  const btn = document.getElementById(axis === 'days' ? 'calcApplyDays' : 'calcRecApply');
   if (btn) btn.disabled = true;
+  const box = document.getElementById('calcRecBox');
   try {
     const rec = await calcComputeRecommendations_();
-    if (!rec.good.length) {
-      const box = document.getElementById('calcRecBox');
+    const part = rec[axis];
+    if (!part || !part.good.length) {
+      // Нечего применять - раскрываем текст, чтобы было видно почему.
       if (box) { box.style.display = 'block'; box.innerHTML = calcRecHtml_(rec); }
+      document.getElementById('calcRecToggle')?.classList.add('open');
       return;
     }
-    const on = new Set(rec.good.map(x => x.h));
-    for (let h = 0; h < 24; h++) {
-      const cb = document.getElementById(`calcH${h}`);
-      if (cb) cb.checked = on.has(h);
+    const on = new Set(part.good.map(x => x.i));
+    if (axis === 'days') {
+      for (let d = 1; d <= 7; d++) {
+        const cb = document.getElementById(`calcD${d}`);
+        if (cb) cb.checked = on.has(d - 1);
+      }
+    } else {
+      for (let h = 0; h < 24; h++) {
+        const cb = document.getElementById(`calcH${h}`);
+        if (cb) cb.checked = on.has(h);
+      }
     }
-    const box = document.getElementById('calcRecBox');
-    if (box && box.style.display === 'block') box.innerHTML = calcRecHtml_(rec);
+    // Выбор одной оси меняет основу расчёта для другой, поэтому список
+    // пересобираем заново, а не показываем прежний.
+    if (box && box.style.display === 'block') box.innerHTML = calcRecHtml_(await calcComputeRecommendations_());
     if (tg) tg.HapticFeedback?.impactOccurred('light');
-    document.getElementById('calcHoursGrid')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById(axis === 'days' ? 'calcDaysGrid' : 'calcHoursGrid')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+// Готовые наборы дней. «Пропустить день вовсе» - это набор «Лучшие»: он
+// снимает дни, которые держатся ниже безубытка.
+function calcSetDays(preset) {
+  if (preset === 'best') { calcApplyBest('days'); return; }
+  const sets = { all: [1,2,3,4,5,6,7], week: [1,2,3,4,5], weekend: [6,7] };
+  const on = new Set(sets[preset] || sets.all);
+  for (let d = 1; d <= 7; d++) {
+    const cb = document.getElementById(`calcD${d}`);
+    if (cb) cb.checked = on.has(d);
+  }
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  const box = document.getElementById('calcRecBox');
+  if (box && box.style.display === 'block') {
+    calcComputeRecommendations_().then(rec => { box.innerHTML = calcRecHtml_(rec); });
   }
 }
 

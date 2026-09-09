@@ -5003,6 +5003,8 @@ function initCalculator() {
     daysHtml += `<label class="calc-hour-item"><span class="calc-hour-lbl">${dayNames[d]}</span><input type="checkbox" class="calc-cb" id="calcD${d+1}" ${checked}></label>`;
   }
   daysGrid.innerHTML = daysHtml;
+  daysGrid.querySelectorAll('.calc-cb').forEach(cb => cb.addEventListener('change', calcSyncDayPresets_));
+  calcSyncDayPresets_();
 
   // Период по умолчанию - от перехода на новую систему подачи сигналов.
   // Более ранняя история описывает другую стратегию, и расчёт по ней
@@ -5178,6 +5180,7 @@ async function calcToggleRec() {
   box.innerHTML = `<div class="calc-rec-line">${t('calc.loading')}</div>`;
   const rec = await calcComputeRecommendations_();
   box.innerHTML = calcRecHtml_(rec);
+  calcSyncDayPresets_();
 }
 
 // Отмечает ровно рекомендованные часы и снимает остальные. Часы «около
@@ -5214,6 +5217,7 @@ async function calcApplyBest(axis) {
     // Выбор одной оси меняет основу расчёта для другой, поэтому список
     // пересобираем заново, а не показываем прежний.
     if (box && box.style.display === 'block') box.innerHTML = calcRecHtml_(await calcComputeRecommendations_());
+    calcSyncDayPresets_();
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     document.getElementById(axis === 'days' ? 'calcDaysGrid' : 'calcHoursGrid')
       ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -5222,16 +5226,36 @@ async function calcApplyBest(axis) {
   }
 }
 
+// Какой из наборов совпадает с текущими галочками. Без этого кнопки выглядят
+// одинаково при любом выборе, и непонятно, что сейчас включено.
+const CALC_DAY_SETS = { all: [1, 2, 3, 4, 5, 6, 7], week: [1, 2, 3, 4, 5], weekend: [6, 7] };
+
+function calcSyncDayPresets_() {
+  const host = document.getElementById('calcDayPresets');
+  if (!host) return;
+  const cur = [...calcActiveDays_()].sort().join(',');
+  // «Лучшие» подсвечиваем, только когда рекомендация уже посчитана: иначе
+  // сравнивать не с чем и кнопка светилась бы наугад.
+  const best = CALC_REC.key && CALC_REC.days.good.length
+    ? CALC_REC.days.good.map(x => x.i + 1).sort((a, b) => a - b).join(',')
+    : null;
+  host.querySelectorAll('button[data-preset]').forEach(b => {
+    const p = b.dataset.preset;
+    const want = p === 'best' ? best : (CALC_DAY_SETS[p] || []).join(',');
+    b.classList.toggle('active', want != null && want === cur);
+  });
+}
+
 // Готовые наборы дней. «Пропустить день вовсе» - это набор «Лучшие»: он
 // снимает дни, которые держатся ниже безубытка.
 function calcSetDays(preset) {
   if (preset === 'best') { calcApplyBest('days'); return; }
-  const sets = { all: [1,2,3,4,5,6,7], week: [1,2,3,4,5], weekend: [6,7] };
-  const on = new Set(sets[preset] || sets.all);
+  const on = new Set(CALC_DAY_SETS[preset] || CALC_DAY_SETS.all);
   for (let d = 1; d <= 7; d++) {
     const cb = document.getElementById(`calcD${d}`);
     if (cb) cb.checked = on.has(d);
   }
+  calcSyncDayPresets_();
   if (tg) tg.HapticFeedback?.selectionChanged();
   const box = document.getElementById('calcRecBox');
   if (box && box.style.display === 'block') {

@@ -677,11 +677,11 @@
           <div class="calc-days-wrap" id="calcDaysGrid"></div>
           <!-- Готовые наборы дней. «Лучшие» снимает дни ниже безубытка -
                это и есть «пропустить день вовсе». -->
-          <div class="calc-day-presets">
-            <button onclick="calcSetDays('all')" data-i18n="calc.days.all">Все</button>
-            <button onclick="calcSetDays('week')" data-i18n="calc.days.week">Будни</button>
-            <button onclick="calcSetDays('weekend')" data-i18n="calc.days.weekend">Выходные</button>
-            <button class="best" onclick="calcSetDays('best')" data-i18n="calc.days.best">Лучшие</button>
+          <div class="calc-day-presets" id="calcDayPresets">
+            <button data-preset="all" onclick="calcSetDays('all')" data-i18n="calc.days.all">Все</button>
+            <button data-preset="week" onclick="calcSetDays('week')" data-i18n="calc.days.week">Будни</button>
+            <button data-preset="weekend" onclick="calcSetDays('weekend')" data-i18n="calc.days.weekend">Выходные</button>
+            <button data-preset="best" onclick="calcSetDays('best')" data-i18n="calc.days.best">Лучшие</button>
           </div>
 
           <!-- Рекомендация по часам: текст раскрывается по кнопке, вторая

@@ -2842,3 +2842,35 @@ body.zones-only .app-main { bottom: 0; }
   margin-top: 0;
   opacity: 0.85;
 }
+
+/* ===== Калькулятор: рекомендации по часам ===== */
+.calc-rec { margin-top: 14px; }
+.calc-rec-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.calc-rec-toggle, .calc-rec-apply {
+  flex: 1 1 auto;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 10px;
+  font-size: 11.5px; font-weight: 700;
+  border-radius: 10px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--card-border); color: var(--text-muted);
+}
+.calc-rec-toggle svg { transition: transform .18s ease; }
+.calc-rec-toggle.open svg { transform: rotate(180deg); }
+.calc-rec-apply {
+  color: #4EFFA0;
+  border-color: rgba(78, 255, 160, 0.35);
+  background: rgba(78, 255, 160, 0.08);
+}
+.calc-rec-apply:disabled { opacity: .5; cursor: default; }
+.calc-rec-box {
+  margin-top: 8px; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--card-border); border-radius: var(--radius);
+}
+.calc-rec-line { font-size: 11.5px; line-height: 1.6; color: var(--text-muted); margin: 0 0 6px; }
+.calc-rec-line:last-child { margin-bottom: 0; }
+.calc-rec-line.good .calc-rec-h { color: #4EFFA0; }
+.calc-rec-line.bad .calc-rec-h { color: #FF5272; }
+.calc-rec-h { font-weight: 800; color: var(--text); }
+.calc-rec-n { font-size: 9.5px; opacity: .7; margin-left: 3px; }
+.calc-rec-warn { opacity: .75; font-style: italic; }
+.calc-rec-empty { font-size: 11.5px; color: var(--text-muted); }

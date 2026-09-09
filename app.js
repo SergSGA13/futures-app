@@ -5004,17 +5004,10 @@ function initCalculator() {
   }
   daysGrid.innerHTML = daysHtml;
 
-  // Init date pickers — default: empty (all periods)
-  const dateFrom = document.getElementById('calcDateFrom');
-  const dateTo   = document.getElementById('calcDateTo');
-  if (dateFrom && dateTo) {
-    // Set max to today
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    dateFrom.max = todayStr;
-    dateTo.max   = todayStr;
-    dateTo.value = todayStr;
-  }
+  // Период по умолчанию - от перехода на новую систему подачи сигналов.
+  // Более ранняя история описывает другую стратегию, и расчёт по ней
+  // отвечал бы на вопрос про алгоритмы, которых уже нет.
+  calcResetPeriod();
 
   // Direction toggle buttons — default ALL
   document.querySelectorAll('.calc-dir-btn').forEach(btn => {
@@ -5023,6 +5016,120 @@ function initCalculator() {
       btn.classList.add('active');
     });
   });
+}
+
+// Сброс периода: «С» - начало новой системы (та же константа, что у среза
+// «Новая система», чтобы даты не разъехались), «По» - сегодня.
+function calcResetPeriod() {
+  const dateFrom = document.getElementById('calcDateFrom');
+  const dateTo   = document.getElementById('calcDateTo');
+  if (!dateFrom || !dateTo) return;
+  const todayStr = new Date().toISOString().split('T')[0];
+  dateFrom.max = todayStr;
+  dateTo.max   = todayStr;
+  dateFrom.value = ERA_SINCE_DK;
+  dateTo.value   = todayStr;
+}
+
+// ===== РЕКОМЕНДАЦИЯ ПО ЧАСАМ =====
+// Калькулятор позволяет отметить любые часы, но какие именно отмечать - из
+// него не видно. Считаем винрейт по часам на той же выборке, что стоит в
+// периоде по умолчанию (с перехода на новую систему), и делим часы на три
+// группы относительно безубытка. Час читаем ровно теми же колонками, что и
+// сам калькулятор, - иначе рекомендация советовала бы одно, а расчёт считал
+// по другому.
+const CALC_REC = { loaded: false, good: [], bad: [], flat: [], min: 0, decided: 0 };
+
+async function calcComputeRecommendations_() {
+  if (CALC_REC.loaded) return CALC_REC;
+  const rows = await fetchAllSignals();
+  if (!rows || rows.length < 2) return CALC_REC;
+  const since = new Date(+ERA_SINCE_DK.slice(0, 4), +ERA_SINCE_DK.slice(5, 7) - 1, +ERA_SINCE_DK.slice(8, 10));
+  const buckets = Array.from({ length: 24 }, () => ({ w: 0, l: 0 }));
+  let decided = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const res = row[COL_RESULT] || '';
+    if (res !== 'WIN' && res !== 'LOSE') continue;
+    const dt = calcParseDate(row[COL_DATE]);
+    if (!dt || dt < since) continue;
+    const hour = calcExtractHour(row[19] || row[COL_TIME] || row[17]);
+    if (isNaN(hour)) continue;
+    if (res === 'WIN') buckets[hour].w++; else buckets[hour].l++;
+    decided++;
+  }
+  // Порог значимости привязан к объёму выборки: на трёх месяцах и на двух
+  // годах «достаточно сигналов» - это разные числа.
+  const min = Math.min(40, Math.max(12, Math.round(decided / 24 * 0.35)));
+  const good = [], bad = [], flat = [];
+  for (let h = 0; h < 24; h++) {
+    const { w, l } = buckets[h];
+    const n = w + l;
+    if (n < min) continue;
+    const wr = w / n * 100;
+    const item = { h, wr, n };
+    if (wr >= WR_GREEN) good.push(item);
+    else if (wr < WR_BREAKEVEN) bad.push(item);
+    else flat.push(item);
+  }
+  good.sort((a, b) => b.wr - a.wr);
+  bad.sort((a, b) => a.wr - b.wr);
+  Object.assign(CALC_REC, { loaded: true, good, bad, flat, min, decided });
+  return CALC_REC;
+}
+
+function calcRecHtml_(rec) {
+  if (!rec.decided) return `<div class="calc-rec-empty">${t('calc.rec.nodata')}</div>`;
+  const fmt = x => `<span class="calc-rec-h">${String(x.h).padStart(2, '0')}</span> ${Math.round(x.wr)}%<span class="calc-rec-n">n=${x.n}</span>`;
+  const parts = [];
+  parts.push(`<p class="calc-rec-line">${t('calc.rec.base')} <b>${rec.decided}</b> ${t('calc.rec.base2')} <b>${rec.min}</b>.</p>`);
+  parts.push(rec.good.length
+    ? `<p class="calc-rec-line good">${t('calc.rec.good')}: ${rec.good.map(fmt).join(' · ')}</p>`
+    : `<p class="calc-rec-line">${t('calc.rec.nogood')}</p>`);
+  if (rec.bad.length) parts.push(`<p class="calc-rec-line bad">${t('calc.rec.bad')}: ${rec.bad.map(fmt).join(' · ')}</p>`);
+  if (rec.flat.length) parts.push(`<p class="calc-rec-line">${t('calc.rec.flat')}: ${rec.flat.map(x => String(x.h).padStart(2, '0')).join(', ')}.</p>`);
+  parts.push(`<p class="calc-rec-line calc-rec-warn">${t('calc.rec.warn')}</p>`);
+  return parts.join('');
+}
+
+async function calcToggleRec() {
+  const box = document.getElementById('calcRecBox');
+  const btn = document.getElementById('calcRecToggle');
+  if (!box || !btn) return;
+  const open = box.style.display !== 'none' && box.style.display !== '';
+  if (open) { box.style.display = 'none'; btn.classList.remove('open'); return; }
+  box.style.display = 'block';
+  btn.classList.add('open');
+  if (!CALC_REC.loaded) {
+    box.innerHTML = `<div class="calc-rec-line">${t('calc.loading')}</div>`;
+    const rec = await calcComputeRecommendations_();
+    box.innerHTML = calcRecHtml_(rec);
+  }
+}
+
+// Отмечает ровно рекомендованные часы и снимает остальные. Часы «около
+// безубытка» не включаем: они не портят результат, но и не улучшают его,
+// а смысл кнопки - показать, что даёт отбор по успешности.
+async function calcApplyBestHours() {
+  const btn = document.getElementById('calcRecApply');
+  if (btn) btn.disabled = true;
+  try {
+    const rec = await calcComputeRecommendations_();
+    if (!rec.good.length) {
+      const box = document.getElementById('calcRecBox');
+      if (box) { box.style.display = 'block'; box.innerHTML = calcRecHtml_(rec); }
+      return;
+    }
+    const on = new Set(rec.good.map(x => x.h));
+    for (let h = 0; h < 24; h++) {
+      const cb = document.getElementById(`calcH${h}`);
+      if (cb) cb.checked = on.has(h);
+    }
+    if (tg) tg.HapticFeedback?.impactOccurred('light');
+    document.getElementById('calcHoursGrid')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function calcExtractHour(val) {

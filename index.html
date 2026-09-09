@@ -645,7 +645,7 @@
               <label class="calc-period-label" data-i18n="calc.period.to">По</label>
               <input type="date" id="calcDateTo" class="calc-date-input" />
             </div>
-            <button class="calc-period-reset" onclick="document.getElementById('calcDateFrom').value='';document.getElementById('calcDateTo').value=new Date().toISOString().split('T')[0]" title="Сбросить период">
+            <button class="calc-period-reset" onclick="calcResetPeriod()" title="Сбросить период">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.36-3.36L23 10M1 14l5.13 4.36A9 9 0 0020.49 15"/></svg>
             </button>
           </div>
@@ -675,6 +675,19 @@
 
           <div class="calc-section-hdr" style="margin-top:12px" data-i18n="calc.days">Активные дни</div>
           <div class="calc-days-wrap" id="calcDaysGrid"></div>
+
+          <!-- Рекомендация по часам: текст раскрывается по кнопке, вторая
+               кнопка сразу расставляет галочки по лучшим часам. -->
+          <div class="calc-rec">
+            <div class="calc-rec-btns">
+              <button class="calc-rec-toggle" id="calcRecToggle" onclick="calcToggleRec()">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><polyline points="6 9 12 15 18 9"/></svg>
+                <span data-i18n="calc.rec.toggle">Рекомендации по часам</span>
+              </button>
+              <button class="calc-rec-apply" id="calcRecApply" onclick="calcApplyBestHours()" data-i18n="calc.rec.apply">Включить лучшие часы</button>
+            </div>
+            <div class="calc-rec-box" id="calcRecBox" style="display:none"></div>
+          </div>
 
           <button class="calc-run-btn" id="calcRunBtn" onclick="runCalculator()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg>

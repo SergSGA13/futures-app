@@ -3905,36 +3905,148 @@ function exDayStart(name) {
 
 // Подпись к отчёту: то же, что видно на снимке, но словами - в ленте
 // подпись читается раньше картинки.
-function reportCaption(exName, nums) {
+// Причины отказов по-человечески: «skip-slots 5» в ленте телефона ничего
+// не объясняет, а «нет свободных слотов — 5» объясняет.
+const SKIP_NAMES = {
+  'skip-quiet': 'биржа вне смены', 'skip-slots': 'нет свободных слотов',
+  'skip-payout': 'выплата ниже порога', 'skip-payout-unknown': 'выплату не прочитал',
+  'skip-payout-moved': 'выплата уехала перед нажатием',
+  'skip-price': 'цена ушла против сигнала', 'skip-price-unknown': 'цену не прочитал',
+  'skip-expiry': 'не убедился в экспирации', 'skip-timeframe': 'экспирация не переключилась',
+  'skip-redirect': 'биржа увела на чужой актив', 'skip-modal': 'окно поверх страницы',
+  'skip-dir-limit': 'предел ставок в одну сторону', 'skip-stale': 'сигнал устарел',
+  'skip-market-closed': 'рынок закрыт', 'skip-unknown-tag': 'чужая метка потока',
+  'skip-quiet-wake': 'вне смены, пробуждений не осталось',
+  'error': 'ошибка страницы', 'test-mode': 'тестовый режим',
+};
+const SKIP_ICONS = {
+  'skip-quiet': '🌙', 'skip-slots': '🔒', 'skip-payout': '📉',
+  'skip-payout-unknown': '❔', 'skip-payout-moved': '📉',
+  'skip-price': '💱', 'skip-price-unknown': '❔',
+  'skip-expiry': '⏱', 'skip-timeframe': '⏱', 'skip-redirect': '↩️',
+  'skip-modal': '🪟', 'skip-dir-limit': '⚖️', 'skip-stale': '🕐',
+  'skip-market-closed': '🚪', 'skip-unknown-tag': '🏷', 'error': '❗',
+};
+const skipName = k => SKIP_NAMES[k] || k;
+
+// Что попадёт в подпись: числа отдельно, оформление отдельно. Так три
+// стиля не расходятся в смысле - меняется только вид.
+function reportFacts(exName, nums) {
   const E = exCfg(exName);
   const since = exDayStart(exName);
-  const rows = recentBets(400).filter(b =>
-    b.exchange === exName && new Date(b.time).getTime() >= since);
+  const now = Date.now();
+  const all = recentBets(600).filter(b => b.exchange === exName);
+  const rows = all.filter(b => new Date(b.time).getTime() >= since);
+  const isBet = st => /^placed|^dry-run/.test(st);
   const n = st => rows.filter(b => b.status === st).length;
-  // «Без подтверждения» - это ставка, после которой счётчик открытых
-  // позиций не вырос. Считать её просто открытой нельзя: именно из этих
-  // строк и берутся расхождения с биржей.
   const unconf = n('placed-unconfirmed') + n('placed-unverified');
-  const placed = n('placed') + n('dry-run') + unconf;
+  const placed = rows.filter(b => isBet(b.status)).length;
+  // Биржа считает контракт по расчёту, а не по открытию: ставка,
+  // открытая до 18:00 и рассчитанная после, попадает в её «Today», но не
+  // в наше окно. Отсюда бралось «на бирже больше на 1 - были ставки
+  // руками», хотя руками никто ничего не делал. Для сверки берём ставки,
+  // ЗАКРЫВШИЕСЯ после начала смены.
+  const settled = all.filter(b => isBet(b.status)
+    && new Date(b.time).getTime() + (Number(b.timing) || 10) * 60000 >= since
+    && new Date(b.time).getTime() <= now);
+  const edge = settled.length - placed;      // сколько пришло с прошлой смены
   const by = {};
-  for (const b of rows) if (!/^placed|^dry-run/.test(b.status)) by[b.status] = (by[b.status] || 0) + 1;
-  const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 4)
-    .map(([k, v]) => `${k} ${v}`).join(', ');
-  // Сколько ставок биржа насчитала САМА - число из того же окна, что и
-  // на втором снимке. Журнал знает, сколько мы нажали; расходятся они
-  // ровно на потерянные ставки, и молчать об этом нельзя.
+  for (const b of rows) if (!isBet(b.status)) by[b.status] = (by[b.status] || 0) + 1;
+  const skips = Object.entries(by).sort((a, b) => b[1] - a[1]);
   const real = nums && Number.isFinite(nums.contracts) ? nums.contracts : null;
-  const lost = real != null && !state.dryRun ? placed - real : 0;
+  const lost = real != null && !state.dryRun ? settled.length - real : 0;
   const hm = t => new Date(t).toTimeString().slice(0, 5);
-  const sameDay = new Date(since).toDateString() === new Date().toDateString();
-  const opened = real != null && !state.dryRun ? real : placed;
-  return `${E.title} · с ${hm(since)}${sameDay ? '' : ' вчера'} до ${hm(Date.now())}\n`
-    + `сигналов за сутки: ${rows.length}, открыто ${opened}`
-    + (unconf ? ` (${unconf} без подтверждения)` : '') + '\n'
-    + (lost > 0 ? `до биржи не дошло: ${lost}\n` : '')
-    + (lost < 0 ? `на бирже больше на ${-lost} - были ставки руками\n` : '')
-    + (top ? `не сыграло: ${top}` : 'отказов нет')
-    + (state.dryRun ? '\nрежим DRY-RUN - ставок на бирже нет' : '');
+  return {
+    title: E.title, from: hm(since), to: hm(now),
+    yesterday: new Date(since).toDateString() !== new Date().toDateString(),
+    signals: rows.length, placed, unconf, edge,
+    contracts: real, lost, skips,
+    skipped: skips.reduce((a, [, v]) => a + v, 0),
+    pnl: nums && Number.isFinite(nums.pnl) ? nums.pnl : null,
+    winRate: nums && Number.isFinite(nums.win_rate) ? nums.win_rate : null,
+    amount: nums && Number.isFinite(nums.amount) ? nums.amount : null,
+    dry: state.dryRun,
+  };
+}
+
+const money = v => (v > 0 ? '+' : '') + String(v).replace('.', ',');
+
+// Стиль 1 - строгий: ни одного значка внутри, только заголовок.
+function styleStrict(f) {
+  const L = [`${f.title} · смена ${f.from} → ${f.to}`, ''];
+  L.push(`Сигналов ${f.signals} · открыто ${f.placed}`
+    + (f.unconf ? ` (${f.unconf} без подтверждения)` : ''));
+  if (f.contracts != null) {
+    L.push(`На бирже ${f.contracts} контрактов`
+      + (f.edge > 0 ? ` (${f.edge} с прошлой смены)` : ''));
+  }
+  if (f.pnl != null) L.push(`PNL ${money(f.pnl)} USDT`
+    + (f.winRate != null ? ` · в плюс ${f.winRate}%` : ''));
+  if (f.lost > 0) L.push(`До биржи не дошло: ${f.lost}`);
+  if (f.skips.length) {
+    L.push('', `Не сыграло ${f.skipped}:`);
+    for (const [k, v] of f.skips) L.push(`  ${skipName(k)} — ${v}`);
+  } else L.push('', 'Отказов нет');
+  if (f.dry) L.push('', 'DRY-RUN: ставок на бирже нет');
+  return L.join('\n');
+}
+
+// Стиль 2 - значок у каждой строки.
+function styleIcons(f) {
+  const L = [`📊 ${f.title}   ${f.from} → ${f.to}`, ''];
+  L.push(`📨 Сигналов        ${f.signals}`);
+  L.push(`✅ Открыто         ${f.placed}`
+    + (f.unconf ? `  (${f.unconf} без подтв.)` : ''));
+  if (f.contracts != null) {
+    L.push(`🏦 На бирже        ${f.contracts}`
+      + (f.edge > 0 ? `  (${f.edge} с прошлой смены)` : ''));
+  }
+  if (f.pnl != null) {
+    L.push(`${f.pnl >= 0 ? '💰' : '🩸'} PNL             ${money(f.pnl)} USDT`
+      + (f.winRate != null ? `  (${f.winRate}%)` : ''));
+  }
+  if (f.lost > 0) L.push(`⛔ Не дошло        ${f.lost}`);
+  if (f.skips.length) {
+    L.push('', `⚠️ Не сыграло ${f.skipped}`);
+    for (const [k, v] of f.skips) L.push(`   ${SKIP_ICONS[k] || '•'} ${skipName(k)} — ${v}`);
+  } else L.push('', '⚠️ Отказов нет');
+  if (f.dry) L.push('', '🧪 DRY-RUN: ставок на бирже нет');
+  return L.join('\n');
+}
+
+// Стиль 3 - итог смены: сначала деньги, потом как до них дошли.
+function styleResult(f) {
+  const L = [];
+  const head = `${f.pnl == null ? '📊' : (f.pnl >= 0 ? '🟢' : '🔴')} ${f.title} · смена ${f.from} → ${f.to}`;
+  L.push(head);
+  // Черта ровно по длине заголовка: по символам, а не на глаз. Значок в
+  // начале - один символ, поэтому [...head] считает верно.
+  L.push('━'.repeat([...head].length));
+  if (f.pnl != null) {
+    L.push(`${f.pnl >= 0 ? '💰' : '🩸'} ${money(f.pnl)} USDT`
+      + (f.contracts != null ? ` · ${f.contracts} контр.` : '')
+      + (f.winRate != null ? ` · ${f.winRate}% в плюс` : ''));
+    L.push('');
+  }
+  L.push(`📨 ${f.signals} сигналов → ✅ ${f.placed} ставок`
+    + (f.unconf ? ` (${f.unconf} без подтв.)` : ''));
+  if (f.edge > 0) L.push(`   ↪️ ${f.edge} с прошлой смены — биржа считает по расчёту`);
+  if (f.lost > 0) L.push(`   ⛔ ${f.lost} до биржи не дошло`);
+  if (f.skips.length) {
+    L.push('', `⚠️ Не сыграло ${f.skipped}`);
+    for (const [k, v] of f.skips) L.push(`   ${SKIP_ICONS[k] || '•'} ${skipName(k)} · ${v}`);
+  }
+  if (f.dry) L.push('', '🧪 DRY-RUN: ставок на бирже нет');
+  return L.join('\n');
+}
+
+const REPORT_STYLES = { 1: styleStrict, 2: styleIcons, 3: styleResult };
+
+function reportCaption(exName, nums) {
+  const f = reportFacts(exName, nums);
+  const style = REPORT_STYLES[String((CFG.telegram || {}).style ?? CFG.reportStyle ?? 3)]
+    || styleResult;
+  return style(f);
 }
 
 async function sendReport(exName) {

@@ -5038,10 +5038,24 @@ function calcResetPeriod() {
 // группы относительно безубытка. Час читаем ровно теми же колонками, что и
 // сам калькулятор, - иначе рекомендация советовала бы одно, а расчёт считал
 // по другому.
-const CALC_REC = { loaded: false, good: [], bad: [], flat: [], min: 0, decided: 0 };
+const CALC_REC = { key: null, good: [], bad: [], flat: [], min: 0, decided: 0, days: '' };
+
+// Отмеченные дни недели как множество (1=Пн … 7=Вс) - в том же виде, в каком
+// их читает сам расчёт.
+function calcActiveDays_() {
+  const on = new Set();
+  for (let d = 1; d <= 7; d++) if (document.getElementById(`calcD${d}`)?.checked) on.add(d);
+  return on;
+}
 
 async function calcComputeRecommendations_() {
-  if (CALC_REC.loaded) return CALC_REC;
+  // Рекомендация обязана считаться по тем же дням, что отмечены в расчёте:
+  // иначе час, вытянутый выходными, попадёт в «лучшие», а расчёт пойдёт по
+  // будням - и совет разойдётся с результатом. Дни входят в ключ кэша,
+  // поэтому смена галочек пересчитывает список.
+  const days = calcActiveDays_();
+  const key = [...days].sort().join(',');
+  if (CALC_REC.key === key) return CALC_REC;
   const rows = await fetchAllSignals();
   if (!rows || rows.length < 2) return CALC_REC;
   const since = new Date(+ERA_SINCE_DK.slice(0, 4), +ERA_SINCE_DK.slice(5, 7) - 1, +ERA_SINCE_DK.slice(8, 10));
@@ -5053,7 +5067,11 @@ async function calcComputeRecommendations_() {
     if (res !== 'WIN' && res !== 'LOSE') continue;
     const dt = calcParseDate(row[COL_DATE]);
     if (!dt || dt < since) continue;
-    const hour = calcExtractHour(row[19] || row[COL_TIME] || row[17]);
+    if (days.size) {
+      const raw = dt.getDay();                 // 0=Вс
+      if (!days.has(raw === 0 ? 7 : raw)) continue;
+    }
+    const hour = calcExtractHour(row[COL_TIME] || row[19] || row[17]);
     if (isNaN(hour)) continue;
     if (res === 'WIN') buckets[hour].w++; else buckets[hour].l++;
     decided++;
@@ -5074,7 +5092,9 @@ async function calcComputeRecommendations_() {
   }
   good.sort((a, b) => b.wr - a.wr);
   bad.sort((a, b) => a.wr - b.wr);
-  Object.assign(CALC_REC, { loaded: true, good, bad, flat, min, decided });
+  const dayNames = [t('calc.days.mon'), t('calc.days.tue'), t('calc.days.wed'), t('calc.days.thu'), t('calc.days.fri'), t('calc.days.sat'), t('calc.days.sun')];
+  const daysTxt = days.size === 7 || !days.size ? t('calc.rec.alldays') : [...days].sort().map(d => dayNames[d - 1]).join(', ');
+  Object.assign(CALC_REC, { key, good, bad, flat, min, decided, days: daysTxt });
   return CALC_REC;
 }
 
@@ -5082,7 +5102,7 @@ function calcRecHtml_(rec) {
   if (!rec.decided) return `<div class="calc-rec-empty">${t('calc.rec.nodata')}</div>`;
   const fmt = x => `<span class="calc-rec-h">${String(x.h).padStart(2, '0')}</span> ${Math.round(x.wr)}%<span class="calc-rec-n">n=${x.n}</span>`;
   const parts = [];
-  parts.push(`<p class="calc-rec-line">${t('calc.rec.base')} <b>${rec.decided}</b> ${t('calc.rec.base2')} <b>${rec.min}</b>.</p>`);
+  parts.push(`<p class="calc-rec-line">${t('calc.rec.base')} <b>${rec.decided}</b> ${t('calc.rec.base2')} <b>${rec.min}</b>. ${t('calc.rec.days')}: <b>${rec.days}</b>.</p>`);
   parts.push(rec.good.length
     ? `<p class="calc-rec-line good">${t('calc.rec.good')}: ${rec.good.map(fmt).join(' · ')}</p>`
     : `<p class="calc-rec-line">${t('calc.rec.nogood')}</p>`);
@@ -5100,11 +5120,9 @@ async function calcToggleRec() {
   if (open) { box.style.display = 'none'; btn.classList.remove('open'); return; }
   box.style.display = 'block';
   btn.classList.add('open');
-  if (!CALC_REC.loaded) {
-    box.innerHTML = `<div class="calc-rec-line">${t('calc.loading')}</div>`;
-    const rec = await calcComputeRecommendations_();
-    box.innerHTML = calcRecHtml_(rec);
-  }
+  box.innerHTML = `<div class="calc-rec-line">${t('calc.loading')}</div>`;
+  const rec = await calcComputeRecommendations_();
+  box.innerHTML = calcRecHtml_(rec);
 }
 
 // Отмечает ровно рекомендованные часы и снимает остальные. Часы «около
@@ -5125,6 +5143,8 @@ async function calcApplyBestHours() {
       const cb = document.getElementById(`calcH${h}`);
       if (cb) cb.checked = on.has(h);
     }
+    const box = document.getElementById('calcRecBox');
+    if (box && box.style.display === 'block') box.innerHTML = calcRecHtml_(rec);
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     document.getElementById('calcHoursGrid')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   } finally {
@@ -5196,6 +5216,12 @@ async function runCalculator() {
 
     const rows = await fetchAllSignals();
     if (!rows || rows.length < 2) { results.innerHTML = `<div class="calc-error">${t('calc.no.data')}</div>`; return; }
+    // Час берём из COL_TIME - той же колонки, что и все остальные отчёты.
+    // Раньше первой пробовалась колонка 19: она осталась от старой раскладки
+    // листа, и стоило ей заполниться другим временем (например, UTC вместо
+    // варшавского), как калькулятор молча считал бы по другим часам, чем
+    // «Активные часы» на экране и чем таблицы разделов. 19 и 17 оставлены
+    // запасными на случай, если COL_TIME окажется пустой.
 
     const ethW = ethBet * 0.8, ethL = -ethBet;
     const btcW = btcBet * 0.8, btcL = -btcBet;
@@ -5214,7 +5240,7 @@ async function runCalculator() {
       const res   = row[COL_RESULT]  || '';
       if (res !== 'WIN' && res !== 'LOSE') continue;
 
-      const hour = calcExtractHour(row[19] || row[COL_TIME] || row[17]);
+      const hour = calcExtractHour(row[COL_TIME] || row[19] || row[17]);
       if (isNaN(hour)) continue;
 
       const dt = calcParseDate(row[COL_DATE]);

@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -5549,7 +5549,115 @@ function timingsMode(exName, key, minutes) {
   console.log(`  копия старого конфига: ${path.basename(bak)}`);
 }
 
-if (process.argv[2] === 'timings') {
+// ── режим backup: копия того, чего нет в репозитории ──
+// Код лежит в git и восстанавливается одним git clone. А вот config.json,
+// журналы и профиль браузера гитом не хранятся намеренно - в них секрет,
+// токен бота и живые сессии бирж. Именно их и надо копировать, и именно
+// про них забывают.
+//
+//   node executor.js backup              config, журналы, подложка
+//   node executor.js backup --profile    плюс профиль браузера (сессии)
+//   node executor.js backup D:\Копии     положить в свою папку
+function backupMode(args) {
+  const withProfile = args.includes('--profile');
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  const root = path.resolve(where || path.join(ROOT, 'backup'));
+  const dir = path.join(root, `executor-${stamp}`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const took = [], missed = [];
+  const copy = (src, name) => {
+    if (!fs.existsSync(src)) { missed.push(name); return; }
+    const dst = path.join(dir, name);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.cpSync(src, dst, { recursive: true });
+    took.push(name);
+  };
+  copy(CFG_PATH, 'config.json');
+  // Журналы - без снимков: их бывают сотни мегабайт, а ценность у них
+  // разовая, на время разбора одной поломки.
+  if (fs.existsSync(LOGS)) {
+    for (const f of fs.readdirSync(LOGS)) {
+      if (f === 'shots') continue;
+      copy(path.join(LOGS, f), path.join('logs', f));
+    }
+  } else missed.push('logs');
+  for (const f of fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []) {
+    if (/^panel-bg\./.test(f)) copy(path.join(ROOT, f), f);
+  }
+  if (withProfile) copy(path.join(ROOT, 'profile'), 'profile');
+
+  const size = (() => {
+    let n = 0;
+    const walk = (p3) => {
+      for (const f of fs.readdirSync(p3, { withFileTypes: true })) {
+        const full = path.join(p3, f.name);
+        if (f.isDirectory()) walk(full); else n += fs.statSync(full).size;
+      }
+    };
+    try { walk(dir); } catch (e) {}
+    return n;
+  })();
+
+  fs.writeFileSync(path.join(dir, 'КАК-ВОССТАНОВИТЬ.txt'), [
+    `Копия исполнителя от ${d.toLocaleString('ru-RU')}`,
+    '',
+    'ВНУТРИ ЕСТЬ СЕКРЕТЫ: секрет панели, токен Telegram-бота'
+      + (withProfile ? ', а в profile - живые сессии бирж.' : '.'),
+    'Не клади эту папку в общие облака и не отправляй никому.',
+    '',
+    'Что где:',
+    '  config.json  - настройки, ставки, расписание, секрет, токен',
+    '  logs/        - журнал ставок (bets.csv) и доходность (pnl.csv)',
+    withProfile ? '  profile/     - профиль браузера: вход на биржи' : null,
+    '',
+    'Как восстановить на чистой машине:',
+    '  1. git clone <репозиторий> && cd futures-app/scripts/mexc-executor',
+    '  2. npm install playwright && npx playwright install chromium',
+    '  3. положить сюда config.json и папку logs из этой копии',
+    withProfile
+      ? '  4. положить сюда же profile - тогда входить на биржи заново не нужно'
+      : '  4. node executor.js login mexc и login toobit - профиля тут нет',
+    '  5. node executor.js',
+  ].filter(x => x !== null).join('\n'), 'utf8');
+
+  // Архив делаем средствами системы: ради одной команды в месяц тащить
+  // зависимость незачем.
+  let zip = '';
+  try {
+    const { execFileSync } = require('child_process');
+    if (process.platform === 'win32') {
+      zip = dir + '.zip';
+      execFileSync('powershell', ['-NoProfile', '-Command',
+        `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`],
+        { stdio: 'ignore' });
+    } else {
+      zip = dir + '.zip';
+      execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: root, stdio: 'ignore' });
+    }
+  } catch (e) { zip = ''; }
+
+  const mb = (size / 1048576).toFixed(1);
+  console.log(`Копия готова: ${zip || dir}`);
+  console.log(`  взято (${took.length}): ${took.join(', ')}`);
+  if (missed.length) console.log(`  не нашлось: ${missed.join(', ')}`);
+  console.log(`  размер: ${mb} МБ`);
+  if (!withProfile) {
+    console.log('  профиль браузера НЕ взят - с ним копия весит сотни мегабайт.');
+    console.log('  Нужен, чтобы не входить на биржи заново: node executor.js backup --profile');
+  }
+  console.log('');
+  console.log('Внутри есть секрет панели и токен бота - держи копию при себе.');
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
+if (process.argv[2] === 'backup') {
+  backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'timings') {
   timingsMode(process.argv[3], process.argv[4], process.argv[5]);
 } else if (process.argv[2] === 'add-asset') {
   addAssetMode(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);

@@ -889,7 +889,11 @@ async function modalOver(tries) {
 async function dismissModal(why) {
   let what = await modalOver(2);
   if (!what) return false;
-  log(`страницу накрыло окно (${what}) - закрываю${why ? ', ' + why : ''}`);
+  // Имя окна понятнее строки классов: «Quick Order» сразу говорит, что
+  // это быстрая форма ставки, открытая кнопкой «Place Another».
+  const named = await modalTitle();
+  log(`страницу накрыло окно ${named ? `«${named}»` : `(${what})`}`
+    + ` - закрываю${why ? ', ' + why : ''}`);
   const tries = [
     async () => {
       const x = page.locator('.ant-modal-close, .ant-modal-close-x, [aria-label="Close"], '
@@ -897,6 +901,32 @@ async function dismissModal(why) {
       if (await x.count() > 0 && await x.isVisible().catch(() => false)) {
         await x.click({ timeout: 2000, force: true });
       }
+    },
+    // Крестик по МЕСТУ, а не по классу: у Quick Order он в правом
+    // верхнем углу окна, а как он там называется в разметке - биржа не
+    // обещала. Берём самый маленький кликабельный элемент этого угла.
+    async () => {
+      const p2 = await page.evaluate(() => {
+        const vis = el => { const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0; };
+        const box = document.querySelector('.ant-modal, .ant-modal-content, [role="dialog"]');
+        if (!box) return null;
+        const b = box.getBoundingClientRect();
+        let best = null;
+        for (const el of box.querySelectorAll('*')) {
+          if (!vis(el) || el.children.length > 1) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width > 44 || r.height > 44) continue;
+          if (r.top > b.top + 64) continue;                 // только шапка окна
+          if (r.left < b.left + b.width * 0.72) continue;    // только правый край
+          if ((el.innerText || '').trim().length > 2) continue;
+          if (!best || r.left > best.left) best = { left: r.left,
+            x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+        return best;
+      });
+      if (p2) { await mouseGlide(page, p2.x, p2.y); await sleep(randInt(50, 140));
+                await page.mouse.down(); await sleep(randInt(40, 100)); await page.mouse.up(); }
     },
     async () => { await page.keyboard.press('Escape'); },
     async () => {
@@ -915,8 +945,8 @@ async function dismissModal(why) {
   }
   // Что именно висит - пишем поимённо: по этому списку сразу видно, чем
   // окно закрывается, и селектор можно прописать в конфиг.
-  await dumpModal(what);
-  log(`окно не закрылось (${what}) - перезагружаю страницу`);
+  await dumpModal(named || what);
+  log(`окно не закрылось (${named || what}) - перезагружаю страницу`);
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
@@ -941,6 +971,21 @@ async function dismissModal(why) {
   const left = await modalOver();
   if (!left) log('вкладка пересоздана, окна больше нет');
   return !left;
+}
+
+// Заголовок окна: первая непустая строка его текста.
+async function modalTitle() {
+  try {
+    return await page.evaluate(() => {
+      const box = document.querySelector('.ant-modal, .ant-modal-content, [role="dialog"]');
+      if (!box) return '';
+      // Первая строка бывает самим крестиком - заголовком считаем первую
+      // строку, в которой есть что читать.
+      const line = (box.innerText || '').split('\n').map(x => x.trim())
+        .find(x => x.length > 2) || '';
+      return line.slice(0, 40);
+    });
+  } catch (e) { return ''; }
 }
 
 // Что внутри застрявшего окна: текст и все кликабельные элементы с их
@@ -970,32 +1015,10 @@ async function dumpModal(what) {
   } catch (e) { /* дамп - дело добровольное */ }
 }
 
-// ── экран «ставка принята» ──
-// После ставки MEXC подменяет форму панелью результата с кнопкой «Place
-// Another». Формы на ней нет: поле суммы то же по селектору, но пустое и
-// неактивное, а клик по Up/Down ничего не открывает. В логе это выглядит
-// как «locator.fill: Timeout» и «клик прошёл, но позиций как было, так и
-// осталось» - две подряд ставки после удачной первой.
 // Как биржа подписывает кнопку подтверждения. Список длиннее, чем
 // хотелось бы: у MEXC это не button, у других - другое слово.
 const CONFIRM_WORDS = /^\s*(Confirm|Confirm\s*Order|Place\s*Order|OK|Submit|Подтвердить|确认|確認)\s*$/i;
 
-async function clearAfterBet(why) {
-  const re = curEx().afterBetText
-    ? new RegExp(`^\\s*${curEx().afterBetText}\\s*$`, 'i')
-    : /^\s*(Place\s*Another|Bet\s*Again|Продолжить|Ещё\s*ставк\w*)\s*$/i;
-  try {
-    const b = page.getByText(re).first();
-    if (await b.count() === 0 || !(await b.isVisible().catch(() => false))) return false;
-    log(`страница показывает экран после ставки - возвращаю форму${why ? ', ' + why : ''}`);
-    await b.click({ timeout: 2500, force: true });
-    await page.waitForTimeout(randInt(500, 900));
-    return true;
-  } catch (e) {
-    log('вернуть форму не удалось: ' + String(e.message).split('\n')[0]);
-    return false;
-  }
-}
 
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
@@ -1007,8 +1030,6 @@ async function waitForPanel() {
       // могло накрыть окном. Разбираемся здесь, до первого клика, а не
       // тремя таймаутами по пять секунд каждый.
       if (await dismissModal('перед ставкой')) found = await findAmount(1200) || found;
-      // Форма могла быть подменена панелью результата прошлой ставки.
-      if (await clearAfterBet('перед ставкой')) found = await findAmount(1200) || found;
       return found;
     }
     await page.waitForTimeout(400);
@@ -2497,13 +2518,9 @@ async function placeBet(sig) {
       log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
-      await clearAfterBet('после неподтверждённой').catch(() => {});
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-    // Возвращаем форму сразу: следующий сигнал часто идёт через секунды,
-    // и разбираться с экраном результата на его времени - потерянный вход.
-    await clearAfterBet('после ставки').catch(() => {});
     return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.

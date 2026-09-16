@@ -2959,3 +2959,6 @@ body.zones-only .app-main { bottom: 0; }
 }
 .calc-rec-line.calc-rec-hdr:first-child { margin-top: 0; }
 .calc-rec-basis { font-weight: 400; font-size: 10.5px; color: var(--text-muted); opacity: .85; }
+
+/* Счётчик выбывших монет рядом с активными в карточке PNL портфеля */
+.fs-pnl-metrics .fs-pnl-drop { color: #FF5272; }

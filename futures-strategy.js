@@ -356,10 +356,25 @@
       const labels = pf.map(p => fmtDate(p.ts)), cum = pf.map(p => +p.pct);
       let peak = cum[0], maxDD = 0;
       cum.forEach(v => { if (v > peak) peak = v; const dd = peak - v; if (dd > maxDD) maxDD = dd; });
-      // win rate и число сделок не зависят от сайзинга - берём из строк
-      let wins = 0, losses = 0, n = 0;
-      r.forEach(x => (x.sets_json || []).forEach(e => { const v = Array.isArray(e) ? +e[1] : +e; n++; if (v > 0) wins++; else if (v < 0) losses++; }));
-      return { mode: 'portfolio', labels, cum, total: cum[cum.length - 1], coins: r.length,
+      // Win rate и число сделок не зависят от сайзинга - берём из строк. Но
+      // население должно совпадать с кривой: в Python форвард считается со
+      // СКОЛЬЗЯЩИМ делистингом (rolling_delist) - монета блокируется с момента,
+      // когда её накопленный PNL впервые ушёл ниже порога, а всё, что она
+      // потеряла по дороге, остаётся в кривой. Повторяем это правило здесь.
+      // Иначе винрейт считался бы только по выжившим: худшие монеты выпадали
+      // бы из статистики целиком, и число было бы завышено.
+      let wins = 0, losses = 0, n = 0, dropped = 0;
+      r.forEach(x => {
+        let cum = 0;
+        for (const e of (x.sets_json || [])) {
+          const v = Array.isArray(e) ? +e[1] : +e;
+          n++; if (v > 0) wins++; else if (v < 0) losses++;
+          cum += v;
+          if (cum < DELIST_PNL) { dropped++; break; }   // дальше монета не торгуется
+        }
+      });
+      return { mode: 'portfolio', labels, cum, total: cum[cum.length - 1],
+        coins: r.length - dropped, dropped,
         trades: n, maxDD, wr: (wins + losses) ? wins / (wins + losses) * 100 : null,
         deposit: opts.pfDeposit || null, dateFrom: labels[0], dateTo: labels[labels.length - 1] };
     }
@@ -431,7 +446,7 @@
         <div><b style="color:${COL.red}">-${d.maxDD.toFixed(1)}%</b><span>макс. просадка</span></div>
         <div><b>${wrTxt}</b><span>win rate</span></div>
         <div><b>${d.trades}</b><span>сделок</span></div>
-        <div><b>${d.coins}</b><span>монет</span></div>
+        <div><b>${d.coins}</b>${d.dropped ? `<b class="fs-pnl-drop"> +${d.dropped}</b>` : ''}<span>${d.dropped ? 'монет · выбыло' : 'монет'}</span></div>
       </div>`;
     } else if (isTime) {
       const wrTxt = d.wr == null ? '-' : Math.round(d.wr) + '%';
@@ -450,7 +465,7 @@
         <div class="fs-wi-note">что-если: ограничивает результат каждой сделки (грубая оценка правил без переторговки)</div>
       </div>` : '';
     const base = isPf
-      ? `Реальная портфельная модель: общий депозит, вход 2% на сигнал, компаундинг, плечо 1x. Ось снизу - даты форвард-теста.`
+      ? `Реальная портфельная модель: общий депозит, вход 2% на сигнал, компаундинг, плечо 1x. Ось снизу - даты форвард-теста. Выбывшие монеты не выброшены из статистики: их сделки до момента выбытия входят и в кривую, и в win rate.`
       : isTime
       ? `Прикидка «среднее по парам» (вход 25% сленва на сигнал). Точная модель депозита - переключи, когда заполнена вкладка ${(RUNS.find(r => r.key === S.run) || {}).tab || ''}_PF.`
       : `накоплено по ${d.labels.length} парам · ось появится по датам, когда в данных есть метки времени сделок`;
@@ -518,9 +533,14 @@
     const hasPf = !!pf.pf;
     // портфельная кривая фиксирована (из Python по всей активной вселенной) - метрики по done, без UI-фильтра;
     // прикидка «по парам» считается по отфильтрованному списку
-    const series = pnlSeries(hasPf ? done : rows, Object.assign({ stop: S.stop, tp: S.tp }, pf));
+    // Кривой портфеля нужны ВСЕ посчитанные монеты, включая выбывшие: их сделки
+    // до момента выбытия входят и в кривую, и в винрейт (см. pnlSeries).
+    const allDone = S.rows.filter(r => r.computed && !r.error);
+    const series = pnlSeries(hasPf ? allDone : rows, Object.assign({ stop: S.stop, tp: S.tp }, pf));
     const filtered = !hasPf && (S.favOnly || S.hideWeak || S.inPos || (S.sliderVal != null && S.sliderVal > rng.min));
-    const totalSets = done.reduce((s, r) => s + r.sets, 0);
+    // В портфельном режиме число сделок берём из той же выборки, что и винрейт,
+    // иначе плитка и карточка показывали бы разные числа об одном и том же.
+    const totalSets = hasPf && series.trades ? series.trades : done.reduce((s, r) => s + r.sets, 0);
     const longs = done.filter(r => r.pos_side === 'long').length;
     const shorts = done.filter(r => r.pos_side === 'short').length;
     const srcNote = S.source === 'default' ? ' · <span class="fs-demo">демо-список</span>' : '';
@@ -830,7 +850,7 @@
     const host = document.getElementById(containerId);
     if (!host) return;
     if (state[containerId]) { renderList(host, state[containerId]); return; }
-    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, inPos: false, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
+    const S = { rows: [], run: DEFAULT_RUN, tf: DEFAULT_TF, source: 'sheet', sort: FIXED_SORT, sliderVal: null, sliderResetFor: null, favOnly: false, hideWeak: false, inPos: true, query: '', computing: false, progress: 0, total: 0, stop: 0, tp: 0 };
     state[containerId] = S;
     host.innerHTML = '<div class="fs-loading">Загрузка стратегий…</div>';
     await loadRun(host, S, DEFAULT_RUN);

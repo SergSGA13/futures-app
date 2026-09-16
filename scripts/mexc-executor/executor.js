@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -889,7 +889,11 @@ async function modalOver(tries) {
 async function dismissModal(why) {
   let what = await modalOver(2);
   if (!what) return false;
-  log(`страницу накрыло окно (${what}) - закрываю${why ? ', ' + why : ''}`);
+  // Имя окна понятнее строки классов: «Quick Order» сразу говорит, что
+  // это быстрая форма ставки, открытая кнопкой «Place Another».
+  const named = await modalTitle();
+  log(`страницу накрыло окно ${named ? `«${named}»` : `(${what})`}`
+    + ` - закрываю${why ? ', ' + why : ''}`);
   const tries = [
     async () => {
       const x = page.locator('.ant-modal-close, .ant-modal-close-x, [aria-label="Close"], '
@@ -897,6 +901,32 @@ async function dismissModal(why) {
       if (await x.count() > 0 && await x.isVisible().catch(() => false)) {
         await x.click({ timeout: 2000, force: true });
       }
+    },
+    // Крестик по МЕСТУ, а не по классу: у Quick Order он в правом
+    // верхнем углу окна, а как он там называется в разметке - биржа не
+    // обещала. Берём самый маленький кликабельный элемент этого угла.
+    async () => {
+      const p2 = await page.evaluate(() => {
+        const vis = el => { const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0; };
+        const box = document.querySelector('.ant-modal, .ant-modal-content, [role="dialog"]');
+        if (!box) return null;
+        const b = box.getBoundingClientRect();
+        let best = null;
+        for (const el of box.querySelectorAll('*')) {
+          if (!vis(el) || el.children.length > 1) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width > 44 || r.height > 44) continue;
+          if (r.top > b.top + 64) continue;                 // только шапка окна
+          if (r.left < b.left + b.width * 0.72) continue;    // только правый край
+          if ((el.innerText || '').trim().length > 2) continue;
+          if (!best || r.left > best.left) best = { left: r.left,
+            x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        }
+        return best;
+      });
+      if (p2) { await mouseGlide(page, p2.x, p2.y); await sleep(randInt(50, 140));
+                await page.mouse.down(); await sleep(randInt(40, 100)); await page.mouse.up(); }
     },
     async () => { await page.keyboard.press('Escape'); },
     async () => {
@@ -915,8 +945,8 @@ async function dismissModal(why) {
   }
   // Что именно висит - пишем поимённо: по этому списку сразу видно, чем
   // окно закрывается, и селектор можно прописать в конфиг.
-  await dumpModal(what);
-  log(`окно не закрылось (${what}) - перезагружаю страницу`);
+  await dumpModal(named || what);
+  log(`окно не закрылось (${named || what}) - перезагружаю страницу`);
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(CFG.pageSettleMs ?? 2500);
@@ -941,6 +971,21 @@ async function dismissModal(why) {
   const left = await modalOver();
   if (!left) log('вкладка пересоздана, окна больше нет');
   return !left;
+}
+
+// Заголовок окна: первая непустая строка его текста.
+async function modalTitle() {
+  try {
+    return await page.evaluate(() => {
+      const box = document.querySelector('.ant-modal, .ant-modal-content, [role="dialog"]');
+      if (!box) return '';
+      // Первая строка бывает самим крестиком - заголовком считаем первую
+      // строку, в которой есть что читать.
+      const line = (box.innerText || '').split('\n').map(x => x.trim())
+        .find(x => x.length > 2) || '';
+      return line.slice(0, 40);
+    });
+  } catch (e) { return ''; }
 }
 
 // Что внутри застрявшего окна: текст и все кликабельные элементы с их
@@ -970,32 +1015,10 @@ async function dumpModal(what) {
   } catch (e) { /* дамп - дело добровольное */ }
 }
 
-// ── экран «ставка принята» ──
-// После ставки MEXC подменяет форму панелью результата с кнопкой «Place
-// Another». Формы на ней нет: поле суммы то же по селектору, но пустое и
-// неактивное, а клик по Up/Down ничего не открывает. В логе это выглядит
-// как «locator.fill: Timeout» и «клик прошёл, но позиций как было, так и
-// осталось» - две подряд ставки после удачной первой.
 // Как биржа подписывает кнопку подтверждения. Список длиннее, чем
 // хотелось бы: у MEXC это не button, у других - другое слово.
 const CONFIRM_WORDS = /^\s*(Confirm|Confirm\s*Order|Place\s*Order|OK|Submit|Подтвердить|确认|確認)\s*$/i;
 
-async function clearAfterBet(why) {
-  const re = curEx().afterBetText
-    ? new RegExp(`^\\s*${curEx().afterBetText}\\s*$`, 'i')
-    : /^\s*(Place\s*Another|Bet\s*Again|Продолжить|Ещё\s*ставк\w*)\s*$/i;
-  try {
-    const b = page.getByText(re).first();
-    if (await b.count() === 0 || !(await b.isVisible().catch(() => false))) return false;
-    log(`страница показывает экран после ставки - возвращаю форму${why ? ', ' + why : ''}`);
-    await b.click({ timeout: 2500, force: true });
-    await page.waitForTimeout(randInt(500, 900));
-    return true;
-  } catch (e) {
-    log('вернуть форму не удалось: ' + String(e.message).split('\n')[0]);
-    return false;
-  }
-}
 
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
@@ -1007,8 +1030,6 @@ async function waitForPanel() {
       // могло накрыть окном. Разбираемся здесь, до первого клика, а не
       // тремя таймаутами по пять секунд каждый.
       if (await dismissModal('перед ставкой')) found = await findAmount(1200) || found;
-      // Форма могла быть подменена панелью результата прошлой ставки.
-      if (await clearAfterBet('перед ставкой')) found = await findAmount(1200) || found;
       return found;
     }
     await page.waitForTimeout(400);
@@ -2497,13 +2518,9 @@ async function placeBet(sig) {
       log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
-      await clearAfterBet('после неподтверждённой').catch(() => {});
       return { status: 'placed-unconfirmed', payoutPage: pv };
     }
     log(`ставка открыта за ${Date.now() - t0}мс, позиций: ${posBefore} -> ${posAfter}`);
-    // Возвращаем форму сразу: следующий сигнал часто идёт через секунды,
-    // и разбираться с экраном результата на его времени - потерянный вход.
-    await clearAfterBet('после ставки').catch(() => {});
     return { status: 'placed', payoutPage: pv, entryPrice, advPct, tfHow, payoutPair };
   }
   // Сюда не приходим: обе попытки заканчиваются возвратом или отказом.
@@ -5549,7 +5566,115 @@ function timingsMode(exName, key, minutes) {
   console.log(`  копия старого конфига: ${path.basename(bak)}`);
 }
 
-if (process.argv[2] === 'timings') {
+// ── режим backup: копия того, чего нет в репозитории ──
+// Код лежит в git и восстанавливается одним git clone. А вот config.json,
+// журналы и профиль браузера гитом не хранятся намеренно - в них секрет,
+// токен бота и живые сессии бирж. Именно их и надо копировать, и именно
+// про них забывают.
+//
+//   node executor.js backup              config, журналы, подложка
+//   node executor.js backup --profile    плюс профиль браузера (сессии)
+//   node executor.js backup D:\Копии     положить в свою папку
+function backupMode(args) {
+  const withProfile = args.includes('--profile');
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  const root = path.resolve(where || path.join(ROOT, 'backup'));
+  const dir = path.join(root, `executor-${stamp}`);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const took = [], missed = [];
+  const copy = (src, name) => {
+    if (!fs.existsSync(src)) { missed.push(name); return; }
+    const dst = path.join(dir, name);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.cpSync(src, dst, { recursive: true });
+    took.push(name);
+  };
+  copy(CFG_PATH, 'config.json');
+  // Журналы - без снимков: их бывают сотни мегабайт, а ценность у них
+  // разовая, на время разбора одной поломки.
+  if (fs.existsSync(LOGS)) {
+    for (const f of fs.readdirSync(LOGS)) {
+      if (f === 'shots') continue;
+      copy(path.join(LOGS, f), path.join('logs', f));
+    }
+  } else missed.push('logs');
+  for (const f of fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []) {
+    if (/^panel-bg\./.test(f)) copy(path.join(ROOT, f), f);
+  }
+  if (withProfile) copy(path.join(ROOT, 'profile'), 'profile');
+
+  const size = (() => {
+    let n = 0;
+    const walk = (p3) => {
+      for (const f of fs.readdirSync(p3, { withFileTypes: true })) {
+        const full = path.join(p3, f.name);
+        if (f.isDirectory()) walk(full); else n += fs.statSync(full).size;
+      }
+    };
+    try { walk(dir); } catch (e) {}
+    return n;
+  })();
+
+  fs.writeFileSync(path.join(dir, 'КАК-ВОССТАНОВИТЬ.txt'), [
+    `Копия исполнителя от ${d.toLocaleString('ru-RU')}`,
+    '',
+    'ВНУТРИ ЕСТЬ СЕКРЕТЫ: секрет панели, токен Telegram-бота'
+      + (withProfile ? ', а в profile - живые сессии бирж.' : '.'),
+    'Не клади эту папку в общие облака и не отправляй никому.',
+    '',
+    'Что где:',
+    '  config.json  - настройки, ставки, расписание, секрет, токен',
+    '  logs/        - журнал ставок (bets.csv) и доходность (pnl.csv)',
+    withProfile ? '  profile/     - профиль браузера: вход на биржи' : null,
+    '',
+    'Как восстановить на чистой машине:',
+    '  1. git clone <репозиторий> && cd futures-app/scripts/mexc-executor',
+    '  2. npm install playwright && npx playwright install chromium',
+    '  3. положить сюда config.json и папку logs из этой копии',
+    withProfile
+      ? '  4. положить сюда же profile - тогда входить на биржи заново не нужно'
+      : '  4. node executor.js login mexc и login toobit - профиля тут нет',
+    '  5. node executor.js',
+  ].filter(x => x !== null).join('\n'), 'utf8');
+
+  // Архив делаем средствами системы: ради одной команды в месяц тащить
+  // зависимость незачем.
+  let zip = '';
+  try {
+    const { execFileSync } = require('child_process');
+    if (process.platform === 'win32') {
+      zip = dir + '.zip';
+      execFileSync('powershell', ['-NoProfile', '-Command',
+        `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`],
+        { stdio: 'ignore' });
+    } else {
+      zip = dir + '.zip';
+      execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: root, stdio: 'ignore' });
+    }
+  } catch (e) { zip = ''; }
+
+  const mb = (size / 1048576).toFixed(1);
+  console.log(`Копия готова: ${zip || dir}`);
+  console.log(`  взято (${took.length}): ${took.join(', ')}`);
+  if (missed.length) console.log(`  не нашлось: ${missed.join(', ')}`);
+  console.log(`  размер: ${mb} МБ`);
+  if (!withProfile) {
+    console.log('  профиль браузера НЕ взят - с ним копия весит сотни мегабайт.');
+    console.log('  Нужен, чтобы не входить на биржи заново: node executor.js backup --profile');
+  }
+  console.log('');
+  console.log('Внутри есть секрет панели и токен бота - держи копию при себе.');
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
+if (process.argv[2] === 'backup') {
+  backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'timings') {
   timingsMode(process.argv[3], process.argv[4], process.argv[5]);
 } else if (process.argv[2] === 'add-asset') {
   addAssetMode(process.argv[3], process.argv[4], process.argv[5], process.argv[6], process.argv[7]);

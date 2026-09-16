@@ -1088,6 +1088,12 @@ def run(preset="base"):
               file=sys.stderr)
         print(f"  result: {pf['final_pct']:+.1f}%   max drawdown: -{pf['max_dd']:.1f}%   signals: {pf['n_signals']}",
               file=sys.stderr)
+        # Пик одновременных позиций и пиковая экспозиция считались, но никуда не
+        # выводились - а это главные числа для вопроса «исполнимо ли это вживую».
+        # Экспозиция выше 100% означает, что модель молча заняла плечо.
+        print(f"  peak positions: {pf['peak_positions']}   peak exposure: {pf['peak_exposure']:.0f}% of equity"
+              + ("   <-- ВЫШЕ 100%: модель использует плечо, хотя leverage=1x" if pf['peak_exposure'] > 100 else ""),
+              file=sys.stderr)
         print(f"  equity curve -> {result['portfolio_file']} ({len(result['portfolio_curve'])} days), tab '{result['portfolio_tab']}'.",
               file=sys.stderr)
     return result

@@ -2689,7 +2689,22 @@ function namedExchange(sig) {
 function exchangeByTiming(sig, asset) {
   const raw = String(sig.timing ?? '').toLowerCase().trim();
   if (!raw) return '';
-  let hit = exNames().find(n => exCfg(n).signalTimings.includes(raw));
+  // Одну метку могут заявить несколько бирж: два аккаунта Toobit
+  // работают сменами и получают один и тот же поток. Раньше выигрывала
+  // первая по списку - второй аккаунт не получил бы ни одного сигнала,
+  // а в часы, когда первый молчит, сигнал отбивался бы как «вне смены».
+  // Поэтому из заявивших берём ту, что сейчас в смене.
+  const claim = exNames().filter(n => exCfg(n).signalTimings.includes(raw)
+    && (!asset || (exCfg(n).urls || {})[asset]));
+  let hit = claim[0];
+  if (claim.length > 1) {
+    const onShift = claim.filter(n => inActiveHours(null, n));
+    if (onShift.length) hit = onShift[0];
+    if (onShift.length > 1) {
+      log(`метку "${raw}" заявили ${onShift.map(n => exCfg(n).title).join(' и ')}, и обе`
+        + ` сейчас в смене - беру ${exCfg(hit).title}; часы у них лучше не пересекать`);
+    }
+  }
   // Метка вида "TOOBIT_10m" / "MEXC_30m" называет биржу прямо в себе.
   // Разбираем префикс, даже если такую метку не успели прописать в
   // signalTimings: источник может завести новую в любой момент.

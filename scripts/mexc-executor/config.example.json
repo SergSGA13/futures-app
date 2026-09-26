@@ -176,8 +176,10 @@
       "minPayoutStrict": true,
       "requirePagePayout": true,
       "signalTimings": [
-        "TOOBIT2_10m",
-        "TOOBIT2_30m"
+        "TOOBIT_10m",
+        "TOOBIT_30m",
+        "10m",
+        "30m"
       ],
       "schedule": {
         "hours": [

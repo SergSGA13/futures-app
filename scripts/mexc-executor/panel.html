@@ -266,6 +266,7 @@
   .ctl-sec-tg    { border-color:rgba(34,232,255,.24);
                    background:radial-gradient(130% 110% at 0% 0%, rgba(34,232,255,.06), transparent 70%); }
   .ctl-sec-tg .ctl-note { margin:4px 0 0; color:#FF6B8A; }
+  .target-hit { color:#FFC857; font-size:11px; }
   .ok-t  { color:#31D0AA; }
   .bad-t { color:#FF6B8A; }
   .muted { color:var(--muted); }
@@ -977,7 +978,7 @@ const REASON_NAMES = {
   'skip-payout': 'выплата мала', 'skip-payout-unknown': 'выплата не прочлась',
   'skip-price': 'цена хуже', 'skip-price-unknown': 'цена не прочлась',
   'skip-payout-moved': 'выплата уехала', 'skip-unknown-tag': 'чужая метка',
-  'skip-modal': 'окно поверх страницы',
+  'skip-modal': 'окно поверх страницы', 'skip-target': 'цели смены взяты',
   'skip-expiry': 'экспирация не ясна', 'skip-redirect': 'биржа увела',
   'skip-slots': 'нет слотов', 'skip-dir-limit': 'лимит направления',
   'skip-stale': 'сигнал устарел', 'skip-market-closed': 'рынок закрыт',
@@ -1337,11 +1338,20 @@ function buildAssetControls(st) {
         <input type="number" id="wn_${e.name}" min="0" max="50" step="1"
           data-ex="${e.name}" style="width:74px"
           title="Сколько раз в сутки биржа может открыться вне своих часов"></div>`
+    // Цели смены: итог дня считает сама биржа. Взяли прибыль или
+    // упёрлись в убыток - ставок по этой бирже до назначенного часа нет.
+    // Пусто - цели нет.
+    + `<div class="row"><span>Цель прибыли, USDT</span>
+        <input type="number" id="tp_${e.name}" min="0" step="1" data-ex="${e.name}"
+          placeholder="нет" title="Итог дня дошёл до этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></div>`
+    + `<div class="row"><span>Предел убытка, USDT</span>
+        <input type="number" id="sl_${e.name}" min="0" step="1" data-ex="${e.name}"
+          placeholder="нет" title="Итог дня упал до минус этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></div>`
   ).join('');
   for (const e of exs(s)) {
     for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`,
                       `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`,
-                      `cp_${e.name}`]) {
+                      `cp_${e.name}`, `tp_${e.name}`, `sl_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -1444,7 +1454,13 @@ async function refresh() {
   // не говорит - пять занятых на MEXC не мешают ставке на Toobit.
   $('slotRows').innerHTML = exs(s).map(e =>
     `<div class="row"><span>${exs(s).length > 1 ? e.title : 'Открыто'}</span>`
-    + `<b class="${e.slots >= e.maxOpenBets ? 'slots-full' : ''}">${e.slots} / ${e.maxOpenBets}</b></div>`
+    + (e.stopUntil
+        // Биржа молчит не из-за поломки, а потому что цели взяты - это
+        // должно быть видно сразу, иначе тишина выглядит как сбой.
+        ? `<b class="target-hit" title="Цели смены достигнуты">🎯 до ${
+            new Date(e.stopUntil).toTimeString().slice(0, 5)}</b>`
+        : `<b class="${e.slots >= e.maxOpenBets ? 'slots-full' : ''}">${e.slots} / ${e.maxOpenBets}</b>`)
+    + '</div>'
   ).join('');
   $('updown').textContent = `${st.dirUsed.UP}/${s.dirLimits.UP} · ${st.dirUsed.DOWN}/${s.dirLimits.DOWN}`;
   $('queue').textContent = st.queue;
@@ -1516,6 +1532,8 @@ async function refresh() {
     setChk(`cp_${e.name}`, e.requirePagePayout || e.checkPayout !== false);
     $(`cp_${e.name}`).disabled = !!e.requirePagePayout;
     $(`mp_${e.name}`).disabled = !e.requirePagePayout && e.checkPayout === false;
+    setVal(`tp_${e.name}`, (e.targets || {}).tp ?? '');
+    setVal(`sl_${e.name}`, (e.targets || {}).sl ?? '');
     setChk(`wk_${e.name}`, (e.wake || {}).enabled);
     setVal(`wn_${e.name}`, (e.wake || {}).maxPerDay);
     $(`wn_${e.name}`).disabled = !(e.wake || {}).enabled;
@@ -1725,8 +1743,15 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="wn_"]').forEach(i => {
     if (i.value !== '') (wakes[i.dataset.ex] = wakes[i.dataset.ex] || {}).maxPerDay = +i.value;
   });
+  const targets = {};
+  document.querySelectorAll('#stakeRows input[id^="tp_"]').forEach(i => {
+    (targets[i.dataset.ex] = targets[i.dataset.ex] || {}).takeProfit = i.value;
+  });
+  document.querySelectorAll('#stakeRows input[id^="sl_"]').forEach(i => {
+    (targets[i.dataset.ex] = targets[i.dataset.ex] || {}).stopLoss = i.value;
+  });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts, targets,
     priceGuard: { enabled: $('priceOn').checked },
     requireKnownTag: $('knownTag').checked,
     maxBetsPerDay: +$('perDay').value,

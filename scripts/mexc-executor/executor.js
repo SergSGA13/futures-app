@@ -169,6 +169,11 @@ function exCfg(name) {
     // временем, если так понятнее.
     dayTz: e.dayTz ?? CFG.dayTz ?? null,
     dayStart: e.dayStart ?? CFG.dayStart ?? '',
+    // Цели смены: взяли прибыль или упёрлись в убыток - торговать по этой
+    // бирже до назначенного часа больше не нужно.
+    targets: { ...(CFG.targets || {}), ...(e.targets || {}) },
+    // Свой профиль браузера - для второго аккаунта той же биржи.
+    profile: e.profile || '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -216,7 +221,7 @@ const state = {
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
 const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone',
-                 'reportDone', 'reportAt', 'reportLast'];
+                 'reportDone', 'reportAt', 'reportLast', 'stopUntil'];
 function saveState() {
   try {
     const o = {};
@@ -523,22 +528,46 @@ let ctx = null, page = null;
 // «страница показывает BTC». Со своей вкладкой каждая биржа сохраняет
 // выбранный актив и экспирацию между ставками.
 const pages = new Map();
-async function browser() {
-  if (ctx) return;
-  ctx = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(CFG.headless !== false));
-  // Окно могут закрыть крестиком - тогда ctx мёртв, и следующая ставка
-  // должна поднять новый, а не биться в закрытый контекст.
-  ctx.on('close', () => { ctx = null; page = null; pages.clear(); });
+// ── профили ──
+// Куки живут в профиле, поэтому две биржи в одном профиле - это один
+// аккаунт. Для второго аккаунта на ТОЙ ЖЕ бирже нужен свой профиль и,
+// значит, своё окно браузера: подменить куки в общем контексте нельзя -
+// биржа одна, домен один. Профиль задаётся у биржи полем profile;
+// не задан - общий, как было.
+const ctxs = new Map();
+function profileOf(name) {
+  const v = (CFG.exchanges?.[name] || {}).profile;
+  return v ? String(v) : 'default';
 }
+function profileDir(prof) {
+  return prof === 'default' ? PROFILE : path.join(ROOT, `profile-${prof}`);
+}
+async function ctxFor(prof) {
+  const have = ctxs.get(prof);
+  if (have) return have;
+  const c = await playwright.chromium.launchPersistentContext(
+    profileDir(prof), launchOpts(CFG.headless !== false));
+  ctxs.set(prof, c);
+  if (prof === 'default') ctx = c;
+  // Окно могут закрыть крестиком - тогда контекст мёртв, и следующая
+  // ставка должна поднять новый, а не биться в закрытый.
+  c.on('close', () => {
+    ctxs.delete(prof);
+    if (ctx === c) { ctx = null; page = null; }
+    for (const [n, p] of [...pages]) if (p && p.isClosed()) pages.delete(n);
+  });
+  return c;
+}
+async function browser() { await ctxFor('default'); }
 // Вкладка биржи: живая - отдаём, нет - заводим. Первую вкладку контекста
 // переиспользуем, иначе рядом всегда висела бы пустая.
 async function pageFor(name) {
-  await browser();
+  const c = await ctxFor(profileOf(name));
   const have = pages.get(name);
   if (have && !have.isClosed()) return have;
   const taken = new Set([...pages.values()]);
-  const free = ctx.pages().find(p => !p.isClosed() && !taken.has(p));
-  const p = free || await ctx.newPage();
+  const free = c.pages().find(p => !p.isClosed() && !taken.has(p));
+  const p = free || await c.newPage();
   watchNav(p);
   pages.set(name, p);
   return p;
@@ -565,12 +594,12 @@ async function closePageOf(name) {
   if (page === p) page = null;
 }
 async function closeBrowser() {
-  if (!ctx) return;
-  const c = ctx;
+  const all = [...ctxs.values()];
+  ctxs.clear();
   ctx = null; page = null; pages.clear();
-  await c.close().catch(() => {});
+  for (const c of all) await c.close().catch(() => {});
 }
-function browserOpen() { return !!ctx && openExchanges().length > 0; }
+function browserOpen() { return ctxs.size > 0 && openExchanges().length > 0; }
 
 // ── клик «как человек» ──
 // Playwright по умолчанию бьёт точно в геометрический центр элемента и
@@ -2105,6 +2134,14 @@ async function placeBet(sig) {
     // просто смотрим, а ПРОБУЕМ закрыть - отказ без попытки был моей
     // ошибкой: 6 сентября ставка отбилась через четыре миллисекунды после
     // «панель готова», то есть не пытался никто.
+    // Цели смены проверяем на готовой странице: итог дня считает сама
+    // биржа, и читать его больше неоткуда. Проверка стоит одно чтение
+    // блока, зато после взятой цели ставок уже не будет.
+    const hit = await targetHit(sig.ex).catch(() => '');
+    if (hit) {
+      log(`пропуск ${sig.asset} ${sig.direction}: ${hit}`);
+      return { status: 'skip-target', note: hit };
+    }
     let stuck = await modalOver();
     if (stuck) { await dismissModal('перед ставкой').catch(() => {}); stuck = await modalOver(); }
     if (stuck) {
@@ -2810,6 +2847,12 @@ function acceptSignal(sig, src) {
     return skip('unknown-tag', 'skip-unknown-tag',
       `метка потока "${sig.tagUnknown}" не заявлена ни одной биржей`
       + ' - принимаю только заявленные');
+  }
+  const until = stoppedUntil(sig.ex);
+  if (until) {
+    return skip('target', 'skip-target',
+      `${exCfg(sig.ex).title}: цели смены достигнуты, пауза до `
+      + `${new Date(until).toTimeString().slice(0, 5)}`);
   }
   const allow = timingsFor(sig.asset, sig.ex);
   if (allow.indexOf(sig.timing) < 0) {
@@ -3606,6 +3649,75 @@ async function histSnap() {
   }, HIST_FIELDS.map(([k, re]) => [k, { source: re.source, flags: re.flags }]));
 }
 
+// ── цели смены: прибыль и убыток ──
+// Биржа сама считает итог дня в блоке «Trade History», вкладка Today.
+// Дошли до цели - торговать по этой бирже больше незачем: дальше или
+// отдаём заработанное, или догоняем убыток. Стоп держится до назначенного
+// часа, по умолчанию до трёх ночи.
+function targetsCfg(name) {
+  const t = exCfg(name).targets || {};
+  const num = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.abs(Number(v)) : null);
+  return {
+    tp: num(t.takeProfit), sl: num(t.stopLoss),
+    resumeAt: String(t.resumeAt || '03:00'),
+    on: !!(num(t.takeProfit) || num(t.stopLoss)),
+  };
+}
+// Ближайший назначенный час в будущем.
+function nextAt(hhmmText) {
+  const { hour, min } = hhmm(hhmmText, '03:00');
+  const d = new Date(); d.setHours(hour, min, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+function stoppedUntil(name) {
+  const t = (state.stopUntil || {})[name];
+  return t && t > Date.now() ? t : 0;
+}
+function stopTrading(name, why, until) {
+  state.stopUntil = state.stopUntil || {};
+  state.stopUntil[name] = until;
+  saveState();
+  const when = new Date(until).toTimeString().slice(0, 5);
+  log(`${exCfg(name).title}: ${why} - до ${when} ставок по этой бирже не будет`);
+  tgAlert(`${exCfg(name).title}: ${why}. Пауза до ${when}.`).catch(() => {});
+}
+
+// Итог дня глазами биржи: вкладка Today того же блока.
+async function todayPnl() {
+  const snap = await histSnap();
+  if (!snap) return null;
+  // Уже на Today - читаем как есть, иначе переключаем.
+  if (!/today/i.test(snap.tab)) {
+    const tab = page.getByText(/^\s*Today\s*$/i).first();
+    if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
+      await humanClick(tab).catch(() => {});
+      await page.waitForTimeout(900);
+    }
+  }
+  const now = await histSnap();
+  if (!now || !/today/i.test(now.tab || 'Today')) return null;
+  return Number.isFinite(now.pnl) ? now.pnl : null;
+}
+
+// Проверка перед ставкой: дошли ли до цели. Возвращает причину отказа
+// или пустую строку.
+async function targetHit(name) {
+  const T = targetsCfg(name);
+  if (!T.on) return '';
+  const pnl = await todayPnl();
+  if (pnl == null) { log(`${exCfg(name).title}: итог дня прочитать не удалось - цели не проверяю`); return ''; }
+  if (T.tp != null && pnl >= T.tp) {
+    stopTrading(name, `цель по прибыли взята: ${pnl} USDT при цели ${T.tp}`, nextAt(T.resumeAt));
+    return `цель по прибыли взята (${pnl} USDT)`;
+  }
+  if (T.sl != null && pnl <= -T.sl) {
+    stopTrading(name, `предел убытка достигнут: ${pnl} USDT при пределе -${T.sl}`, nextAt(T.resumeAt));
+    return `предел убытка достигнут (${pnl} USDT)`;
+  }
+  return '';
+}
+
 async function readTradeHistory() {
   const before = await histSnap();
   if (!before) { log('блок «Trade History» на странице не найден'); return null; }
@@ -3934,6 +4046,7 @@ const SKIP_NAMES = {
   'skip-dir-limit': 'предел ставок в одну сторону', 'skip-stale': 'сигнал устарел',
   'skip-market-closed': 'рынок закрыт', 'skip-unknown-tag': 'чужая метка потока',
   'skip-quiet-wake': 'вне смены, пробуждений не осталось',
+  'skip-target': 'цели смены взяты, пауза',
   'error': 'ошибка страницы', 'test-mode': 'тестовый режим',
 };
 const SKIP_ICONS = {
@@ -3942,7 +4055,7 @@ const SKIP_ICONS = {
   'skip-price': '💱', 'skip-price-unknown': '❔',
   'skip-expiry': '⏱', 'skip-timeframe': '⏱', 'skip-redirect': '↩️',
   'skip-modal': '🪟', 'skip-dir-limit': '⚖️', 'skip-stale': '🕐',
-  'skip-market-closed': '🚪', 'skip-unknown-tag': '🏷', 'error': '❗',
+  'skip-market-closed': '🚪', 'skip-unknown-tag': '🏷', 'skip-target': '🎯', 'error': '❗',
 };
 const skipName = k => SKIP_NAMES[k] || k;
 
@@ -4484,6 +4597,8 @@ function snapshot() {
           // настройка актива, которую нельзя было увидеть, не открыв
           // config.json.
           assetTimings: Object.fromEntries(assets.map(a => [a, timingsFor(a, n)])),
+          targets: targetsCfg(n),
+          stopUntil: stoppedUntil(n) || null,
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           stakeJitterPct: e.stakeJitterPct,
@@ -4590,6 +4705,35 @@ function applySettings(s) {
         own[a] = v;
       }
       exReset();
+    }
+  }
+  // Цели смены. Правка целей снимает текущую паузу: подняли цель прибыли -
+  // значит хотите торговать дальше, и держать стоп по старой цели было бы
+  // странно. Если новая цель тоже уже взята, стоп вернётся на первой же
+  // ставке.
+  if (s.targets) {
+    for (const n of exNames()) {
+      const w = s.targets[n];
+      if (!w || typeof w !== 'object') continue;
+      const e = CFG.exchanges[n];
+      const was = JSON.stringify(targetsCfg(n));
+      const cur = { ...(e.targets || {}) };
+      for (const k of ['takeProfit', 'stopLoss']) {
+        if (w[k] === '' || w[k] == null) { delete cur[k]; continue; }
+        const v = Math.abs(Number(w[k]));
+        if (Number.isFinite(v) && v > 0) cur[k] = Math.round(v * 100) / 100; else delete cur[k];
+      }
+      if (w.resumeAt) cur.resumeAt = hhmm(w.resumeAt, '03:00').at;
+      e.targets = cur;
+      exReset();
+      if (JSON.stringify(targetsCfg(n)) !== was) {
+        changed.push(`цели ${exCfg(n).title}: прибыль ${cur.takeProfit ?? '—'}, `
+          + `убыток ${cur.stopLoss ?? '—'}`);
+        if (state.stopUntil && state.stopUntil[n]) {
+          delete state.stopUntil[n]; saveState();
+          log(`${exCfg(n).title}: цели изменены - пауза снята`);
+        }
+      }
     }
   }
   // Порог выплаты - тоже по биржам: на MEXC он страховка поверх сигнала,
@@ -5221,12 +5365,17 @@ function migrateMode() {
 
 // ── режим login ──
 async function loginMode() {
-  // node executor.js login [биржа] - профиль браузера общий, но войти
-  // надо в каждую биржу отдельно.
-  const E = exCfg((process.argv[3] || '').toLowerCase() || defaultEx());
+  // node executor.js login [биржа] - войти надо в каждую биржу отдельно,
+  // а у биржи со своим profile это ещё и отдельное окно: два аккаунта
+  // одной биржи в общем профиле были бы одним аккаунтом.
+  const name = (process.argv[3] || '').toLowerCase() || defaultEx();
+  const E = exCfg(name);
+  const prof = profileOf(name);
+  const dir = profileDir(prof);
   console.log(`Открываю окно браузера. Войди в аккаунт ${E.title}, реши капчу,`);
   console.log('убедись что видишь страницу Event Futures, затем закрой окно.');
-  const c = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(false));
+  if (prof !== 'default') console.log(`Профиль этой биржи отдельный: ${path.basename(dir)}`);
+  const c = await playwright.chromium.launchPersistentContext(dir, launchOpts(false));
   const p = c.pages()[0] || await c.newPage();
   const first = Object.values(E.urls)[0];
   if (!first) { console.error(`у биржи ${E.title} не задан ни один адрес в urls`); process.exit(1); }
@@ -5240,7 +5389,7 @@ async function loginMode() {
   console.log('\nПроверяю, сохранился ли вход...');
   let still = null;
   try {
-    const c2 = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(true));
+    const c2 = await playwright.chromium.launchPersistentContext(dir, launchOpts(true));
     const p2 = c2.pages()[0] || await c2.newPage();
     await p2.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 });
     await p2.waitForTimeout(CFG.pageSettleMs ?? 2500);
@@ -5606,7 +5755,13 @@ function backupMode(args) {
   for (const f of fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []) {
     if (/^panel-bg\./.test(f)) copy(path.join(ROOT, f), f);
   }
-  if (withProfile) copy(path.join(ROOT, 'profile'), 'profile');
+  if (withProfile) {
+    // Профилей может быть несколько: у второго аккаунта той же биржи
+    // свой. Берём все - общий и profile-*.
+    for (const f of fs.readdirSync(ROOT)) {
+      if (f === 'profile' || /^profile-/.test(f)) copy(path.join(ROOT, f), f);
+    }
+  }
 
   const size = (() => {
     let n = 0;

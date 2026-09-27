@@ -236,6 +236,70 @@
     background:linear-gradient(180deg,var(--cyan),var(--violet));
   }
 
+  /* ── карточки бирж ──
+     Цвет приходит переменными --ex / --ex-rgb с самой карточки: у каждой
+     биржи свой. Неон - рамкой, углами, заголовком и фокусом поля; фон
+     остаётся общим, иначе три цветные карточки рядом рябили бы. */
+  .ex-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(272px,1fr));
+              gap:10px; margin-bottom:10px; }
+  .ex-cards > .card { margin:0; display:flex; flex-direction:column; }
+  .ex-cards > .card > button:last-child { margin-top:auto; align-self:flex-start; }
+  .ex-card {
+    border-color:rgba(var(--ex-rgb),.42);
+    background:
+      radial-gradient(120% 70% at 0% 0%, rgba(var(--ex-rgb),.13), transparent 62%),
+      var(--card);
+    box-shadow:
+      inset 0 1px 0 rgba(var(--ex-rgb),.22),
+      0 0 0 1px rgba(var(--ex-rgb),.08),
+      0 0 26px rgba(var(--ex-rgb),.16),
+      0 8px 26px rgba(0,0,0,.55);
+  }
+  .ex-card::before { border-color:var(--ex); filter:drop-shadow(0 0 6px rgba(var(--ex-rgb),.9)); }
+  .ex-card::after  { border-color:var(--ex); filter:drop-shadow(0 0 6px rgba(var(--ex-rgb),.9)); }
+  .ex-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .ex-title {
+    display:inline-flex; align-items:center; gap:9px;
+    font-size:16px; font-weight:900; letter-spacing:2.2px; text-transform:uppercase;
+    color:var(--ex);
+    text-shadow:0 0 8px rgba(var(--ex-rgb),.85), 0 0 22px rgba(var(--ex-rgb),.45);
+  }
+  .ex-title::before {
+    content:''; width:9px; height:9px; border-radius:50%; background:var(--ex);
+    box-shadow:0 0 6px var(--ex), 0 0 14px rgba(var(--ex-rgb),.7);
+  }
+  /* Подзаголовок группы: тонкая черта в цвет биржи под мелкой подписью. */
+  .ex-sub {
+    margin:10px 0 5px; padding-bottom:3px;
+    font-size:9px; font-weight:800; letter-spacing:1.3px; text-transform:uppercase;
+    color:rgba(var(--ex-rgb),.85);
+    border-bottom:1px solid rgba(var(--ex-rgb),.22);
+  }
+  .ex-head + .ex-sub { margin-top:4px; }
+  /* Ставки по активам - в две колонки: у MEXC их пять. */
+  .stk-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; }
+  .stk { display:flex; align-items:center; justify-content:space-between; gap:6px;
+         font-size:12px; color:var(--muted); padding:1.5px 0; }
+  .stk > span { white-space:nowrap; }
+  .stk input[type=number] { width:66px; }
+  .stk .asset-tf { font-style:normal; margin-left:3px; }
+  .ex-card input[type=number]:focus, .ex-card select:focus {
+    outline:none; border-color:var(--ex);
+    box-shadow:0 0 0 1px rgba(var(--ex-rgb),.35), 0 0 10px rgba(var(--ex-rgb),.45);
+  }
+  .ex-card .chk input:checked { accent-color:var(--ex); }
+  .ex-card button { border-color:rgba(var(--ex-rgb),.5); color:var(--ex); }
+  .ex-card button:hover { box-shadow:0 0 12px rgba(var(--ex-rgb),.45); }
+  .ex-note { margin:8px 0 10px; }
+  /* Остальные карточки настроек - чуть больше свечения, в тон пульта. */
+  #settingsBox .cards > .card {
+    box-shadow:
+      inset 0 1px 0 rgba(34,232,255,.14),
+      inset -14px -14px 32px rgba(157,80,255,.07),
+      0 0 22px rgba(34,232,255,.07),
+      0 8px 26px rgba(0,0,0,.55);
+  }
+
   .big { font-size:20px; font-weight:800; }
 
   /* ── Пульт ──
@@ -634,13 +698,15 @@
 
   <button class="sect-toggle" id="btnSettings">Настройки</button>
   <div id="settingsBox" class="hidden">
+    <!-- Своя карточка у каждой биржи. Одна общая карточка на три биржи
+         вытягивалась втрое длиннее соседних, и где кончается одна биржа и
+         начинается другая, было видно только по мелкой подписи. Цвет
+         карточки - цвет биржи: те же три краски, что проверены на
+         различимость при дальтонизме. -->
+    <div id="stakeRows" class="ex-cards"></div>
     <div class="cards">
       <div class="card">
-      <h2>Ставки и лимиты <span class="saved" id="savedStakes">сохранено</span></h2>
-      <div id="stakeRows"></div>
-      <!-- Ниже - общее для всех бирж. Без заголовка эти строки читались
-           как продолжение блока последней биржи. -->
-      <div class="ex-h" id="commonHead" style="display:none">Общее</div>
+      <h2>Общее <span class="saved" id="savedStakes">сохранено</span></h2>
       <div class="row"><span>Ставок в день</span>
       <input type="number" id="perDay" min="1" max="500" step="1"></div>
       <div class="row"><span>Время экспирации</span><span id="tfBox"></span></div>
@@ -1284,6 +1350,18 @@ const exs = s => s.exchanges || [];
 const exBy = (s, name) => exs(s).find(e => e.name === name) || exs(s)[0] || null;
 
 let assetsBuilt = null;
+// Цвет биржи. Три краски проверены на тёмной подложке: минимальная
+// разница 17-27 единиц ΔE в OKLab и при обычном зрении, и при трёх
+// видах дальтонизма (порог различимости около 8), контраст к фону от 5.9.
+// Розовый вместо янтаря проседал у протанопов до 9 - на грани. Свой цвет
+// можно задать бирже полем color; иначе - по порядку.
+const EX_COLORS = ['#22E8FF', '#B36BFF', '#FFB547', '#4EFFA0'];
+function exColor(e, i) {
+  const hex = /^#[0-9a-f]{6}$/i.test(e.color || '') ? e.color : EX_COLORS[i % EX_COLORS.length];
+  const rgb = [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16)).join(',');
+  return { hex, rgb };
+}
+
 function buildAssetControls(st) {
   const s = st.settings;
   const key = exs(s).map(e => e.name + ':' + e.assets.join('+')).join('|');
@@ -1291,63 +1369,68 @@ function buildAssetControls(st) {
   assetsBuilt = key;
   const multi = exs(s).length > 1;
 
-  // Ставка и порог выплаты - у каждой биржи свои. Заголовок биржи
-  // показываем только когда их больше одной: иначе это лишний шум.
-  $('stakeRows').innerHTML = exs(s).map(e =>
-    (multi ? `<div class="ex-h">${e.title}</div>` : '')
-    + e.assets.map(a =>
+  // Карточка на биржу. Внутри три группы - ставки, выплата и цена, цели
+  // смены: сплошной столбец из двенадцати строк не читался. Ставки по
+  // активам стоят в две колонки - у MEXC их пять, и столбцом они одни
+  // занимали полкарточки.
+  $('stakeRows').innerHTML = exs(s).map((e, i) => {
+    const col = exColor(e, i);
+    const stakes = e.assets.map(a =>
       // Минуты у актива бывают уже общих - и это не предпочтение, а
-      // свойство инструмента: десятиминутного события по акциям MEXC на
-      // бирже нет вовсе. Поэтому подпись, а не переключатель: предлагать
-      // включить то, чего на бирже не существует, значит звать на ставку,
-      // которой некуда уйти.
-      `<div class="row"><span>Ставка ${a}, USDT</span>
-        ${String(e.assetTimings[a]) !== String(e.execTimings)
-          ? `<span class="asset-tf" title="На бирже по ${a} бывают только такие события"
-              >только ${e.assetTimings[a].join('/')}м</span>` : ''}
+      // свойство инструмента. Поэтому подпись, а не переключатель.
+      `<label class="stk"><span>${a}${String(e.assetTimings[a]) !== String(e.execTimings)
+          ? ` <i class="asset-tf" title="На бирже по ${a} бывают только такие события">${
+              e.assetTimings[a].join('/')}м</i>` : ''}</span>
         <input type="number" id="st_${e.name}_${a}" min="1" step="1"
-          data-ex="${e.name}" data-asset="${a}"></div>`).join('')
-    + `<div class="row"><span>Мин. выплата, %</span>
+          data-ex="${e.name}" data-asset="${a}"></label>`).join('');
+    return `<div class="card ex-card" data-ex="${e.name}"
+        style="--ex:${col.hex};--ex-rgb:${col.rgb}">
+      <div class="ex-head">
+        <span class="ex-title">${e.title}</span>
+        <span class="saved saved-ex">сохранено</span>
+      </div>
+      <div class="ex-sub">Ставки, USDT</div>
+      <div class="stk-grid">${stakes}</div>
+
+      <div class="ex-sub">Выплата и цена</div>
+      <div class="row"><span>Мин. выплата, %</span>
         <input type="number" id="mp_${e.name}" min="50" max="100" step="1"
           data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
-            e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>`
-    // Чтение выплаты со страницы стоит секунду-полторы. Если источник
-    // сигналов уже отобрал их по проценту, эта секунда лишняя.
-    + `<div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
+            e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
           data-ex="${e.name}"${e.requirePagePayout ? ' disabled' : ''}
           title="${e.requirePagePayout
             ? 'На этой бирже выплату обязательно читать: сигналы приходят без неё, и без чтения ставка идёт вслепую'
             : 'Снять, если выплату уже отобрал источник сигнала - экономит секунду-полторы'}"
-          > Проверять выплату на странице${e.requirePagePayout ? ' (обязательно)' : ''}</label></div>`
-    // Порог отката: на сколько процентов цена входа может уйти против
-    // сигнала. У каждой биржи свой - на разных инструментах обычное
-    // движение за полминуты отличается в разы.
-    + `<div class="row"><span>Цена хуже сигнала не более, %</span>
-        <input type="number" id="pg_${e.name}" min="0" max="5" step="0.01"
-          data-ex="${e.name}"
-          title="0 - входить только по цене лучше сигнала. Пусто на странице не читается - проверка пропускается"></div>`
-    // Ровная сумма изо дня в день - самый заметный след автомата.
-    + `<div class="row"><span>Разброс суммы, %</span>
-        <input type="number" id="sj_${e.name}" min="0" max="50" step="1"
-          data-ex="${e.name}"
-          title="Сумма гуляет вокруг настроенной на столько процентов. 0 - ровно как задано"></div>`
-    // Щёлка в воротах расписания: биржа открывается под сигнал даже в
-    // тихие часы, но считанное число раз в сутки.
-    + `<div class="row"><label class="chk"><input type="checkbox" id="wk_${e.name}"
-          data-ex="${e.name}"> Будить вне смены</label>
-        <input type="number" id="wn_${e.name}" min="0" max="50" step="1"
-          data-ex="${e.name}" style="width:74px"
-          title="Сколько раз в сутки биржа может открыться вне своих часов"></div>`
-    // Цели смены: итог дня считает сама биржа. Взяли прибыль или
-    // упёрлись в убыток - ставок по этой бирже до назначенного часа нет.
-    // Пусто - цели нет.
-    + `<div class="row"><span>Цель прибыли, USDT</span>
-        <input type="number" id="tp_${e.name}" min="0" step="1" data-ex="${e.name}"
-          placeholder="нет" title="Итог дня дошёл до этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></div>`
-    + `<div class="row"><span>Предел убытка, USDT</span>
-        <input type="number" id="sl_${e.name}" min="0" step="1" data-ex="${e.name}"
-          placeholder="нет" title="Итог дня упал до минус этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></div>`
-  ).join('');
+          > Проверять выплату${e.requirePagePayout ? ' (обязательно)' : ''}</label></div>
+      <div class="row"><span>Цена хуже сигнала, %</span>
+        <input type="number" id="pg_${e.name}" min="0" max="5" step="0.01" data-ex="${e.name}"
+          title="0 - входить только по цене лучше сигнала"></div>
+      <div class="row"><span>Разброс суммы, %</span>
+        <input type="number" id="sj_${e.name}" min="0" max="50" step="1" data-ex="${e.name}"
+          title="Сумма гуляет вокруг настроенной на столько процентов. 0 - ровно как задано"></div>
+
+      <div class="ex-sub">Цели смены и пробуждение</div>
+      <div class="stk-grid">
+        <label class="stk"><span>Прибыль</span>
+          <input type="number" id="tp_${e.name}" min="0" step="1" data-ex="${e.name}"
+            placeholder="нет" title="Итог дня дошёл до этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></label>
+        <label class="stk"><span>Убыток</span>
+          <input type="number" id="sl_${e.name}" min="0" step="1" data-ex="${e.name}"
+            placeholder="нет" title="Итог дня упал до минус этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></label>
+      </div>
+      <div class="row"><label class="chk"><input type="checkbox" id="wk_${e.name}"
+          data-ex="${e.name}"> Будить вне смены, раз</label>
+        <input type="number" id="wn_${e.name}" min="0" max="50" step="1" data-ex="${e.name}"
+          title="Сколько раз в сутки биржа может открыться вне своих часов"></div>
+
+      <div class="note ex-note" id="exNote_${e.name}"></div>
+      <button class="btnSaveEx">Сохранить</button>
+    </div>`;
+  }).join('');
+  // Каждая кнопка сохраняет всё сразу: правили одну биржу или три, отдельный
+  // запрос на каждую - лишняя возня, а пропущенная правка - потерянная.
+  document.querySelectorAll('.btnSaveEx').forEach(b => { b.onclick = () => $('btnSaveStakes').onclick(); });
   for (const e of exs(s)) {
     for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`,
                       `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`,
@@ -1362,7 +1445,6 @@ function buildAssetControls(st) {
   $('winEx').innerHTML = exs(s).map(e => `<option value="${e.name}">${e.title}</option>`).join('');
   $('winEx').style.display = multi ? '' : 'none';
   winExTouched = false;
-  $('commonHead').style.display = multi ? '' : 'none';
   $('winEx').addEventListener('change', () => { winExTouched = true; });
   // Фильтр журнала по биржам: тот же список, что и всюду.
   $('logEx').innerHTML = '<button data-x="all">Все биржи</button>'
@@ -1545,37 +1627,32 @@ async function refresh() {
   // Подсказка описывает КАЖДУЮ биржу: границы сумм, порог выплаты и
   // время экспирации. Последнее важно: общий выключатель ниже биржу
   // с собственным списком не трогает.
-  $('stakeHint').textContent = exs(s).map(e => {
-    const own = e.execTimings && String(e.execTimings) !== String(s.execTimings);
-    return `${e.title}: ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')} USDT, `
-      + `выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
-      + (e.checkPayout === false
-          ? ' (проверка выплаты выключена - условия страницы берутся как есть)'
-          : (e.requirePagePayout ? ' и обязательно читается со страницы' : ''))
-      + (own ? `, экспирация только ${e.execTimings.join('/')}м` : '')
-      + ((e.wake || {}).enabled
-          ? `, вне смены будится до ${e.wake.maxPerDay} раз в сутки с паузой ${e.wake.minGapMin} мин`
-          : '')
-      + ((s.priceGuard || {}).enabled !== false
-          ? `, цена входа не хуже сигнала ${(e.priceGuard || {}).maxAdversePct
-              ? `более чем на ${(e.priceGuard || {}).maxAdversePct}%` : 'вовсе'}`
-          : '');
-  }).join('. ') + '.'
-    // Галочки минут в строке актива легко спутать с общими внизу -
+  // Строка про биржу - в её карточке: в общей подсказке она терялась
+  // среди строк про две другие.
+  exs(s).forEach(e => {
+    const el = $('exNote_' + e.name);
+    if (!el) return;
+    el.textContent = `Суммы ${e.assets.map(a => `${a} 1–${e.stakeLimits[a]}`).join(', ')}. `
+      + `Выплата ${e.minPayoutStrict ? '>' : '≥'} ${e.minPayout}%`
+      + (e.checkPayout === false ? ', со страницы не читается'
+         : (e.requirePagePayout ? ', обязательно со страницы' : ''))
+      + (e.stopUntil ? `. Цели взяты - пауза до ${new Date(e.stopUntil).toTimeString().slice(0, 5)}` : '')
+      + '.';
+  });
+  // Общая подсказка - только про общее: строки про биржи ушли в их карточки.
+  $('stakeHint').textContent = [
+    // Пометку минут у актива легко спутать с общими галочками выше -
     // объясняем разницу ровно тогда, когда у кого-то список и правда уже.
-    + (exs(s).some(e => e.assets.some(a =>
-        String(e.assetTimings[a]) !== String(e.execTimings)))
-        ? ' Пометка «только 30м» в строке актива - свойство инструмента:'
-          + ' такого события по нему на бирже не бывает, и включить его'
-          + ' нельзя. Общий список ниже эти активы только сужает.'
-        : '')
-    + ((s.priceGuard || {}).enabled !== false
-        ? ' От сигнала до нажатия проходит от десяти секунд до минуты, и за это'
-          + ' время цена откатывается: с проверкой вход по цене хуже сигнала'
-          + ' отменяется (в журнале skip-price). Если цену на странице прочитать'
-          + ' не удалось, ставка идёт без проверки.'
-        : ' Проверка цены входа выключена: ставка уйдёт по любой цене, какой бы'
-          + ' откат ни случился, пока сигнал шёл до нажатия.');
+    exs(s).some(e => e.assets.some(a => String(e.assetTimings[a]) !== String(e.execTimings)))
+      ? 'Пометка минут у актива в карточке биржи - свойство инструмента: другого'
+        + ' события по нему на бирже нет. Галочки экспирации здесь его только сужают.'
+      : '',
+    (s.priceGuard || {}).enabled !== false
+      ? 'От сигнала до нажатия проходит от десяти секунд до минуты, и цена успевает'
+        + ' откатиться: с проверкой вход хуже сигнала отменяется (skip-price).'
+      : 'Проверка цены входа выключена: ставка уйдёт по любой цене. Запоздалый вход'
+        + ' (дольше lateSec) проверяется всё равно.',
+  ].filter(Boolean).join(' ');
   if (!dirty.has('priceOn')) $('priceOn').checked = (s.priceGuard || {}).enabled !== false;
   setChk('knownTag', !!st.requireKnownTag);
   // Когда уходит отчёт и чем кончился последний. Без этого о том, что
@@ -1758,7 +1835,11 @@ $('btnSaveStakes').onclick = async () => {
     execTimings: [...document.querySelectorAll('.tfBox:checked')].map(c => +c.value),
   });
   dirty.delete('tfBox');
-  flash('savedStakes'); afterSave('stakes');
+  flash('savedStakes');
+  document.querySelectorAll('.saved-ex').forEach(el => {
+    el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1400);
+  });
+  afterSave('stakes');
 };
 $('btnSaveDir').onclick = async () => {
   await post('settings', { dirLimits: { UP: +$('limUp').value, DOWN: +$('limDown').value } });

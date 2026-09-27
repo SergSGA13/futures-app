@@ -174,6 +174,8 @@ function exCfg(name) {
     targets: { ...(CFG.targets || {}), ...(e.targets || {}) },
     // Свой профиль браузера - для второго аккаунта той же биржи.
     profile: e.profile || '',
+    // Цвет биржи в панели. Не задан - по порядку из проверенного набора.
+    color: e.color || '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -4613,6 +4615,7 @@ function snapshot() {
           // config.json.
           assetTimings: Object.fromEntries(assets.map(a => [a, timingsFor(a, n)])),
           targets: targetsCfg(n),
+          color: e.color,
           stopUntil: stoppedUntil(n) || null,
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,

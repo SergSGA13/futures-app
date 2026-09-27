@@ -1189,7 +1189,15 @@ async function payoutByButtons() {
 // направления, и по паре целиком. Не устоялась за отведённое время -
 // возвращаем null: пропустить ставку дешевле, чем открыть её вслепую.
 let payoutTouched = 0;
-function touchPayout(why) { payoutTouched = Date.now(); if (why) lastTouch = why; }
+// Пара выплат ДО нажатия по чипу. Если после нажатия пара уже другая,
+// страница видимо пересчиталась - и ждать полный срок незачем: две
+// совпавших чтения новой пары и есть свежая выплата. Ждать полный срок
+// приходится, только когда пара та же - тогда не отличить прежние
+// проценты от новых, совпавших случайно.
+let payoutBefore = '';
+function touchPayout(why, before) {
+  payoutTouched = Date.now(); if (why) lastTouch = why; payoutBefore = before || '';
+}
 let lastTouch = '';
 async function payoutStable(direction, ms) {
   const settle = Math.max(0, CFG.payoutSettleMs ?? 2000);
@@ -1205,12 +1213,14 @@ async function payoutStable(direction, ms) {
     await page.waitForTimeout(350);
     const now = await pagePayout(direction);
     tries++;
-    if (now != null && now === prev && pair() === prevPair && Date.now() >= notBefore) {
+    const fpNow = payoutBefore ? await payoutFingerprint().catch(() => null) : null;
+    const moved = !!(payoutBefore && fpNow && fpNow !== payoutBefore);
+    if (now != null && now === prev && pair() === prevPair && (Date.now() >= notBefore || moved)) {
       if (tries > 2 || notBefore) {
         log(`выплата устоялась: ${now}%`
           + (lastTouch ? ` (${Math.round((Date.now() - payoutTouched) / 100) / 10} с после «${lastTouch}»)` : ''));
       }
-      payoutTouched = 0; lastTouch = '';
+      payoutTouched = 0; lastTouch = ''; payoutBefore = '';
       return now;
     }
     if (prev != null && now != null && now !== prev) {
@@ -2010,6 +2020,44 @@ async function ensureTimeframe(tfText) {
 }
 
 // ── ставка ──
+// ── где уходит время ставки ──
+// Итоговая задержка ничего не говорит о том, ЧТО ускорять. Ставка
+// отмечает этапы, а pump после неё пишет строку в logs/timing.csv - что бы
+// ставка ни вернула. Отметка ставится в КОНЦЕ этапа; длительность этапа -
+// разница с предыдущей.
+const STAGES = ['страница', 'актив', 'экспирация', 'выплата', 'сумма', 'цена', 'нажатие', 'подтверждение'];
+const TIMING_HEAD = 'time,exchange,asset,timing,status,queue_ms,'
+  + STAGES.map((_, i) => `s${i}_ms`).join(',') + ',total_ms';
+let betClock = null;
+function clockStart(sig) { betClock = { sig, t0: Date.now(), marks: {} }; }
+function mark(stage) { if (betClock && !(stage in betClock.marks)) betClock.marks[stage] = Date.now(); }
+function clockWrite(status) {
+  const c = betClock; betClock = null;
+  if (!c) return;
+  const queue = Math.max(0, c.t0 - (c.sig.receivedAt || c.t0));
+  let prev = c.t0;
+  const parts = STAGES.map(st => {
+    const at = c.marks[st];
+    if (!at) return '';
+    const d = at - prev; prev = at; return String(Math.max(0, d));
+  });
+  const total = Date.now() - (c.sig.receivedAt || c.t0);
+  const f = path.join(LOGS, 'timing.csv');
+  try {
+    if (!fs.existsSync(f)) fs.writeFileSync(f, TIMING_HEAD + '\n');
+    fs.appendFileSync(f, [new Date().toISOString(), c.sig.ex, c.sig.asset, c.sig.timing, status,
+      queue, ...parts, total].join(',') + '\n');
+  } catch (e) { /* замер - не повод ронять ставку */ }
+  const sec = ms => (ms / 1000).toFixed(1);
+  const shown = [`очередь ${sec(queue)}`];
+  prev = c.t0;
+  for (const st of STAGES) {
+    const at = c.marks[st]; if (!at) continue;
+    shown.push(`${st} ${sec(at - prev)}`); prev = at;
+  }
+  log(`этапы (${status}, всего ${sec(total)}с): ${shown.join(' · ')}`);
+}
+
 async function placeBet(sig) {
   const t0 = Date.now();
   // С этой строки и до конца ставки все страничные помощники смотрят в
@@ -2126,6 +2174,7 @@ async function placeBet(sig) {
       throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
     }
     log('панель готова, поле суммы: ' + ready.sel);
+    mark('страница');
 
     // Окно, которое не удалось закрыть даже перезагрузкой, - это стоп
     // торговли, а не одна неудачная ставка: каждый клик будет уходить в
@@ -2218,6 +2267,7 @@ async function placeBet(sig) {
     // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
     // основании остановил бы все ставки, если биржа сменит заголовок.
     log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
+    mark('актив');
     // Отметка переходов: если к моменту нажатия она изменилась, значит
     // страницу увели ПОСЛЕ всех проверок, и увели не мы.
     const navAt = pageNav(page);
@@ -2266,6 +2316,12 @@ async function placeBet(sig) {
     // ошибиться тут значит открыть ставку не на те минуты - и прочитать
     // выплату чужой экспирации.
     const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
+    // Отпечаток выплат страницы ДО смены экспирации: все проценты, что
+    // биржа показывает, одной строкой. Пару «Up/Down» из pagePayout тут
+    // брать нельзя - она заполняется не каждым способом чтения, и снимок
+    // выходил пустым, а с пустым снимком ускорение не срабатывало вовсе.
+    const pairBefore = (EX.checkPayout || EX.requirePagePayout)
+      ? (await payoutFingerprint().catch(() => null)) || '' : '';
     const tf = await ensureTimeframe(tfText);
     if (tf.missing) {
       await shot('no-expiry');
@@ -2279,7 +2335,7 @@ async function placeBet(sig) {
       // Проценты после смены минут биржа пересчитывает не мгновенно.
       // «По разметке» без единого нажатия - страницу не трогали, ждать
       // нечего; во всех прочих случаях чипы жали, и выплата поедет.
-      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`);
+      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`, pairBefore);
       log(`экспирация ${tfText} выбрана`
         + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
     } else if (tf.cur == null) {
@@ -2325,7 +2381,9 @@ async function placeBet(sig) {
     // вслепую»: 5 сентября так ушли пять ставок по 72-74% при пороге 76,
     // и в журнале у них пустая колонка выплаты - читать её было некому.
     const readPayout = EX.checkPayout || EX.requirePagePayout;
+    mark('экспирация');
     const pv = readPayout ? await payoutStable(sig.direction) : null;
+    mark('выплата');
     if (!readPayout) log('проверка выплаты выключена - беру условия страницы как есть');
     else if (!EX.checkPayout) {
       log(`проверка выплаты выключена, но на ${EX.title} она обязательна - читаю`);
@@ -2346,9 +2404,32 @@ async function placeBet(sig) {
     } else if (EX.minPayoutStrict ? pv <= need : pv < need) {
       // Раньше этот исход писался только в bets.csv, и в логе ставка
       // просто обрывалась после «панель готова» - выглядело как зависание.
-      log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`);
+      // Всё, что нужно для разбора, - в журнал. Источник сигнала уже
+      // проверил выплату, и отказ здесь значит одно из двух: либо она
+      // уехала за те секунды, что сигнал шёл до кнопки, либо мы прочитали
+      // не ту сторону. Первое видно по разнице с выплатой из сигнала,
+      // второе - по тому, что выплата из сигнала совпала с соседней
+      // стороной страницы.
+      const lp = lastPayouts;
+      const other = lp ? lp[sig.direction === 'UP' ? 'DOWN' : 'UP'] : null;
+      const srcPv = Number(sig.payout);
+      const hasSrc = Number.isFinite(srcPv) && srcPv > 0;
+      const mixed = hasSrc && other != null && Math.abs(other - srcPv) < 0.6
+        && Math.abs(pv - srcPv) >= 1;
+      const note = [
+        lp ? `${EX.dirWords.UP || 'Up'} ${lp.UP}% / ${EX.dirWords.DOWN || 'Down'} ${lp.DOWN}% (${lp.how})` : '',
+        hasSrc ? `в сигнале ${srcPv}%` : '',
+        hasSrc ? `за ${((Date.now() - (sig.receivedAt || t0)) / 1000).toFixed(0)}с уехала на ${(srcPv - pv).toFixed(1)}` : '',
+        mixed ? 'ПОХОЖЕ, ПРОЧИТАНА ЧУЖАЯ СТОРОНА' : '',
+      ].filter(Boolean).join('; ');
+      log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`
+        + (note ? ` [${note}]` : ''));
+      if (mixed) {
+        log(`!! выплата из сигнала ${srcPv}% совпала с соседней стороной страницы, а не с ${sig.direction}`
+          + ' - привязка процента к кнопке могла ошибиться, смотри снимок payout-low');
+      }
       await shot('payout-low');
-      return { status: 'skip-payout', payoutPage: pv };
+      return { status: 'skip-payout', payoutPage: pv, note };
     } else {
       const pair = lastPayouts
       ? ` [${EX.dirWords.UP || 'Up'} ${lastPayouts.UP}% / ${EX.dirWords.DOWN || 'Down'} ${lastPayouts.DOWN}%, ${lastPayouts.how}]`
@@ -2360,6 +2441,7 @@ async function placeBet(sig) {
     // Поле суммы уже найдено при ожидании панели
     const amount = ready.loc;
     await humanFill(amount, betStake(sig));
+    mark('сумма');
     await page.waitForTimeout(randInt(250, 700));
 
     // кнопка Up / Down
@@ -2502,6 +2584,7 @@ async function placeBet(sig) {
       }
     }
 
+    mark('цена');
     if (state.dryRun) {
       await shot(`dryrun-${sig.asset}-${sig.direction}`);
       log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
@@ -2510,6 +2593,7 @@ async function placeBet(sig) {
 
     const posBefore = await openPositionsCount();
     await humanClick(btn);
+    mark('нажатие');
     await page.waitForTimeout(randInt(500, 900));
     // возможное окно подтверждения
     // Окно подтверждения. Промах по нему НЕ должен губить ставку: клик по
@@ -2547,6 +2631,7 @@ async function placeBet(sig) {
     // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
     // ставку размещённой только когда выросло число открытых позиций.
     const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
+    mark('подтверждение');
     await shot(`bet-${sig.asset}-${sig.direction}`);
 
     if (posBefore == null) {
@@ -3081,7 +3166,9 @@ async function pump() {
         markWake(sig.ex);
         if (!browserOpen()) log('биржа спала - холодный старт займёт лишние секунды');
       }
+      clockStart(sig);
       const r = await placeBet(sig);
+      clockWrite(r.status);
       // Заметка складывается: множитель пачки и, если цена участвовала в
       // решении, насколько вход отличался от сигнала. Без этого пропуск
       // по цене выглядел бы в журнале необъяснимым.
@@ -3115,6 +3202,7 @@ async function pump() {
     }
   } catch (e) {
     state.consecutiveErrors++;
+    clockWrite('error');
     log(`ОШИБКА ставки ${exCfg(sig.ex).title} ${sig.asset} ${sig.direction}: ${e.message}`);
     logBet({ ...sig, stake: betStake(sig), mode, status: 'error', note: e.message });
     await tgAlert(`ошибка ставки ${sig.asset} ${sig.direction}: ${e.message}`);
@@ -4525,6 +4613,30 @@ function pnlSeries(days, only) {
 // исполнитель, а панель - показать. Результат кешируется по времени
 // изменения файла: журнал перечитывается каждые несколько секунд.
 let statsCache = { key: '', val: null };
+// Медиана каждого этапа за срок - по ставкам, дошедшим до нажатия.
+// Отказы по дороге в выборку не берём: у них этапов меньше, и ставка,
+// отбитая на выплате, тянула бы «нажатие» вниз, которого у неё не было.
+function stageStats(since) {
+  const f = path.join(LOGS, 'timing.csv');
+  if (!fs.existsSync(f)) return null;
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  const head = (lines.shift() || '').split(',');
+  const col = k => head.indexOf(k);
+  const rows = lines.map(l => l.split(',')).filter(c => {
+    const t = Date.parse(c[col('time')]);
+    return t >= since && /^placed|^dry-run/.test(c[col('status')]);
+  });
+  if (!rows.length) return null;
+  const med = arr => { const v = arr.filter(Number.isFinite).sort((a, b) => a - b);
+    return v.length ? v[Math.floor(v.length / 2)] : null; };
+  const out = [{ name: 'очередь', ms: med(rows.map(c => Number(c[col('queue_ms')]))) }];
+  STAGES.forEach((st, i) => {
+    const k = col(`s${i}_ms`);
+    out.push({ name: st, ms: med(rows.map(c => (c[k] === '' ? NaN : Number(c[k])))) });
+  });
+  return { n: rows.length, parts: out.filter(x => x.ms != null) };
+}
+
 function betStats(days) {
   const f = path.join(LOGS, 'bets.csv');
   if (!fs.existsSync(f)) return { days, total: 0, reasons: [], lag: null };
@@ -4569,6 +4681,8 @@ function betStats(days) {
     reasons: [...counts.entries()].map(([status, n]) => ({ status, n }))
       .sort((a, b) => b.n - a.n),
     lag: lags.length ? { n: lags.length, median: at(0.5), p90: at(0.9), max: lags[lags.length - 1] } : null,
+    stages: stageStats(since),
+    burst: !!(CFG.burst || {}).enabled,
   };
   statsCache = { key, val };
   return val;

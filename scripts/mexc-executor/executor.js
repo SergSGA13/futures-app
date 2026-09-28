@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings', 'backup'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup', 'move'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -5856,6 +5856,101 @@ function timingsMode(exName, key, minutes) {
 //   node executor.js backup              config, журналы, подложка
 //   node executor.js backup --profile    плюс профиль браузера (сессии)
 //   node executor.js backup D:\Копии     положить в свою папку
+// Архив средствами системы: ради команды раз в месяц тащить зависимость
+// незачем. На Windows - через .NET ZipFile, а не Compress-Archive: тот
+// пропускает скрытые папки, а .git на Windows скрытая - без неё на новом
+// компьютере не заработал бы git pull. inner - класть в архив содержимое
+// папки, а не её саму. Возвращает путь к архиву или ''.
+function zipDir(dir, inner = false) {
+  const zip = dir + '.zip';
+  try {
+    const { execFileSync } = require('child_process');
+    if (fs.existsSync(zip)) fs.rmSync(zip, { force: true });
+    if (process.platform === 'win32') {
+      const q = t => t.replace(/'/g, "''");
+      try {
+        execFileSync('powershell', ['-NoProfile', '-Command',
+          `Add-Type -AssemblyName System.IO.Compression.FileSystem; `
+          + `[System.IO.Compression.ZipFile]::CreateFromDirectory('${q(dir)}', '${q(zip)}', 'Optimal', ${inner ? '$false' : '$true'})`],
+          { stdio: 'ignore' });
+      } catch (e) {
+        execFileSync('powershell', ['-NoProfile', '-Command',
+          `Compress-Archive -Path '${q(dir)}${inner ? '\\*' : ''}' -DestinationPath '${q(zip)}' -Force`], { stdio: 'ignore' });
+      }
+    } else {
+      if (inner) execFileSync('zip', ['-qr', zip, '.'], { cwd: dir, stdio: 'ignore' });
+      else execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: path.dirname(dir), stdio: 'ignore' });
+    }
+    return fs.existsSync(zip) ? zip : '';
+  } catch (e) { return ''; }
+}
+
+// ── режим move: всё для переезда на другой компьютер ──
+// Копия (backup) - это то, чего нет в git. Для переезда нужен весь проект:
+// код вместе с историей git, чтобы на новом месте работал git pull, плюс
+// config.json, журналы и доходность. Не берём три вещи, и все три
+// нарочно: node_modules ставится заново под новую систему; профили
+// браузера на другой ОС не прочитаются - куки зашифрованы ключом системы
+// (на Windows - DPAPI, на Маке - Связка ключей), и вход на биржи всё равно
+// придётся повторить; снимки страниц - сотни мегабайт разовой ценности.
+//
+//   node executor.js move            положить в backup/
+//   node executor.js move D:\Флешка  положить сразу на флешку
+function moveMode(args) {
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  // Корень проекта - на два уровня выше исполнителя, если это и правда
+  // репозиторий; иначе берём одну папку исполнителя.
+  const up = path.resolve(ROOT, '..', '..');
+  const repo = fs.existsSync(path.join(up, 'scripts')) ? up : ROOT;
+  const out = path.resolve(where || path.join(ROOT, 'backup'));
+  const holder = path.join(out, `futures-app-move-${stamp}`);
+  const dst = path.join(holder, path.basename(repo));
+  fs.mkdirSync(holder, { recursive: true });
+
+  const skipped = new Set();
+  const skip = (src) => {
+    const rel = path.relative(repo, src);
+    if (!rel) return false;
+    const parts = rel.split(path.sep);
+    if (parts.includes('node_modules')) { skipped.add('node_modules'); return true; }
+    const inExec = path.relative(ROOT, src);
+    if (!inExec.startsWith('..')) {
+      const top = inExec.split(path.sep)[0];
+      if (/^profile(-.+)?$/.test(top)) { skipped.add(top); return true; }
+      if (top === 'backup') return true;
+      if (inExec === path.join('logs', 'shots')) { skipped.add('logs/shots'); return true; }
+    }
+    return false;
+  };
+  fs.cpSync(repo, dst, { recursive: true, filter: (src) => !skip(src) });
+
+  let size = 0;
+  const walk = (p3) => { for (const f of fs.readdirSync(p3, { withFileTypes: true })) {
+    const full = path.join(p3, f.name);
+    if (f.isDirectory()) walk(full); else size += fs.statSync(full).size; } };
+  try { walk(holder); } catch (e) {}
+
+  // В архиве сразу futures-app/ - распаковал и готово, без лишней обёртки.
+  const zip = zipDir(holder, true);
+  const has = (p4) => fs.existsSync(path.join(dst, path.relative(repo, p4)));
+  console.log(`Архив для переезда: ${zip || holder}`);
+  console.log(`  размер ${(size / 1048576).toFixed(1)} МБ`);
+  console.log(`  config.json ${has(CFG_PATH) ? 'взят' : 'НЕ НАЙДЕН'}, журналы ${has(LOGS) ? 'взяты' : 'не найдены'},`
+    + ` история git ${fs.existsSync(path.join(dst, '.git')) ? 'взята' : 'не найдена'}`);
+  if (skipped.size) console.log(`  не взято нарочно: ${[...skipped].join(', ')}`);
+  console.log('');
+  console.log('Профили браузера на другой системе не прочитаются - на новом компьютере');
+  console.log('войди в каждую биржу заново: node executor.js login <биржа>.');
+  console.log(`Инструкция для Мака лежит внутри: ${path.relative(repo, path.join(ROOT, 'MAC.md'))}`);
+  console.log('');
+  console.log('Внутри секрет панели и токен бота - переноси на своей флешке, не через общие облака.');
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
 function backupMode(args) {
   const withProfile = args.includes('--profile');
   const where = args.find(a => a && !a.startsWith('--'));
@@ -5929,21 +6024,7 @@ function backupMode(args) {
     '  5. node executor.js',
   ].filter(x => x !== null).join('\n'), 'utf8');
 
-  // Архив делаем средствами системы: ради одной команды в месяц тащить
-  // зависимость незачем.
-  let zip = '';
-  try {
-    const { execFileSync } = require('child_process');
-    if (process.platform === 'win32') {
-      zip = dir + '.zip';
-      execFileSync('powershell', ['-NoProfile', '-Command',
-        `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`],
-        { stdio: 'ignore' });
-    } else {
-      zip = dir + '.zip';
-      execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: root, stdio: 'ignore' });
-    }
-  } catch (e) { zip = ''; }
+  const zip = zipDir(dir);
 
   const mb = (size / 1048576).toFixed(1);
   console.log(`Копия готова: ${zip || dir}`);
@@ -5961,6 +6042,8 @@ function backupMode(args) {
 
 if (process.argv[2] === 'backup') {
   backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'move') {
+  moveMode(process.argv.slice(3));
 } else if (process.argv[2] === 'timings') {
   timingsMode(process.argv[3], process.argv[4], process.argv[5]);
 } else if (process.argv[2] === 'add-asset') {

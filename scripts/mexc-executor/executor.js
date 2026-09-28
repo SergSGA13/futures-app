@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings', 'backup', 'move'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -5951,6 +5951,73 @@ function moveMode(args) {
   if (zip) console.log('Папку рядом с архивом можно удалить.');
 }
 
+// ── режим kit: комплект такой же панели для другого человека ──
+// Не путать с move: там переезжают СВОИ настройки и журналы, а здесь
+// человек заводит свою панель со своими аккаунтами. Поэтому в комплекте
+// только то, что лежит в git (чистый клон, без чужих незакоммиченных
+// файлов), и config.json, собранный из твоего: ставки, активы, расписание
+// и пороги те же, но секрет новый, токены Telegram пустые, dry-run
+// включён. Журналов, доходности, state.json и профилей нет вовсе.
+//   node executor.js kit            положить в backup/
+//   node executor.js kit D:\Флешка  сразу на флешку
+const SECRET_KEYS = new Set(['token', 'chatid', 'tgtoken', 'tgchatid', 'password', 'apikey', 'apisecret']);
+function scrubSecrets(o) {
+  if (Array.isArray(o)) return o.map(scrubSecrets);
+  if (!o || typeof o !== 'object') return o;
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = SECRET_KEYS.has(k.toLowerCase()) && typeof v !== 'object' ? '' : scrubSecrets(v);
+  }
+  return out;
+}
+function kitMode(args) {
+  const { execFileSync } = require('child_process');
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  let repo;
+  try {
+    repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  } catch (e) {
+    console.log('Нужен git: комплект собирается чистым клоном репозитория.');
+    process.exit(1);
+  }
+  const out = path.resolve(where || path.join(ROOT, 'backup'));
+  const holder = path.join(out, `futures-app-kit-${stamp}`);
+  const dst = path.join(holder, 'futures-app');
+  fs.mkdirSync(holder, { recursive: true });
+  execFileSync('git', ['clone', '-q', '--no-local', repo, dst], { stdio: 'ignore' });
+  // origin в клоне смотрит на твою папку - возвращаем GitHub, без
+  // логина и токена в адресе, если они там были.
+  try {
+    const origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repo, encoding: 'utf8' }).trim();
+    let clean = origin;
+    try { const u = new URL(origin); u.username = ''; u.password = ''; clean = u.toString(); } catch (e) {}
+    execFileSync('git', ['remote', 'set-url', 'origin', clean], { cwd: dst, stdio: 'ignore' });
+  } catch (e) {}
+
+  const exDir = path.join(dst, path.relative(repo, ROOT));
+  const src = fs.existsSync(CFG_PATH) ? CFG_PATH : path.join(ROOT, 'config.example.json');
+  const cfg = scrubSecrets(JSON.parse(fs.readFileSync(src, 'utf8').replace(/^\uFEFF/, '')));
+  cfg.secret = require('crypto').randomBytes(18).toString('base64url');
+  cfg.dryRun = true;
+  if (cfg.telegram) cfg.telegram.enabled = false;
+  fs.writeFileSync(path.join(exDir, 'config.json'), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+
+  const zip = zipDir(holder, true);
+  console.log(`Комплект: ${zip || holder}`);
+  console.log(`  код из git, config.json из ${src === CFG_PATH ? 'твоего' : 'примера'}:`
+    + ' ставки, активы и расписание те же');
+  console.log(`  секрет новый: ${cfg.secret}`);
+  console.log('  Telegram выключен, токены пустые; dry-run включён');
+  console.log('  журналов, доходности, профилей и state.json в комплекте нет');
+  console.log('');
+  console.log(`Инструкция внутри: ${path.relative(repo, path.join(ROOT, 'MAC.md'))}`);
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
 function backupMode(args) {
   const withProfile = args.includes('--profile');
   const where = args.find(a => a && !a.startsWith('--'));
@@ -6044,6 +6111,8 @@ if (process.argv[2] === 'backup') {
   backupMode(process.argv.slice(3));
 } else if (process.argv[2] === 'move') {
   moveMode(process.argv.slice(3));
+} else if (process.argv[2] === 'kit') {
+  kitMode(process.argv.slice(3));
 } else if (process.argv[2] === 'timings') {
   timingsMode(process.argv[3], process.argv[4], process.argv[5]);
 } else if (process.argv[2] === 'add-asset') {

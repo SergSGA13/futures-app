@@ -354,6 +354,7 @@
   "pageSettleMs": 2500,
   "panelTimeoutMs": 40000,
   "confirmTimeoutMs": 9000,
+  "confirmAppearMs": 3000,
   "assetSettleMs": 6000,
   "selectors": {
     "loginMarker": "button:has-text(\"Log In\")",

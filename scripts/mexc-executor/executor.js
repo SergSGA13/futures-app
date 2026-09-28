@@ -1049,7 +1049,145 @@ async function dumpModal(what) {
 // Как биржа подписывает кнопку подтверждения. Список длиннее, чем
 // хотелось бы: у MEXC это не button, у других - другое слово.
 const CONFIRM_WORDS = /^\s*(Confirm|Confirm\s*Order|Place\s*Order|OK|Submit|Подтвердить|确认|確認)\s*$/i;
+// Внутри окна подтверждения - свободнее: подпись может продолжаться
+// («Confirm Up», «Confirm (5s)»).
+const CONFIRM_LOOSE = /^\s*(Confirm|Place\s*Order|OK|Submit|Подтвердить|确认|確認)(\s|\(|$)/i;
 
+
+// Кнопка подтверждения - ТОЛЬКО внутри видимого окна. Раньше брался
+// первый на странице элемент с текстом Confirm, а им оказывался
+// невидимый или лежащий ПОД окном: клик по нему упирался в обёртку
+// ant-modal-wrap («Timeout 3000ms exceeded»), окно оставалось висеть, и
+// ставка уходила в placed-unconfirmed. Вне окна не ищем совсем. Внутри окна подпись разрешаем
+// чуть свободнее («Confirm Up», «Confirm (5s)»): там больше нечему так
+// называться. Найденный элемент помечаем атрибутом, чтобы нажать его же
+// другим способом, если первый не сработает.
+async function findConfirm() {
+  try {
+    return await page.evaluate(({ loose }) => {
+      const reLoose = new RegExp(loose, 'i');
+      const vis = el => {
+        const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+        return r.width > 4 && r.height > 4 && cs.visibility !== 'hidden'
+          && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+      };
+      for (const el of document.querySelectorAll('[data-exec-confirm]')) el.removeAttribute('data-exec-confirm');
+      const boxes = [...document.querySelectorAll('.ant-modal-content, [role="dialog"], .ant-drawer-content, .ant-popover-content')]
+        .filter(vis);
+      const pick = (scope, re) => {
+        let best = null;
+        for (const el of scope.querySelectorAll('button, [role=button], a, div, span')) {
+          const t = (el.innerText || '').trim();
+          if (!t || t.length > 30 || !re.test(t) || !vis(el)) continue;
+          // Подымаемся до кнопки, но не до целого подвала окна: у
+          // «footer-btns» тоже btn в классе, а в нём ещё и Cancel. Предок
+          // годится, только если кроме нашей подписи в нём ничего нет.
+          let btn = el.closest('button, [role=button], [class*=btn], [class*=Btn], [class*=button], [class*=Button]') || el;
+          if (btn !== el && (btn.innerText || '').trim() !== t) btn = el;
+          if (!vis(btn)) continue;
+          const r = btn.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const top = document.elementFromPoint(x, y);
+          const hit = !!top && (top === btn || btn.contains(top) || top.contains(btn));
+          const c = { x, y, hit, text: t, tag: btn.tagName.toLowerCase(), el: btn };
+          // Лучше тот, в который клик дойдёт; из равных - нижний: кнопки
+          // окна стоят в его подвале.
+          if (!best || (c.hit && !best.hit) || (c.hit === best.hit && y > best.y)) best = c;
+        }
+        return best;
+      };
+      let best = null;
+      for (const b of boxes) {
+        const c = pick(b, reLoose);
+        if (c && (!best || (c.hit && !best.hit))) best = c;
+      }
+      // Вне окна не ищем вовсе: на странице бывают свои Confirm, и нажать
+      // такой - хуже, чем не нажать ничего.
+      if (!best) return null;
+      best.el.setAttribute('data-exec-confirm', '1');
+      delete best.el;
+      return best;
+    }, { loose: CONFIRM_LOOSE.source });
+  } catch (e) { return null; }
+}
+
+// Нажать найденное. Каждая следующая попытка - другим способом: мышью в
+// точку, кликом из DOM, принудительным кликом Playwright, клавишей Enter.
+async function pressConfirm(c, n) {
+  const mark = page.locator('[data-exec-confirm]').first();
+  try {
+    if (n === 0) {
+      await mouseGlide(page, c.x, c.y); await sleep(randInt(40, 110));
+      await page.mouse.down(); await sleep(randInt(40, 90)); await page.mouse.up();
+      return `нажал «${c.text}» мышью`;
+    }
+    if (n === 1) { await mark.evaluate(el => el.click()); return `нажал «${c.text}» через DOM`; }
+    if (n === 2) { await mark.click({ force: true, timeout: 2000 }); return `нажал «${c.text}» принудительно`; }
+    await page.keyboard.press('Enter');
+    return 'нажал Enter';
+  } catch (e) {
+    return `нажать «${c.text}» не вышло (${String(e.message).split('\n')[0]})`;
+  }
+}
+
+// Подтвердить ставку и дождаться роста счётчика позиций. Окно ждём до
+// confirmAppearMs после клика по направлению: у MEXC оно выезжает с
+// анимацией и бывает позже, чем через полсекунды. Жмём до четырёх раз.
+async function confirmOrder(posBefore, timeoutMs) {
+  const t0 = Date.now(), deadline = t0 + timeoutMs;
+  const appearMs = CFG.confirmAppearMs ?? 3000;
+  let clicks = 0, seen = false, dumped = false;
+  while (Date.now() < deadline) {
+    if (posBefore != null) {
+      const now = await openPositionsCount();
+      if (now != null && now > posBefore) return { pos: now, clicks, seen };
+    }
+    let c = await findConfirm();
+    if (!c && !seen && Date.now() - t0 > 600) {
+      // Своя подпись из конфига - если биржа назвала кнопку иначе.
+      try {
+        const l = page.locator(EX.selectors.confirm);
+        const n = await l.count();
+        for (let i = 0; i < n && !c; i++) {
+          const b = await l.nth(i).boundingBox().catch(() => null);
+          const inModal = await l.nth(i).evaluate(el => !!el.closest(
+            '.ant-modal-content, [role="dialog"], .ant-drawer-content, .ant-popover-content')).catch(() => false);
+          if (inModal && b && b.width > 4 && await l.nth(i).isVisible().catch(() => false)) {
+            await l.nth(i).evaluate(el => el.setAttribute('data-exec-confirm', '1'));
+            c = { x: b.x + b.width / 2, y: b.y + b.height / 2, text: 'из конфига' };
+          }
+        }
+      } catch (e) {}
+    }
+    if (c) {
+      seen = true;
+      if (clicks < 4) {
+        log('подтверждение: ' + await pressConfirm(c, clicks)
+          + (clicks ? ` (попытка ${clicks + 1})` : '') + (c.hit === false ? ', кнопка чем-то накрыта' : ''));
+        clicks++;
+        await page.waitForTimeout(clicks === 1 ? 400 : 700);
+        continue;
+      }
+      if (!dumped) {
+        dumped = true;
+        log('окно подтверждения не уходит после четырёх нажатий');
+        await dumpModal('подтверждение');
+        await shot('confirm-stuck');
+      }
+    } else if (!seen && Date.now() - t0 > appearMs && !dumped) {
+      // Окна нет, а позиция не выросла: может, окно без слова Confirm.
+      const m = await modalOver();
+      if (m) { dumped = true; log('после клика висит окно, но кнопки подтверждения в нём не нашёл');
+               await dumpModal(m); }
+      if (posBefore == null) return { pos: null, clicks, seen };
+    } else if (posBefore == null && seen) {
+      // Счётчик не читается - ждать нечего: окно нажато и ушло.
+      return { pos: null, clicks, seen };
+    }
+    await page.waitForTimeout(250);
+  }
+  return { pos: null, clicks, seen };
+}
 
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
@@ -2594,43 +2732,13 @@ async function placeBet(sig) {
     const posBefore = await openPositionsCount();
     await humanClick(btn);
     mark('нажатие');
-    await page.waitForTimeout(randInt(500, 900));
-    // возможное окно подтверждения
-    // Окно подтверждения. Промах по нему НЕ должен губить ставку: клик по
-    // направлению уже прошёл, и брошенное исключение записывало ставку в
-    // ошибки, хотя на бирже она могла и открыться. Доказательство всё
-    // равно одно - счётчик позиций ниже; сюда же попадает случай, когда
-    // кнопка мигнула и исчезла сама.
-    // Ищем её так же, как кнопку направления: селектор, потом любая
-    // кнопка с таким текстом, потом ЛЮБОЙ элемент с таким текстом. В
-    // дампе от 6 сентября кнопок Confirm на странице не было вовсе -
-    // только Deposit, Place Another, Up и Down, - а окно подтверждения
-    // висело. Значит подтверждение там не button, и селектор из конфига
-    // его не видит: окно оставалось открытым и глушило все следующие
-    // ставки.
-    if (EX.selectors.confirm) {
-      try {
-        let c = page.locator(EX.selectors.confirm).first();
-        if (await c.count() === 0) {
-          c = page.locator('button, div[role=button], [class*=btn], [class*=button]')
-            .filter({ hasText: CONFIRM_WORDS }).first();
-        }
-        if (await c.count() === 0) c = page.getByText(CONFIRM_WORDS).first();
-        if (await c.count() > 0 && await c.isVisible().catch(() => false)) {
-          await humanClick(c, 3000);
-        } else {
-          log('окна подтверждения не видно - иду к счётчику позиций');
-        }
-      } catch (e) {
-        log(`подтверждение не нажалось (${String(e.message).split('\n')[0]})`
-          + ' - смотрю на счётчик позиций');
-      }
-    }
-
-    // Клик сам по себе не доказывает, что ставка открылась: он мог не
-    // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
-    // ставку размещённой только когда выросло число открытых позиций.
-    const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
+    // Окно подтверждения и проверка по счётчику позиций - одним циклом:
+    // окно может появиться не сразу, первое нажатие может не дойти, а
+    // ставка считается открытой только когда вырос счётчик.
+    const conf = EX.selectors.confirm
+      ? await confirmOrder(posBefore, CFG.confirmTimeoutMs ?? 9000)
+      : { pos: await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000), clicks: 0, seen: false };
+    const posAfter = conf.pos;
     mark('подтверждение');
     await shot(`bet-${sig.asset}-${sig.direction}`);
 
@@ -2639,7 +2747,8 @@ async function placeBet(sig) {
       return { status: 'placed-unverified', payoutPage: pv };
     }
     if (posAfter == null) {
-      log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
+      log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`
+        + (conf.seen ? `; окно подтверждения было, нажатий ${conf.clicks}` : '; окна подтверждения не было'));
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
       return { status: 'placed-unconfirmed', payoutPage: pv };

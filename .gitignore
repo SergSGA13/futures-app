@@ -12,6 +12,11 @@ __pycache__/
 
 # MEXC Executor: локальные секреты/сессия/логи - НИКОГДА не коммитить
 scripts/mexc-executor/config.json
+# Любые копии конфига (config.pre-*.json от migrate/add-asset, свои
+# configBUG.json и т.п.) - в них тот же секрет. Пример остаётся в git.
+scripts/mexc-executor/config*.json
+!scripts/mexc-executor/config.example.json
+scripts/mexc-executor/state.json
 scripts/mexc-executor/profile/
 scripts/mexc-executor/profile-*/
 scripts/mexc-executor/logs/

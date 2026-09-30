@@ -73,14 +73,6 @@
       },
       "checkPayout": true,
       "pnlSource": "dialog",
-      "assetTimings": {
-        "MU": [
-          30
-        ],
-        "NVDA": [
-          30
-        ]
-      },
       "homeAsset": "ETH",
       "dayTz": 8
     },
@@ -169,7 +161,105 @@
       },
       "checkPayout": true,
       "pnlSource": "history",
-      "pnlAt": "02:00"
+      "pnlAt": "02:00",
+      "targets": {
+        "takeProfit": 60,
+        "stopLoss": 40,
+        "resumeAt": "03:00"
+      }
+    },
+    "toobit2": {
+      "title": "Toobit-2",
+      "enabled": false,
+      "maxOpenBets": 5,
+      "minPayout": 75,
+      "minPayoutStrict": true,
+      "requirePagePayout": true,
+      "signalTimings": [
+        "TOOBIT_10m",
+        "TOOBIT_30m",
+        "10m",
+        "30m"
+      ],
+      "schedule": {
+        "hours": [
+          "000000001111111111110000",
+          "000000001111111111110000",
+          "000000001111111111110000",
+          "000000001111111111110000",
+          "000000001111111111110000",
+          "000000001111111111110000",
+          "000000001111111111110000"
+        ]
+      },
+      "execTimings": [
+        10,
+        30
+      ],
+      "stakes": {
+        "ETH": 20,
+        "BTC": 20,
+        "SOL": 20,
+        "XRP": 20
+      },
+      "stakeLimits": {
+        "ETH": 50,
+        "BTC": 50,
+        "SOL": 50,
+        "XRP": 50
+      },
+      "urls": {
+        "ETH": "https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT",
+        "BTC": "https://www.toobit.com/en-US/event-futures/BTC-SWAP-USDT",
+        "SOL": "https://www.toobit.com/en-US/event-futures/SOL-SWAP-USDT",
+        "XRP": "https://www.toobit.com/en-US/event-futures/XRP-SWAP-USDT"
+      },
+      "timeUnitText": {
+        "5": "5m",
+        "10": "10m",
+        "30": "30m",
+        "60": "60m"
+      },
+      "timeUnitAnchor": "Time Increment",
+      "marketClosedText": "Market Closed",
+      "openPositionsLabel": "Current Positions",
+      "payoutRe": "",
+      "selectors": {
+        "loginMarker": "button:has-text(\"Log In\"), button:has-text(\"Sign In\")",
+        "timeUnit": "button, div[role=button], span, li",
+        "amount": "input[placeholder*=\"USDT\"], input[inputmode=\"decimal\"], input[type=\"number\"]",
+        "up": "button:has-text(\"Up\")",
+        "down": "button:has-text(\"Down\")",
+        "confirm": "button:has-text(\"Confirm\")"
+      },
+      "payoutList": {
+        "re": "Expected Payout Ratio[^%]{0,20}?([0-9.]+)\\s*%",
+        "order": [
+          "UP",
+          "DOWN"
+        ]
+      },
+      "dirWords": {
+        "UP": "Higher",
+        "DOWN": "Lower"
+      },
+      "stakeJitterPct": 8,
+      "chartIntervals": [],
+      "chartAnchor": "",
+      "wakeOnSignal": {
+        "enabled": false,
+        "maxPerDay": 6,
+        "minGapMin": 20
+      },
+      "checkPayout": true,
+      "pnlSource": "history",
+      "pnlAt": "02:00",
+      "targets": {
+        "takeProfit": 60,
+        "stopLoss": 40,
+        "resumeAt": "03:00"
+      },
+      "profile": "toobit2"
     }
   },
   "dirLimits": {
@@ -264,6 +354,7 @@
   "pageSettleMs": 2500,
   "panelTimeoutMs": 40000,
   "confirmTimeoutMs": 9000,
+  "confirmAppearMs": 3000,
   "assetSettleMs": 6000,
   "selectors": {
     "loginMarker": "button:has-text(\"Log In\")",

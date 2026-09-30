@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings', 'backup'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -169,6 +169,13 @@ function exCfg(name) {
     // временем, если так понятнее.
     dayTz: e.dayTz ?? CFG.dayTz ?? null,
     dayStart: e.dayStart ?? CFG.dayStart ?? '',
+    // Цели смены: взяли прибыль или упёрлись в убыток - торговать по этой
+    // бирже до назначенного часа больше не нужно.
+    targets: { ...(CFG.targets || {}), ...(e.targets || {}) },
+    // Свой профиль браузера - для второго аккаунта той же биржи.
+    profile: e.profile || '',
+    // Цвет биржи в панели. Не задан - по порядку из проверенного набора.
+    color: e.color || '',
   };
   EX_CACHE.set(key, v);
   return v;
@@ -216,7 +223,7 @@ const state = {
 const MANUAL_STAKE_MIN = 5;
 const STATE_PATH = path.join(ROOT, 'state.json');
 const PERSIST = ['betsToday', 'day', 'placed', 'lastSignalAt', 'sheetRows', 'wakes', 'pnlDone',
-                 'reportDone', 'reportAt', 'reportLast'];
+                 'reportDone', 'reportAt', 'reportLast', 'stopUntil'];
 function saveState() {
   try {
     const o = {};
@@ -523,22 +530,46 @@ let ctx = null, page = null;
 // «страница показывает BTC». Со своей вкладкой каждая биржа сохраняет
 // выбранный актив и экспирацию между ставками.
 const pages = new Map();
-async function browser() {
-  if (ctx) return;
-  ctx = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(CFG.headless !== false));
-  // Окно могут закрыть крестиком - тогда ctx мёртв, и следующая ставка
-  // должна поднять новый, а не биться в закрытый контекст.
-  ctx.on('close', () => { ctx = null; page = null; pages.clear(); });
+// ── профили ──
+// Куки живут в профиле, поэтому две биржи в одном профиле - это один
+// аккаунт. Для второго аккаунта на ТОЙ ЖЕ бирже нужен свой профиль и,
+// значит, своё окно браузера: подменить куки в общем контексте нельзя -
+// биржа одна, домен один. Профиль задаётся у биржи полем profile;
+// не задан - общий, как было.
+const ctxs = new Map();
+function profileOf(name) {
+  const v = (CFG.exchanges?.[name] || {}).profile;
+  return v ? String(v) : 'default';
 }
+function profileDir(prof) {
+  return prof === 'default' ? PROFILE : path.join(ROOT, `profile-${prof}`);
+}
+async function ctxFor(prof) {
+  const have = ctxs.get(prof);
+  if (have) return have;
+  const c = await playwright.chromium.launchPersistentContext(
+    profileDir(prof), launchOpts(CFG.headless !== false));
+  ctxs.set(prof, c);
+  if (prof === 'default') ctx = c;
+  // Окно могут закрыть крестиком - тогда контекст мёртв, и следующая
+  // ставка должна поднять новый, а не биться в закрытый.
+  c.on('close', () => {
+    ctxs.delete(prof);
+    if (ctx === c) { ctx = null; page = null; }
+    for (const [n, p] of [...pages]) if (p && p.isClosed()) pages.delete(n);
+  });
+  return c;
+}
+async function browser() { await ctxFor('default'); }
 // Вкладка биржи: живая - отдаём, нет - заводим. Первую вкладку контекста
 // переиспользуем, иначе рядом всегда висела бы пустая.
 async function pageFor(name) {
-  await browser();
+  const c = await ctxFor(profileOf(name));
   const have = pages.get(name);
   if (have && !have.isClosed()) return have;
   const taken = new Set([...pages.values()]);
-  const free = ctx.pages().find(p => !p.isClosed() && !taken.has(p));
-  const p = free || await ctx.newPage();
+  const free = c.pages().find(p => !p.isClosed() && !taken.has(p));
+  const p = free || await c.newPage();
   watchNav(p);
   pages.set(name, p);
   return p;
@@ -565,12 +596,12 @@ async function closePageOf(name) {
   if (page === p) page = null;
 }
 async function closeBrowser() {
-  if (!ctx) return;
-  const c = ctx;
+  const all = [...ctxs.values()];
+  ctxs.clear();
   ctx = null; page = null; pages.clear();
-  await c.close().catch(() => {});
+  for (const c of all) await c.close().catch(() => {});
 }
-function browserOpen() { return !!ctx && openExchanges().length > 0; }
+function browserOpen() { return ctxs.size > 0 && openExchanges().length > 0; }
 
 // ── клик «как человек» ──
 // Playwright по умолчанию бьёт точно в геометрический центр элемента и
@@ -1018,7 +1049,145 @@ async function dumpModal(what) {
 // Как биржа подписывает кнопку подтверждения. Список длиннее, чем
 // хотелось бы: у MEXC это не button, у других - другое слово.
 const CONFIRM_WORDS = /^\s*(Confirm|Confirm\s*Order|Place\s*Order|OK|Submit|Подтвердить|确认|確認)\s*$/i;
+// Внутри окна подтверждения - свободнее: подпись может продолжаться
+// («Confirm Up», «Confirm (5s)»).
+const CONFIRM_LOOSE = /^\s*(Confirm|Place\s*Order|OK|Submit|Подтвердить|确认|確認)(\s|\(|$)/i;
 
+
+// Кнопка подтверждения - ТОЛЬКО внутри видимого окна. Раньше брался
+// первый на странице элемент с текстом Confirm, а им оказывался
+// невидимый или лежащий ПОД окном: клик по нему упирался в обёртку
+// ant-modal-wrap («Timeout 3000ms exceeded»), окно оставалось висеть, и
+// ставка уходила в placed-unconfirmed. Вне окна не ищем совсем. Внутри окна подпись разрешаем
+// чуть свободнее («Confirm Up», «Confirm (5s)»): там больше нечему так
+// называться. Найденный элемент помечаем атрибутом, чтобы нажать его же
+// другим способом, если первый не сработает.
+async function findConfirm() {
+  try {
+    return await page.evaluate(({ loose }) => {
+      const reLoose = new RegExp(loose, 'i');
+      const vis = el => {
+        const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+        return r.width > 4 && r.height > 4 && cs.visibility !== 'hidden'
+          && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+      };
+      for (const el of document.querySelectorAll('[data-exec-confirm]')) el.removeAttribute('data-exec-confirm');
+      const boxes = [...document.querySelectorAll('.ant-modal-content, [role="dialog"], .ant-drawer-content, .ant-popover-content')]
+        .filter(vis);
+      const pick = (scope, re) => {
+        let best = null;
+        for (const el of scope.querySelectorAll('button, [role=button], a, div, span')) {
+          const t = (el.innerText || '').trim();
+          if (!t || t.length > 30 || !re.test(t) || !vis(el)) continue;
+          // Подымаемся до кнопки, но не до целого подвала окна: у
+          // «footer-btns» тоже btn в классе, а в нём ещё и Cancel. Предок
+          // годится, только если кроме нашей подписи в нём ничего нет.
+          let btn = el.closest('button, [role=button], [class*=btn], [class*=Btn], [class*=button], [class*=Button]') || el;
+          if (btn !== el && (btn.innerText || '').trim() !== t) btn = el;
+          if (!vis(btn)) continue;
+          const r = btn.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const top = document.elementFromPoint(x, y);
+          const hit = !!top && (top === btn || btn.contains(top) || top.contains(btn));
+          const c = { x, y, hit, text: t, tag: btn.tagName.toLowerCase(), el: btn };
+          // Лучше тот, в который клик дойдёт; из равных - нижний: кнопки
+          // окна стоят в его подвале.
+          if (!best || (c.hit && !best.hit) || (c.hit === best.hit && y > best.y)) best = c;
+        }
+        return best;
+      };
+      let best = null;
+      for (const b of boxes) {
+        const c = pick(b, reLoose);
+        if (c && (!best || (c.hit && !best.hit))) best = c;
+      }
+      // Вне окна не ищем вовсе: на странице бывают свои Confirm, и нажать
+      // такой - хуже, чем не нажать ничего.
+      if (!best) return null;
+      best.el.setAttribute('data-exec-confirm', '1');
+      delete best.el;
+      return best;
+    }, { loose: CONFIRM_LOOSE.source });
+  } catch (e) { return null; }
+}
+
+// Нажать найденное. Каждая следующая попытка - другим способом: мышью в
+// точку, кликом из DOM, принудительным кликом Playwright, клавишей Enter.
+async function pressConfirm(c, n) {
+  const mark = page.locator('[data-exec-confirm]').first();
+  try {
+    if (n === 0) {
+      await mouseGlide(page, c.x, c.y); await sleep(randInt(40, 110));
+      await page.mouse.down(); await sleep(randInt(40, 90)); await page.mouse.up();
+      return `нажал «${c.text}» мышью`;
+    }
+    if (n === 1) { await mark.evaluate(el => el.click()); return `нажал «${c.text}» через DOM`; }
+    if (n === 2) { await mark.click({ force: true, timeout: 2000 }); return `нажал «${c.text}» принудительно`; }
+    await page.keyboard.press('Enter');
+    return 'нажал Enter';
+  } catch (e) {
+    return `нажать «${c.text}» не вышло (${String(e.message).split('\n')[0]})`;
+  }
+}
+
+// Подтвердить ставку и дождаться роста счётчика позиций. Окно ждём до
+// confirmAppearMs после клика по направлению: у MEXC оно выезжает с
+// анимацией и бывает позже, чем через полсекунды. Жмём до четырёх раз.
+async function confirmOrder(posBefore, timeoutMs) {
+  const t0 = Date.now(), deadline = t0 + timeoutMs;
+  const appearMs = CFG.confirmAppearMs ?? 3000;
+  let clicks = 0, seen = false, dumped = false;
+  while (Date.now() < deadline) {
+    if (posBefore != null) {
+      const now = await openPositionsCount();
+      if (now != null && now > posBefore) return { pos: now, clicks, seen };
+    }
+    let c = await findConfirm();
+    if (!c && !seen && Date.now() - t0 > 600) {
+      // Своя подпись из конфига - если биржа назвала кнопку иначе.
+      try {
+        const l = page.locator(EX.selectors.confirm);
+        const n = await l.count();
+        for (let i = 0; i < n && !c; i++) {
+          const b = await l.nth(i).boundingBox().catch(() => null);
+          const inModal = await l.nth(i).evaluate(el => !!el.closest(
+            '.ant-modal-content, [role="dialog"], .ant-drawer-content, .ant-popover-content')).catch(() => false);
+          if (inModal && b && b.width > 4 && await l.nth(i).isVisible().catch(() => false)) {
+            await l.nth(i).evaluate(el => el.setAttribute('data-exec-confirm', '1'));
+            c = { x: b.x + b.width / 2, y: b.y + b.height / 2, text: 'из конфига' };
+          }
+        }
+      } catch (e) {}
+    }
+    if (c) {
+      seen = true;
+      if (clicks < 4) {
+        log('подтверждение: ' + await pressConfirm(c, clicks)
+          + (clicks ? ` (попытка ${clicks + 1})` : '') + (c.hit === false ? ', кнопка чем-то накрыта' : ''));
+        clicks++;
+        await page.waitForTimeout(clicks === 1 ? 400 : 700);
+        continue;
+      }
+      if (!dumped) {
+        dumped = true;
+        log('окно подтверждения не уходит после четырёх нажатий');
+        await dumpModal('подтверждение');
+        await shot('confirm-stuck');
+      }
+    } else if (!seen && Date.now() - t0 > appearMs && !dumped) {
+      // Окна нет, а позиция не выросла: может, окно без слова Confirm.
+      const m = await modalOver();
+      if (m) { dumped = true; log('после клика висит окно, но кнопки подтверждения в нём не нашёл');
+               await dumpModal(m); }
+      if (posBefore == null) return { pos: null, clicks, seen };
+    } else if (posBefore == null && seen) {
+      // Счётчик не читается - ждать нечего: окно нажато и ушло.
+      return { pos: null, clicks, seen };
+    }
+    await page.waitForTimeout(250);
+  }
+  return { pos: null, clicks, seen };
+}
 
 async function waitForPanel() {
   const deadline = Date.now() + (CFG.panelTimeoutMs ?? 40000);
@@ -1158,7 +1327,15 @@ async function payoutByButtons() {
 // направления, и по паре целиком. Не устоялась за отведённое время -
 // возвращаем null: пропустить ставку дешевле, чем открыть её вслепую.
 let payoutTouched = 0;
-function touchPayout(why) { payoutTouched = Date.now(); if (why) lastTouch = why; }
+// Пара выплат ДО нажатия по чипу. Если после нажатия пара уже другая,
+// страница видимо пересчиталась - и ждать полный срок незачем: две
+// совпавших чтения новой пары и есть свежая выплата. Ждать полный срок
+// приходится, только когда пара та же - тогда не отличить прежние
+// проценты от новых, совпавших случайно.
+let payoutBefore = '';
+function touchPayout(why, before) {
+  payoutTouched = Date.now(); if (why) lastTouch = why; payoutBefore = before || '';
+}
 let lastTouch = '';
 async function payoutStable(direction, ms) {
   const settle = Math.max(0, CFG.payoutSettleMs ?? 2000);
@@ -1174,12 +1351,14 @@ async function payoutStable(direction, ms) {
     await page.waitForTimeout(350);
     const now = await pagePayout(direction);
     tries++;
-    if (now != null && now === prev && pair() === prevPair && Date.now() >= notBefore) {
+    const fpNow = payoutBefore ? await payoutFingerprint().catch(() => null) : null;
+    const moved = !!(payoutBefore && fpNow && fpNow !== payoutBefore);
+    if (now != null && now === prev && pair() === prevPair && (Date.now() >= notBefore || moved)) {
       if (tries > 2 || notBefore) {
         log(`выплата устоялась: ${now}%`
           + (lastTouch ? ` (${Math.round((Date.now() - payoutTouched) / 100) / 10} с после «${lastTouch}»)` : ''));
       }
-      payoutTouched = 0; lastTouch = '';
+      payoutTouched = 0; lastTouch = ''; payoutBefore = '';
       return now;
     }
     if (prev != null && now != null && now !== prev) {
@@ -1979,6 +2158,44 @@ async function ensureTimeframe(tfText) {
 }
 
 // ── ставка ──
+// ── где уходит время ставки ──
+// Итоговая задержка ничего не говорит о том, ЧТО ускорять. Ставка
+// отмечает этапы, а pump после неё пишет строку в logs/timing.csv - что бы
+// ставка ни вернула. Отметка ставится в КОНЦЕ этапа; длительность этапа -
+// разница с предыдущей.
+const STAGES = ['страница', 'актив', 'экспирация', 'выплата', 'сумма', 'цена', 'нажатие', 'подтверждение'];
+const TIMING_HEAD = 'time,exchange,asset,timing,status,queue_ms,'
+  + STAGES.map((_, i) => `s${i}_ms`).join(',') + ',total_ms';
+let betClock = null;
+function clockStart(sig) { betClock = { sig, t0: Date.now(), marks: {} }; }
+function mark(stage) { if (betClock && !(stage in betClock.marks)) betClock.marks[stage] = Date.now(); }
+function clockWrite(status) {
+  const c = betClock; betClock = null;
+  if (!c) return;
+  const queue = Math.max(0, c.t0 - (c.sig.receivedAt || c.t0));
+  let prev = c.t0;
+  const parts = STAGES.map(st => {
+    const at = c.marks[st];
+    if (!at) return '';
+    const d = at - prev; prev = at; return String(Math.max(0, d));
+  });
+  const total = Date.now() - (c.sig.receivedAt || c.t0);
+  const f = path.join(LOGS, 'timing.csv');
+  try {
+    if (!fs.existsSync(f)) fs.writeFileSync(f, TIMING_HEAD + '\n');
+    fs.appendFileSync(f, [new Date().toISOString(), c.sig.ex, c.sig.asset, c.sig.timing, status,
+      queue, ...parts, total].join(',') + '\n');
+  } catch (e) { /* замер - не повод ронять ставку */ }
+  const sec = ms => (ms / 1000).toFixed(1);
+  const shown = [`очередь ${sec(queue)}`];
+  prev = c.t0;
+  for (const st of STAGES) {
+    const at = c.marks[st]; if (!at) continue;
+    shown.push(`${st} ${sec(at - prev)}`); prev = at;
+  }
+  log(`этапы (${status}, всего ${sec(total)}с): ${shown.join(' · ')}`);
+}
+
 async function placeBet(sig) {
   const t0 = Date.now();
   // С этой строки и до конца ставки все страничные помощники смотрят в
@@ -2095,6 +2312,7 @@ async function placeBet(sig) {
       throw new Error('торговая панель не отрисовалась за две попытки - смотри ДАМП выше');
     }
     log('панель готова, поле суммы: ' + ready.sel);
+    mark('страница');
 
     // Окно, которое не удалось закрыть даже перезагрузкой, - это стоп
     // торговли, а не одна неудачная ставка: каждый клик будет уходить в
@@ -2105,6 +2323,14 @@ async function placeBet(sig) {
     // просто смотрим, а ПРОБУЕМ закрыть - отказ без попытки был моей
     // ошибкой: 6 сентября ставка отбилась через четыре миллисекунды после
     // «панель готова», то есть не пытался никто.
+    // Цели смены проверяем на готовой странице: итог дня считает сама
+    // биржа, и читать его больше неоткуда. Проверка стоит одно чтение
+    // блока, зато после взятой цели ставок уже не будет.
+    const hit = await targetHit(sig.ex).catch(() => '');
+    if (hit) {
+      log(`пропуск ${sig.asset} ${sig.direction}: ${hit}`);
+      return { status: 'skip-target', note: hit };
+    }
     let stuck = await modalOver();
     if (stuck) { await dismissModal('перед ставкой').catch(() => {}); stuck = await modalOver(); }
     if (stuck) {
@@ -2179,6 +2405,7 @@ async function placeBet(sig) {
     // Определить не удалось - идём дальше с записью: жёсткий отказ на этом
     // основании остановил бы все ставки, если биржа сменит заголовок.
     log(seen ? `актив страницы ${seen} совпал` : 'актив страницы по заголовку не определить');
+    mark('актив');
     // Отметка переходов: если к моменту нажатия она изменилась, значит
     // страницу увели ПОСЛЕ всех проверок, и увели не мы.
     const navAt = pageNav(page);
@@ -2227,6 +2454,12 @@ async function placeBet(sig) {
     // ошибиться тут значит открыть ставку не на те минуты - и прочитать
     // выплату чужой экспирации.
     const tfText = EX.timeUnitText[String(sig.timing)] || '10m';
+    // Отпечаток выплат страницы ДО смены экспирации: все проценты, что
+    // биржа показывает, одной строкой. Пару «Up/Down» из pagePayout тут
+    // брать нельзя - она заполняется не каждым способом чтения, и снимок
+    // выходил пустым, а с пустым снимком ускорение не срабатывало вовсе.
+    const pairBefore = (EX.checkPayout || EX.requirePagePayout)
+      ? (await payoutFingerprint().catch(() => null)) || '' : '';
     const tf = await ensureTimeframe(tfText);
     if (tf.missing) {
       await shot('no-expiry');
@@ -2240,7 +2473,7 @@ async function placeBet(sig) {
       // Проценты после смены минут биржа пересчитывает не мгновенно.
       // «По разметке» без единого нажатия - страницу не трогали, ждать
       // нечего; во всех прочих случаях чипы жали, и выплата поедет.
-      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`);
+      if (tf.tries || tf.how !== 'по разметке') touchPayout(`экспирация ${tf.how || 'выбрана'}`, pairBefore);
       log(`экспирация ${tfText} выбрана`
         + (tf.tries ? ` (нажатий: ${tf.tries}, ${tf.how})` : (tf.how ? ` (${tf.how})` : '')));
     } else if (tf.cur == null) {
@@ -2286,7 +2519,9 @@ async function placeBet(sig) {
     // вслепую»: 5 сентября так ушли пять ставок по 72-74% при пороге 76,
     // и в журнале у них пустая колонка выплаты - читать её было некому.
     const readPayout = EX.checkPayout || EX.requirePagePayout;
+    mark('экспирация');
     const pv = readPayout ? await payoutStable(sig.direction) : null;
+    mark('выплата');
     if (!readPayout) log('проверка выплаты выключена - беру условия страницы как есть');
     else if (!EX.checkPayout) {
       log(`проверка выплаты выключена, но на ${EX.title} она обязательна - читаю`);
@@ -2307,9 +2542,32 @@ async function placeBet(sig) {
     } else if (EX.minPayoutStrict ? pv <= need : pv < need) {
       // Раньше этот исход писался только в bets.csv, и в логе ставка
       // просто обрывалась после «панель готова» - выглядело как зависание.
-      log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`);
+      // Всё, что нужно для разбора, - в журнал. Источник сигнала уже
+      // проверил выплату, и отказ здесь значит одно из двух: либо она
+      // уехала за те секунды, что сигнал шёл до кнопки, либо мы прочитали
+      // не ту сторону. Первое видно по разнице с выплатой из сигнала,
+      // второе - по тому, что выплата из сигнала совпала с соседней
+      // стороной страницы.
+      const lp = lastPayouts;
+      const other = lp ? lp[sig.direction === 'UP' ? 'DOWN' : 'UP'] : null;
+      const srcPv = Number(sig.payout);
+      const hasSrc = Number.isFinite(srcPv) && srcPv > 0;
+      const mixed = hasSrc && other != null && Math.abs(other - srcPv) < 0.6
+        && Math.abs(pv - srcPv) >= 1;
+      const note = [
+        lp ? `${EX.dirWords.UP || 'Up'} ${lp.UP}% / ${EX.dirWords.DOWN || 'Down'} ${lp.DOWN}% (${lp.how})` : '',
+        hasSrc ? `в сигнале ${srcPv}%` : '',
+        hasSrc ? `за ${((Date.now() - (sig.receivedAt || t0)) / 1000).toFixed(0)}с уехала на ${(srcPv - pv).toFixed(1)}` : '',
+        mixed ? 'ПОХОЖЕ, ПРОЧИТАНА ЧУЖАЯ СТОРОНА' : '',
+      ].filter(Boolean).join('; ');
+      log(`пропуск ${sig.asset} ${sig.direction}: выплата на странице ${pv}%, нужно ${cmp} ${need}%`
+        + (note ? ` [${note}]` : ''));
+      if (mixed) {
+        log(`!! выплата из сигнала ${srcPv}% совпала с соседней стороной страницы, а не с ${sig.direction}`
+          + ' - привязка процента к кнопке могла ошибиться, смотри снимок payout-low');
+      }
       await shot('payout-low');
-      return { status: 'skip-payout', payoutPage: pv };
+      return { status: 'skip-payout', payoutPage: pv, note };
     } else {
       const pair = lastPayouts
       ? ` [${EX.dirWords.UP || 'Up'} ${lastPayouts.UP}% / ${EX.dirWords.DOWN || 'Down'} ${lastPayouts.DOWN}%, ${lastPayouts.how}]`
@@ -2321,6 +2579,7 @@ async function placeBet(sig) {
     // Поле суммы уже найдено при ожидании панели
     const amount = ready.loc;
     await humanFill(amount, betStake(sig));
+    mark('сумма');
     await page.waitForTimeout(randInt(250, 700));
 
     // кнопка Up / Down
@@ -2463,6 +2722,7 @@ async function placeBet(sig) {
       }
     }
 
+    mark('цена');
     if (state.dryRun) {
       await shot(`dryrun-${sig.asset}-${sig.direction}`);
       log(`DRY-RUN: дошёл до кнопки ${sig.direction}, ставка ${betStake(sig)} USDT, payout ${pv}% - не нажимаю`);
@@ -2471,43 +2731,15 @@ async function placeBet(sig) {
 
     const posBefore = await openPositionsCount();
     await humanClick(btn);
-    await page.waitForTimeout(randInt(500, 900));
-    // возможное окно подтверждения
-    // Окно подтверждения. Промах по нему НЕ должен губить ставку: клик по
-    // направлению уже прошёл, и брошенное исключение записывало ставку в
-    // ошибки, хотя на бирже она могла и открыться. Доказательство всё
-    // равно одно - счётчик позиций ниже; сюда же попадает случай, когда
-    // кнопка мигнула и исчезла сама.
-    // Ищем её так же, как кнопку направления: селектор, потом любая
-    // кнопка с таким текстом, потом ЛЮБОЙ элемент с таким текстом. В
-    // дампе от 6 сентября кнопок Confirm на странице не было вовсе -
-    // только Deposit, Place Another, Up и Down, - а окно подтверждения
-    // висело. Значит подтверждение там не button, и селектор из конфига
-    // его не видит: окно оставалось открытым и глушило все следующие
-    // ставки.
-    if (EX.selectors.confirm) {
-      try {
-        let c = page.locator(EX.selectors.confirm).first();
-        if (await c.count() === 0) {
-          c = page.locator('button, div[role=button], [class*=btn], [class*=button]')
-            .filter({ hasText: CONFIRM_WORDS }).first();
-        }
-        if (await c.count() === 0) c = page.getByText(CONFIRM_WORDS).first();
-        if (await c.count() > 0 && await c.isVisible().catch(() => false)) {
-          await humanClick(c, 3000);
-        } else {
-          log('окна подтверждения не видно - иду к счётчику позиций');
-        }
-      } catch (e) {
-        log(`подтверждение не нажалось (${String(e.message).split('\n')[0]})`
-          + ' - смотрю на счётчик позиций');
-      }
-    }
-
-    // Клик сам по себе не доказывает, что ставка открылась: он мог не
-    // дойти, форма могла отклонить сумму, могло всплыть окно. Считаем
-    // ставку размещённой только когда выросло число открытых позиций.
-    const posAfter = await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000);
+    mark('нажатие');
+    // Окно подтверждения и проверка по счётчику позиций - одним циклом:
+    // окно может появиться не сразу, первое нажатие может не дойти, а
+    // ставка считается открытой только когда вырос счётчик.
+    const conf = EX.selectors.confirm
+      ? await confirmOrder(posBefore, CFG.confirmTimeoutMs ?? 9000)
+      : { pos: await waitPositionsGrow(posBefore, CFG.confirmTimeoutMs ?? 9000), clicks: 0, seen: false };
+    const posAfter = conf.pos;
+    mark('подтверждение');
     await shot(`bet-${sig.asset}-${sig.direction}`);
 
     if (posBefore == null) {
@@ -2515,7 +2747,8 @@ async function placeBet(sig) {
       return { status: 'placed-unverified', payoutPage: pv };
     }
     if (posAfter == null) {
-      log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`);
+      log(`!! клик прошёл, но позиций как было ${posBefore}, так и осталось`
+        + (conf.seen ? `; окно подтверждения было, нажатий ${conf.clicks}` : '; окна подтверждения не было'));
       await dumpPage('not-confirmed');
       await tgAlert(`клик по ${sig.asset} ${sig.direction} прошёл, но позиция НЕ появилась - проверь биржу вручную`);
       return { status: 'placed-unconfirmed', payoutPage: pv };
@@ -2652,7 +2885,22 @@ function namedExchange(sig) {
 function exchangeByTiming(sig, asset) {
   const raw = String(sig.timing ?? '').toLowerCase().trim();
   if (!raw) return '';
-  let hit = exNames().find(n => exCfg(n).signalTimings.includes(raw));
+  // Одну метку могут заявить несколько бирж: два аккаунта Toobit
+  // работают сменами и получают один и тот же поток. Раньше выигрывала
+  // первая по списку - второй аккаунт не получил бы ни одного сигнала,
+  // а в часы, когда первый молчит, сигнал отбивался бы как «вне смены».
+  // Поэтому из заявивших берём ту, что сейчас в смене.
+  const claim = exNames().filter(n => exCfg(n).signalTimings.includes(raw)
+    && (!asset || (exCfg(n).urls || {})[asset]));
+  let hit = claim[0];
+  if (claim.length > 1) {
+    const onShift = claim.filter(n => inActiveHours(null, n));
+    if (onShift.length) hit = onShift[0];
+    if (onShift.length > 1) {
+      log(`метку "${raw}" заявили ${onShift.map(n => exCfg(n).title).join(' и ')}, и обе`
+        + ` сейчас в смене - беру ${exCfg(hit).title}; часы у них лучше не пересекать`);
+    }
+  }
   // Метка вида "TOOBIT_10m" / "MEXC_30m" называет биржу прямо в себе.
   // Разбираем префикс, даже если такую метку не успели прописать в
   // signalTimings: источник может завести новую в любой момент.
@@ -2810,6 +3058,12 @@ function acceptSignal(sig, src) {
     return skip('unknown-tag', 'skip-unknown-tag',
       `метка потока "${sig.tagUnknown}" не заявлена ни одной биржей`
       + ' - принимаю только заявленные');
+  }
+  const until = stoppedUntil(sig.ex);
+  if (until) {
+    return skip('target', 'skip-target',
+      `${exCfg(sig.ex).title}: цели смены достигнуты, пауза до `
+      + `${new Date(until).toTimeString().slice(0, 5)}`);
   }
   const allow = timingsFor(sig.asset, sig.ex);
   if (allow.indexOf(sig.timing) < 0) {
@@ -3021,7 +3275,9 @@ async function pump() {
         markWake(sig.ex);
         if (!browserOpen()) log('биржа спала - холодный старт займёт лишние секунды');
       }
+      clockStart(sig);
       const r = await placeBet(sig);
+      clockWrite(r.status);
       // Заметка складывается: множитель пачки и, если цена участвовала в
       // решении, насколько вход отличался от сигнала. Без этого пропуск
       // по цене выглядел бы в журнале необъяснимым.
@@ -3055,6 +3311,7 @@ async function pump() {
     }
   } catch (e) {
     state.consecutiveErrors++;
+    clockWrite('error');
     log(`ОШИБКА ставки ${exCfg(sig.ex).title} ${sig.asset} ${sig.direction}: ${e.message}`);
     logBet({ ...sig, stake: betStake(sig), mode, status: 'error', note: e.message });
     await tgAlert(`ошибка ставки ${sig.asset} ${sig.direction}: ${e.message}`);
@@ -3606,6 +3863,75 @@ async function histSnap() {
   }, HIST_FIELDS.map(([k, re]) => [k, { source: re.source, flags: re.flags }]));
 }
 
+// ── цели смены: прибыль и убыток ──
+// Биржа сама считает итог дня в блоке «Trade History», вкладка Today.
+// Дошли до цели - торговать по этой бирже больше незачем: дальше или
+// отдаём заработанное, или догоняем убыток. Стоп держится до назначенного
+// часа, по умолчанию до трёх ночи.
+function targetsCfg(name) {
+  const t = exCfg(name).targets || {};
+  const num = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.abs(Number(v)) : null);
+  return {
+    tp: num(t.takeProfit), sl: num(t.stopLoss),
+    resumeAt: String(t.resumeAt || '03:00'),
+    on: !!(num(t.takeProfit) || num(t.stopLoss)),
+  };
+}
+// Ближайший назначенный час в будущем.
+function nextAt(hhmmText) {
+  const { hour, min } = hhmm(hhmmText, '03:00');
+  const d = new Date(); d.setHours(hour, min, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+function stoppedUntil(name) {
+  const t = (state.stopUntil || {})[name];
+  return t && t > Date.now() ? t : 0;
+}
+function stopTrading(name, why, until) {
+  state.stopUntil = state.stopUntil || {};
+  state.stopUntil[name] = until;
+  saveState();
+  const when = new Date(until).toTimeString().slice(0, 5);
+  log(`${exCfg(name).title}: ${why} - до ${when} ставок по этой бирже не будет`);
+  tgAlert(`${exCfg(name).title}: ${why}. Пауза до ${when}.`).catch(() => {});
+}
+
+// Итог дня глазами биржи: вкладка Today того же блока.
+async function todayPnl() {
+  const snap = await histSnap();
+  if (!snap) return null;
+  // Уже на Today - читаем как есть, иначе переключаем.
+  if (!/today/i.test(snap.tab)) {
+    const tab = page.getByText(/^\s*Today\s*$/i).first();
+    if (await tab.count() > 0 && await tab.isVisible().catch(() => false)) {
+      await humanClick(tab).catch(() => {});
+      await page.waitForTimeout(900);
+    }
+  }
+  const now = await histSnap();
+  if (!now || !/today/i.test(now.tab || 'Today')) return null;
+  return Number.isFinite(now.pnl) ? now.pnl : null;
+}
+
+// Проверка перед ставкой: дошли ли до цели. Возвращает причину отказа
+// или пустую строку.
+async function targetHit(name) {
+  const T = targetsCfg(name);
+  if (!T.on) return '';
+  const pnl = await todayPnl();
+  if (pnl == null) { log(`${exCfg(name).title}: итог дня прочитать не удалось - цели не проверяю`); return ''; }
+  if (T.tp != null && pnl >= T.tp) {
+    stopTrading(name, `цель по прибыли взята: ${pnl} USDT при цели ${T.tp}`, nextAt(T.resumeAt));
+    return `цель по прибыли взята (${pnl} USDT)`;
+  }
+  if (T.sl != null && pnl <= -T.sl) {
+    stopTrading(name, `предел убытка достигнут: ${pnl} USDT при пределе -${T.sl}`, nextAt(T.resumeAt));
+    return `предел убытка достигнут (${pnl} USDT)`;
+  }
+  return '';
+}
+
 async function readTradeHistory() {
   const before = await histSnap();
   if (!before) { log('блок «Trade History» на странице не найден'); return null; }
@@ -3934,6 +4260,7 @@ const SKIP_NAMES = {
   'skip-dir-limit': 'предел ставок в одну сторону', 'skip-stale': 'сигнал устарел',
   'skip-market-closed': 'рынок закрыт', 'skip-unknown-tag': 'чужая метка потока',
   'skip-quiet-wake': 'вне смены, пробуждений не осталось',
+  'skip-target': 'цели смены взяты, пауза',
   'error': 'ошибка страницы', 'test-mode': 'тестовый режим',
 };
 const SKIP_ICONS = {
@@ -3942,7 +4269,7 @@ const SKIP_ICONS = {
   'skip-price': '💱', 'skip-price-unknown': '❔',
   'skip-expiry': '⏱', 'skip-timeframe': '⏱', 'skip-redirect': '↩️',
   'skip-modal': '🪟', 'skip-dir-limit': '⚖️', 'skip-stale': '🕐',
-  'skip-market-closed': '🚪', 'skip-unknown-tag': '🏷', 'error': '❗',
+  'skip-market-closed': '🚪', 'skip-unknown-tag': '🏷', 'skip-target': '🎯', 'error': '❗',
 };
 const skipName = k => SKIP_NAMES[k] || k;
 
@@ -4395,6 +4722,30 @@ function pnlSeries(days, only) {
 // исполнитель, а панель - показать. Результат кешируется по времени
 // изменения файла: журнал перечитывается каждые несколько секунд.
 let statsCache = { key: '', val: null };
+// Медиана каждого этапа за срок - по ставкам, дошедшим до нажатия.
+// Отказы по дороге в выборку не берём: у них этапов меньше, и ставка,
+// отбитая на выплате, тянула бы «нажатие» вниз, которого у неё не было.
+function stageStats(since) {
+  const f = path.join(LOGS, 'timing.csv');
+  if (!fs.existsSync(f)) return null;
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  const head = (lines.shift() || '').split(',');
+  const col = k => head.indexOf(k);
+  const rows = lines.map(l => l.split(',')).filter(c => {
+    const t = Date.parse(c[col('time')]);
+    return t >= since && /^placed|^dry-run/.test(c[col('status')]);
+  });
+  if (!rows.length) return null;
+  const med = arr => { const v = arr.filter(Number.isFinite).sort((a, b) => a - b);
+    return v.length ? v[Math.floor(v.length / 2)] : null; };
+  const out = [{ name: 'очередь', ms: med(rows.map(c => Number(c[col('queue_ms')]))) }];
+  STAGES.forEach((st, i) => {
+    const k = col(`s${i}_ms`);
+    out.push({ name: st, ms: med(rows.map(c => (c[k] === '' ? NaN : Number(c[k])))) });
+  });
+  return { n: rows.length, parts: out.filter(x => x.ms != null) };
+}
+
 function betStats(days) {
   const f = path.join(LOGS, 'bets.csv');
   if (!fs.existsSync(f)) return { days, total: 0, reasons: [], lag: null };
@@ -4439,6 +4790,8 @@ function betStats(days) {
     reasons: [...counts.entries()].map(([status, n]) => ({ status, n }))
       .sort((a, b) => b.n - a.n),
     lag: lags.length ? { n: lags.length, median: at(0.5), p90: at(0.9), max: lags[lags.length - 1] } : null,
+    stages: stageStats(since),
+    burst: !!(CFG.burst || {}).enabled,
   };
   statsCache = { key, val };
   return val;
@@ -4484,6 +4837,9 @@ function snapshot() {
           // настройка актива, которую нельзя было увидеть, не открыв
           // config.json.
           assetTimings: Object.fromEntries(assets.map(a => [a, timingsFor(a, n)])),
+          targets: targetsCfg(n),
+          color: e.color,
+          stopUntil: stoppedUntil(n) || null,
           minPayout: e.minPayout,
           minPayoutStrict: e.minPayoutStrict,
           stakeJitterPct: e.stakeJitterPct,
@@ -4590,6 +4946,35 @@ function applySettings(s) {
         own[a] = v;
       }
       exReset();
+    }
+  }
+  // Цели смены. Правка целей снимает текущую паузу: подняли цель прибыли -
+  // значит хотите торговать дальше, и держать стоп по старой цели было бы
+  // странно. Если новая цель тоже уже взята, стоп вернётся на первой же
+  // ставке.
+  if (s.targets) {
+    for (const n of exNames()) {
+      const w = s.targets[n];
+      if (!w || typeof w !== 'object') continue;
+      const e = CFG.exchanges[n];
+      const was = JSON.stringify(targetsCfg(n));
+      const cur = { ...(e.targets || {}) };
+      for (const k of ['takeProfit', 'stopLoss']) {
+        if (w[k] === '' || w[k] == null) { delete cur[k]; continue; }
+        const v = Math.abs(Number(w[k]));
+        if (Number.isFinite(v) && v > 0) cur[k] = Math.round(v * 100) / 100; else delete cur[k];
+      }
+      if (w.resumeAt) cur.resumeAt = hhmm(w.resumeAt, '03:00').at;
+      e.targets = cur;
+      exReset();
+      if (JSON.stringify(targetsCfg(n)) !== was) {
+        changed.push(`цели ${exCfg(n).title}: прибыль ${cur.takeProfit ?? '—'}, `
+          + `убыток ${cur.stopLoss ?? '—'}`);
+        if (state.stopUntil && state.stopUntil[n]) {
+          delete state.stopUntil[n]; saveState();
+          log(`${exCfg(n).title}: цели изменены - пауза снята`);
+        }
+      }
     }
   }
   // Порог выплаты - тоже по биржам: на MEXC он страховка поверх сигнала,
@@ -5221,12 +5606,17 @@ function migrateMode() {
 
 // ── режим login ──
 async function loginMode() {
-  // node executor.js login [биржа] - профиль браузера общий, но войти
-  // надо в каждую биржу отдельно.
-  const E = exCfg((process.argv[3] || '').toLowerCase() || defaultEx());
+  // node executor.js login [биржа] - войти надо в каждую биржу отдельно,
+  // а у биржи со своим profile это ещё и отдельное окно: два аккаунта
+  // одной биржи в общем профиле были бы одним аккаунтом.
+  const name = (process.argv[3] || '').toLowerCase() || defaultEx();
+  const E = exCfg(name);
+  const prof = profileOf(name);
+  const dir = profileDir(prof);
   console.log(`Открываю окно браузера. Войди в аккаунт ${E.title}, реши капчу,`);
   console.log('убедись что видишь страницу Event Futures, затем закрой окно.');
-  const c = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(false));
+  if (prof !== 'default') console.log(`Профиль этой биржи отдельный: ${path.basename(dir)}`);
+  const c = await playwright.chromium.launchPersistentContext(dir, launchOpts(false));
   const p = c.pages()[0] || await c.newPage();
   const first = Object.values(E.urls)[0];
   if (!first) { console.error(`у биржи ${E.title} не задан ни один адрес в urls`); process.exit(1); }
@@ -5240,7 +5630,7 @@ async function loginMode() {
   console.log('\nПроверяю, сохранился ли вход...');
   let still = null;
   try {
-    const c2 = await playwright.chromium.launchPersistentContext(PROFILE, launchOpts(true));
+    const c2 = await playwright.chromium.launchPersistentContext(dir, launchOpts(true));
     const p2 = c2.pages()[0] || await c2.newPage();
     await p2.goto(first, { waitUntil: 'domcontentloaded', timeout: 25000 });
     await p2.waitForTimeout(CFG.pageSettleMs ?? 2500);
@@ -5575,6 +5965,168 @@ function timingsMode(exName, key, minutes) {
 //   node executor.js backup              config, журналы, подложка
 //   node executor.js backup --profile    плюс профиль браузера (сессии)
 //   node executor.js backup D:\Копии     положить в свою папку
+// Архив средствами системы: ради команды раз в месяц тащить зависимость
+// незачем. На Windows - через .NET ZipFile, а не Compress-Archive: тот
+// пропускает скрытые папки, а .git на Windows скрытая - без неё на новом
+// компьютере не заработал бы git pull. inner - класть в архив содержимое
+// папки, а не её саму. Возвращает путь к архиву или ''.
+function zipDir(dir, inner = false) {
+  const zip = dir + '.zip';
+  try {
+    const { execFileSync } = require('child_process');
+    if (fs.existsSync(zip)) fs.rmSync(zip, { force: true });
+    if (process.platform === 'win32') {
+      const q = t => t.replace(/'/g, "''");
+      try {
+        execFileSync('powershell', ['-NoProfile', '-Command',
+          `Add-Type -AssemblyName System.IO.Compression.FileSystem; `
+          + `[System.IO.Compression.ZipFile]::CreateFromDirectory('${q(dir)}', '${q(zip)}', 'Optimal', ${inner ? '$false' : '$true'})`],
+          { stdio: 'ignore' });
+      } catch (e) {
+        execFileSync('powershell', ['-NoProfile', '-Command',
+          `Compress-Archive -Path '${q(dir)}${inner ? '\\*' : ''}' -DestinationPath '${q(zip)}' -Force`], { stdio: 'ignore' });
+      }
+    } else {
+      if (inner) execFileSync('zip', ['-qr', zip, '.'], { cwd: dir, stdio: 'ignore' });
+      else execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: path.dirname(dir), stdio: 'ignore' });
+    }
+    return fs.existsSync(zip) ? zip : '';
+  } catch (e) { return ''; }
+}
+
+// ── режим move: всё для переезда на другой компьютер ──
+// Копия (backup) - это то, чего нет в git. Для переезда нужен весь проект:
+// код вместе с историей git, чтобы на новом месте работал git pull, плюс
+// config.json, журналы и доходность. Не берём три вещи, и все три
+// нарочно: node_modules ставится заново под новую систему; профили
+// браузера на другой ОС не прочитаются - куки зашифрованы ключом системы
+// (на Windows - DPAPI, на Маке - Связка ключей), и вход на биржи всё равно
+// придётся повторить; снимки страниц - сотни мегабайт разовой ценности.
+//
+//   node executor.js move            положить в backup/
+//   node executor.js move D:\Флешка  положить сразу на флешку
+function moveMode(args) {
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  // Корень проекта - на два уровня выше исполнителя, если это и правда
+  // репозиторий; иначе берём одну папку исполнителя.
+  const up = path.resolve(ROOT, '..', '..');
+  const repo = fs.existsSync(path.join(up, 'scripts')) ? up : ROOT;
+  const out = path.resolve(where || path.join(ROOT, 'backup'));
+  const holder = path.join(out, `futures-app-move-${stamp}`);
+  const dst = path.join(holder, path.basename(repo));
+  fs.mkdirSync(holder, { recursive: true });
+
+  const skipped = new Set();
+  const skip = (src) => {
+    const rel = path.relative(repo, src);
+    if (!rel) return false;
+    const parts = rel.split(path.sep);
+    if (parts.includes('node_modules')) { skipped.add('node_modules'); return true; }
+    const inExec = path.relative(ROOT, src);
+    if (!inExec.startsWith('..')) {
+      const top = inExec.split(path.sep)[0];
+      if (/^profile(-.+)?$/.test(top)) { skipped.add(top); return true; }
+      if (top === 'backup') return true;
+      if (inExec === path.join('logs', 'shots')) { skipped.add('logs/shots'); return true; }
+    }
+    return false;
+  };
+  fs.cpSync(repo, dst, { recursive: true, filter: (src) => !skip(src) });
+
+  let size = 0;
+  const walk = (p3) => { for (const f of fs.readdirSync(p3, { withFileTypes: true })) {
+    const full = path.join(p3, f.name);
+    if (f.isDirectory()) walk(full); else size += fs.statSync(full).size; } };
+  try { walk(holder); } catch (e) {}
+
+  // В архиве сразу futures-app/ - распаковал и готово, без лишней обёртки.
+  const zip = zipDir(holder, true);
+  const has = (p4) => fs.existsSync(path.join(dst, path.relative(repo, p4)));
+  console.log(`Архив для переезда: ${zip || holder}`);
+  console.log(`  размер ${(size / 1048576).toFixed(1)} МБ`);
+  console.log(`  config.json ${has(CFG_PATH) ? 'взят' : 'НЕ НАЙДЕН'}, журналы ${has(LOGS) ? 'взяты' : 'не найдены'},`
+    + ` история git ${fs.existsSync(path.join(dst, '.git')) ? 'взята' : 'не найдена'}`);
+  if (skipped.size) console.log(`  не взято нарочно: ${[...skipped].join(', ')}`);
+  console.log('');
+  console.log('Профили браузера на другой системе не прочитаются - на новом компьютере');
+  console.log('войди в каждую биржу заново: node executor.js login <биржа>.');
+  console.log(`Инструкция для Мака лежит внутри: ${path.relative(repo, path.join(ROOT, 'MAC.md'))}`);
+  console.log('');
+  console.log('Внутри секрет панели и токен бота - переноси на своей флешке, не через общие облака.');
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
+// ── режим kit: комплект такой же панели для другого человека ──
+// Не путать с move: там переезжают СВОИ настройки и журналы, а здесь
+// человек заводит свою панель со своими аккаунтами. Поэтому в комплекте
+// только то, что лежит в git (чистый клон, без чужих незакоммиченных
+// файлов), и config.json, собранный из твоего: ставки, активы, расписание
+// и пороги те же, но секрет новый, токены Telegram пустые, dry-run
+// включён. Журналов, доходности, state.json и профилей нет вовсе.
+//   node executor.js kit            положить в backup/
+//   node executor.js kit D:\Флешка  сразу на флешку
+const SECRET_KEYS = new Set(['token', 'chatid', 'tgtoken', 'tgchatid', 'password', 'apikey', 'apisecret']);
+function scrubSecrets(o) {
+  if (Array.isArray(o)) return o.map(scrubSecrets);
+  if (!o || typeof o !== 'object') return o;
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    out[k] = SECRET_KEYS.has(k.toLowerCase()) && typeof v !== 'object' ? '' : scrubSecrets(v);
+  }
+  return out;
+}
+function kitMode(args) {
+  const { execFileSync } = require('child_process');
+  const where = args.find(a => a && !a.startsWith('--'));
+  const d = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  let repo;
+  try {
+    repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  } catch (e) {
+    console.log('Нужен git: комплект собирается чистым клоном репозитория.');
+    process.exit(1);
+  }
+  const out = path.resolve(where || path.join(ROOT, 'backup'));
+  const holder = path.join(out, `futures-app-kit-${stamp}`);
+  const dst = path.join(holder, 'futures-app');
+  fs.mkdirSync(holder, { recursive: true });
+  execFileSync('git', ['clone', '-q', '--no-local', repo, dst], { stdio: 'ignore' });
+  // origin в клоне смотрит на твою папку - возвращаем GitHub, без
+  // логина и токена в адресе, если они там были.
+  try {
+    const origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repo, encoding: 'utf8' }).trim();
+    let clean = origin;
+    try { const u = new URL(origin); u.username = ''; u.password = ''; clean = u.toString(); } catch (e) {}
+    execFileSync('git', ['remote', 'set-url', 'origin', clean], { cwd: dst, stdio: 'ignore' });
+  } catch (e) {}
+
+  const exDir = path.join(dst, path.relative(repo, ROOT));
+  const src = fs.existsSync(CFG_PATH) ? CFG_PATH : path.join(ROOT, 'config.example.json');
+  const cfg = scrubSecrets(JSON.parse(fs.readFileSync(src, 'utf8').replace(/^\uFEFF/, '')));
+  cfg.secret = require('crypto').randomBytes(18).toString('base64url');
+  cfg.dryRun = true;
+  if (cfg.telegram) cfg.telegram.enabled = false;
+  fs.writeFileSync(path.join(exDir, 'config.json'), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+
+  const zip = zipDir(holder, true);
+  console.log(`Комплект: ${zip || holder}`);
+  console.log(`  код из git, config.json из ${src === CFG_PATH ? 'твоего' : 'примера'}:`
+    + ' ставки, активы и расписание те же');
+  console.log(`  секрет новый: ${cfg.secret}`);
+  console.log('  Telegram выключен, токены пустые; dry-run включён');
+  console.log('  журналов, доходности, профилей и state.json в комплекте нет');
+  console.log('');
+  console.log(`Инструкция внутри: ${path.relative(repo, path.join(ROOT, 'MAC.md'))}`);
+  if (zip) console.log('Папку рядом с архивом можно удалить.');
+}
+
 function backupMode(args) {
   const withProfile = args.includes('--profile');
   const where = args.find(a => a && !a.startsWith('--'));
@@ -5606,7 +6158,13 @@ function backupMode(args) {
   for (const f of fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []) {
     if (/^panel-bg\./.test(f)) copy(path.join(ROOT, f), f);
   }
-  if (withProfile) copy(path.join(ROOT, 'profile'), 'profile');
+  if (withProfile) {
+    // Профилей может быть несколько: у второго аккаунта той же биржи
+    // свой. Берём все - общий и profile-*.
+    for (const f of fs.readdirSync(ROOT)) {
+      if (f === 'profile' || /^profile-/.test(f)) copy(path.join(ROOT, f), f);
+    }
+  }
 
   const size = (() => {
     let n = 0;
@@ -5642,21 +6200,7 @@ function backupMode(args) {
     '  5. node executor.js',
   ].filter(x => x !== null).join('\n'), 'utf8');
 
-  // Архив делаем средствами системы: ради одной команды в месяц тащить
-  // зависимость незачем.
-  let zip = '';
-  try {
-    const { execFileSync } = require('child_process');
-    if (process.platform === 'win32') {
-      zip = dir + '.zip';
-      execFileSync('powershell', ['-NoProfile', '-Command',
-        `Compress-Archive -Path '${dir}\\*' -DestinationPath '${zip}' -Force`],
-        { stdio: 'ignore' });
-    } else {
-      zip = dir + '.zip';
-      execFileSync('zip', ['-qr', zip, path.basename(dir)], { cwd: root, stdio: 'ignore' });
-    }
-  } catch (e) { zip = ''; }
+  const zip = zipDir(dir);
 
   const mb = (size / 1048576).toFixed(1);
   console.log(`Копия готова: ${zip || dir}`);
@@ -5674,6 +6218,10 @@ function backupMode(args) {
 
 if (process.argv[2] === 'backup') {
   backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'move') {
+  moveMode(process.argv.slice(3));
+} else if (process.argv[2] === 'kit') {
+  kitMode(process.argv.slice(3));
 } else if (process.argv[2] === 'timings') {
   timingsMode(process.argv[3], process.argv[4], process.argv[5]);
 } else if (process.argv[2] === 'add-asset') {

@@ -2,6 +2,7 @@
   "port": 8787,
   "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
   "dryRun": true,
+  "publicUrl": "",
   "defaultExchange": "mexc",
   "priorityExchanges": [
     "mexc"

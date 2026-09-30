@@ -485,6 +485,44 @@ function migrateBetsCsv() {
   log(`журнал ставок переведён на новый формат: ${out.length - 1} строк, копия рядом (${path.basename(bak)})`);
 }
 
+// ── постоянный туннель ──
+// publicUrl - адрес исполнителя снаружи, когда туннель именованный и
+// привязан к своему домену (https://exec.мойдомен.com). Раз в две минуты
+// стучимся на него же через Cloudflare: так видно, что сигналы из Apps
+// Script дойдут, а не только что сам исполнитель жив. В лог пишем только
+// перемены, чтобы не засорять его.
+function publicUrl() {
+  const v = String(CFG.publicUrl || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\//.test(v) ? v : '';
+}
+const tunnel = { ok: null, fails: 0, since: 0, why: '' };
+async function tunnelCheck() {
+  const pub = publicUrl();
+  if (!pub || typeof fetch !== 'function') return;
+  let ok = false, why = '';
+  try {
+    const r = await fetch(pub + '/health', { signal: AbortSignal.timeout(10000),
+      headers: { 'Cache-Control': 'no-cache' } });
+    const body = await r.text();
+    ok = r.status === 200 && body.includes('"ok":true');
+    if (!ok) why = r.status === 200 ? 'отвечает не исполнитель' : `ответ ${r.status}`
+      + (/cloudflare|cf-ray|just a moment/i.test(body) ? ' от Cloudflare' : '');
+  } catch (e) { why = e.name === 'TimeoutError' ? 'нет ответа 10 с' : e.message; }
+  tunnel.fails = ok ? 0 : tunnel.fails + 1;
+  // Один промах - ещё не обрыв: сеть мигнула. Тревога со второго подряд.
+  const now = ok ? true : (tunnel.fails >= 2 ? false : tunnel.ok);
+  if (now !== tunnel.ok) {
+    if (now === true) log(`туннель: ${pub} доступен снаружи`);
+    else if (now === false) {
+      log(`!! туннель: ${pub} снаружи недоступен (${why}) - сигналы из Apps Script не дойдут`);
+      await tgAlert(`туннель ${pub} недоступен снаружи (${why}) - сигналы не дойдут`);
+    }
+    if (tunnel.ok === false && now === true) await tgAlert(`туннель ${pub} снова доступен`);
+    tunnel.ok = now; tunnel.since = Date.now();
+  }
+  tunnel.why = ok ? '' : why;
+}
+
 async function tgAlert(text) {
   if (!CFG.tgToken || !CFG.tgChatId) return;
   try {
@@ -6271,7 +6309,17 @@ if (process.argv[2] === 'backup') {
         + ` | сейчас ${inActiveHours(null, n) ? 'в смене' : 'молчит'}`);
     }
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
-    log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
+    const pub = publicUrl();
+    if (pub) {
+      log(`постоянный адрес: ${pub} | вебхук для Apps Script: ${pub}/signal?secret=<секрет>`);
+      log(`панель снаружи: ${pub}/panel/<секрет>`);
+      setTimeout(() => tunnelCheck().catch(() => {}), 8000);
+      const tt = setInterval(() => tunnelCheck().catch(() => {}), 120000);
+      if (tt.unref) tt.unref();
+    } else {
+      log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787)
+        + ' (постоянный адрес - см. README, «Постоянный туннель»)');
+    }
     log(`человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
       + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`
       + ` | окно по расписанию: ${CFG.autoWindow === false ? 'выкл' : 'вкл'}`);

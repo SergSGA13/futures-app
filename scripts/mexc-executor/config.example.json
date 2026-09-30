@@ -79,6 +79,7 @@
     },
     "toobit": {
       "title": "Toobit",
+      "shareSignals": true,
       "enabled": true,
       "maxOpenBets": 5,
       "minPayout": 75,
@@ -171,6 +172,7 @@
     },
     "toobit2": {
       "title": "Toobit-2",
+      "shareSignals": true,
       "enabled": false,
       "maxOpenBets": 5,
       "minPayout": 75,

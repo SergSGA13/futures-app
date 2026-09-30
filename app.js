@@ -5838,6 +5838,125 @@ function mexcBranchSummaryHtml_(sigs) {
   </div>`;
 }
 
+// ===== РАЗМЕР СТАВКИ ПРОТИВ ДЕПОЗИТА =====
+// Вопрос «на какую сумму входить, чтобы депозит пережил просадки» сводится к
+// трём числам: сколько теряла стратегия в худшей серии, сколько денег должно
+// лежать свободными под 5 одновременных ставок и какой запас закладываем на
+// то, что будущая просадка окажется глубже прошлой.
+//
+// Всё считается на ТЕКУЩЕЙ выборке (период, экспирация, тег ALT, лимит слотов
+// уже применены) и по ТЕКУЩИМ ставкам, поэтому масштабируется линейно: удвоил
+// ставки - удвоилась и просадка.
+const MEXC_RISK = { deposit: 5000, k: 2 };
+
+// Просадка по сделкам, а не по дням: внутри одного дня серия поражений реально
+// продавливает баланс, а дневная агрегация это сглаживает и занижает требование
+// к депозиту.
+function mexcRiskStats_(sigs) {
+  const sorted = sigs.slice().sort((a, b) => mexcSignalTs_(a) - mexcSignalTs_(b));
+  let cum = 0, peak = 0, maxDd = 0, streak = 0, worstStreak = 0, worstLoss = 0;
+  for (const s of sorted) {
+    const p = mexcPnlSig_(s);
+    cum += p;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > maxDd) maxDd = dd;
+    if (s.res === 'LOSE') {
+      streak++;
+      if (streak > worstStreak) worstStreak = streak;
+      if (-p > worstLoss) worstLoss = -p;
+    } else if (s.res === 'WIN') {
+      streak = 0;
+    }
+  }
+  // Ставка, которая должна лежать свободной под каждый из 5 слотов - берём
+  // самую крупную из реально используемых, иначе слотов не хватит на BTC.
+  let maxStake = 0;
+  for (const s of sigs) { const st = mexcStakeOf_(s); if (st > maxStake) maxStake = st; }
+  return { maxDd, worstStreak, worstLoss, maxStake, total: cum, n: sorted.length };
+}
+
+function mexcRenderRisk_(sigs) {
+  const out = document.getElementById('mexcRiskOut');
+  if (!out) return false;
+  const r = mexcRiskStats_(sigs);
+  if (!r.n || !r.maxStake) return false;
+
+  const D = Math.max(100, +MEXC_RISK.deposit || 0);
+  const k = +MEXC_RISK.k || 2;
+  // Требуется на текущем масштабе ставок: просадка с запасом + 5 свободных ставок.
+  const need = r.maxDd * k + 5 * r.maxStake;
+  // Во сколько раз масштабировать ставки, чтобы уложиться в депозит.
+  const f = need > 0 ? D / need : 0;
+
+  // Ставка на сигнал в процентах депозита - по самой крупной паре: именно она
+  // задаёт риск одной ставки.
+  const stakeRec = r.maxStake * f;
+  const pctPerBet = stakeRec / D * 100;
+  const pctAllSlots = stakeRec * 5 / D * 100;
+  const ddAtRec = r.maxDd * f;
+  const ddPct = ddAtRec / D * 100;
+
+  const be = mexcBreakeven_(sigs);
+  let w = 0, l = 0;
+  for (const s of sigs) { if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++; }
+  const wr = (w + l) ? w / (w + l) * 100 : null;
+  const edgeBad = wr != null && wr < be;
+
+  const row = (lbl, val, cls) => `<div class="mexc-risk-item"><span>${lbl}</span><b${cls ? ` class="${cls}"` : ''}>${val}</b></div>`;
+  const fmt = v => Math.round(v).toLocaleString('ru-RU');
+
+  // Отрицательное матожидание размером ставки не лечится: меньший размер лишь
+  // растягивает срок жизни депозита. Об этом надо сказать до всех цифр.
+  const warn = edgeBad
+    ? `<div class="mexc-risk-warn">${t('mexc.risk.negative')} WR ${wr.toFixed(1)}% ${t('mexc.risk.below')} ${be.toFixed(1)}%.</div>`
+    : '';
+
+  out.innerHTML = warn + `<div class="mexc-risk-grid">
+    ${row(t('mexc.risk.maxdd'), fmt(r.maxDd) + ' USDT', 'wr-red')}
+    ${row(t('mexc.risk.streak'), r.worstStreak + ' ' + t('mexc.risk.inrow'))}
+    ${row(t('mexc.risk.need'), fmt(need) + ' USDT')}
+    ${row(t('mexc.risk.stake'), fmt(stakeRec) + ' USDT', 'wr-green')}
+    ${row(t('mexc.risk.pct'), pctPerBet.toFixed(1) + '%', 'wr-green')}
+    ${row(t('mexc.risk.slots'), pctAllSlots.toFixed(1) + '%')}
+    ${row(t('mexc.risk.ddat'), '-' + fmt(ddAtRec) + ' USDT (' + ddPct.toFixed(0) + '%)', 'wr-red')}
+  </div>
+  <p class="mexc-risk-expl">${t('mexc.risk.expl')
+      .replace('{need}', fmt(need))
+      .replace('{dep}', fmt(D))
+      .replace('{f}', f >= 1 ? '×' + f.toFixed(2) : '×' + f.toFixed(2))
+      .replace('{stake}', fmt(stakeRec))}</p>`;
+  return true;
+}
+
+function initMexcRiskUI() {
+  const dep = document.getElementById('mexcRiskDep');
+  if (dep && !dep.dataset.wired) {
+    dep.dataset.wired = '1';
+    dep.value = MEXC_RISK.deposit;
+    dep.addEventListener('input', () => {
+      const v = parseFloat(dep.value);
+      if (!Number.isFinite(v) || v < 100) return;
+      MEXC_RISK.deposit = v;
+      renderMexcStats();
+    });
+  }
+  const seg = document.getElementById('mexcRiskSeg');
+  if (seg && !seg.dataset.wired) {
+    seg.dataset.wired = '1';
+    seg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const k = parseFloat(btn.dataset.k);
+      if (!k || k === MEXC_RISK.k) return;
+      seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+      MEXC_RISK.k = k;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      renderMexcStats();
+    });
+  }
+}
+
 function mexcRenderDrawdownChart_(sigs) {
   if (typeof Chart === 'undefined') return false;
   const dd = devComputeDrawdown(sigs, mexcPnlSig_);
@@ -6058,9 +6177,11 @@ async function renderMexcStats() {
     }
     try {
       mexcShow_('mexcDrawdownCard', mexcRenderDrawdownChart_(sigs));
+      mexcShow_('mexcRiskCard', mexcRenderRisk_(sigs));
     } catch (e) {
       console.log('MEXC drawdown chart error:', e);
       mexcShow_('mexcDrawdownCard', false);
+      mexcShow_('mexcRiskCard', false);
     }
     try {
       MEXC_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('mexcWrDailyChart', sigs, days);
@@ -6145,6 +6266,8 @@ function initMexcStatsUI() {
       renderMexcStats();
     });
   }
+
+  initMexcRiskUI();
 
   const altSeg = document.getElementById('mexcAltSeg');
   if (altSeg && !altSeg.dataset.wired) {

@@ -2962,3 +2962,36 @@ body.zones-only .app-main { bottom: 0; }
 
 /* Счётчик выбывших монет рядом с активными в карточке PNL портфеля */
 .fs-pnl-metrics .fs-pnl-drop { color: #FF5272; }
+
+/* ===== MEXC: ставка против депозита ===== */
+.mexc-risk-card { border-color: rgba(255, 209, 102, 0.28); box-shadow: 0 0 20px rgba(255, 209, 102, 0.07); }
+.mexc-risk-row { margin-top: 6px; }
+.mexc-risk-dep {
+  width: 96px; padding: 5px 8px;
+  font-size: 12px; font-weight: 800; text-align: right;
+  color: var(--text); background: var(--bg); border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 8px;
+}
+.mexc-risk-cur { font-size: 10.5px; font-weight: 700; color: var(--text-muted); margin-left: 6px; }
+.sig-head2 .mexc-risk-seg button.active {
+  color: #0B0E1A;
+  background: linear-gradient(135deg, #FFD166, #FF9F43);
+  border-color: rgba(255, 209, 102, 0.6);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.35);
+}
+.mexc-risk-grid { margin-top: 10px; display: flex; flex-direction: column; gap: 1px; }
+.mexc-risk-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 7px 10px;
+  font-size: 11.5px; color: var(--text-muted);
+  background: var(--card); border-radius: 8px;
+}
+.mexc-risk-item b { font-size: 13px; font-weight: 800; color: var(--text); white-space: nowrap; }
+.mexc-risk-warn {
+  margin-bottom: 10px; padding: 9px 11px;
+  font-size: 11.5px; line-height: 1.55; color: #FF8FA3;
+  background: rgba(255, 82, 114, 0.08);
+  border: 1px solid rgba(255, 82, 114, 0.35); border-radius: 10px;
+  box-shadow: 0 0 16px rgba(255, 82, 114, 0.12);
+}
+.mexc-risk-expl { margin: 10px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--text-muted); }

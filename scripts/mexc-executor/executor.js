@@ -174,6 +174,9 @@ function exCfg(name) {
     targets: { ...(CFG.targets || {}), ...(e.targets || {}) },
     // Свой профиль браузера - для второго аккаунта той же биржи.
     profile: e.profile || '',
+    // Делить сигналы общей метки: если несколько бирж с этим флагом
+    // сейчас в смене, ставят все, а не одна.
+    shareSignals: e.shareSignals === true,
     // Цвет биржи в панели. Не задан - по порядку из проверенного набора.
     color: e.color || '',
   };
@@ -483,6 +486,44 @@ function migrateBetsCsv() {
   fs.copyFileSync(f, bak);
   fs.writeFileSync(f, out.join('\n') + '\n');
   log(`журнал ставок переведён на новый формат: ${out.length - 1} строк, копия рядом (${path.basename(bak)})`);
+}
+
+// ── постоянный туннель ──
+// publicUrl - адрес исполнителя снаружи, когда туннель именованный и
+// привязан к своему домену (https://exec.мойдомен.com). Раз в две минуты
+// стучимся на него же через Cloudflare: так видно, что сигналы из Apps
+// Script дойдут, а не только что сам исполнитель жив. В лог пишем только
+// перемены, чтобы не засорять его.
+function publicUrl() {
+  const v = String(CFG.publicUrl || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\//.test(v) ? v : '';
+}
+const tunnel = { ok: null, fails: 0, since: 0, why: '' };
+async function tunnelCheck() {
+  const pub = publicUrl();
+  if (!pub || typeof fetch !== 'function') return;
+  let ok = false, why = '';
+  try {
+    const r = await fetch(pub + '/health', { signal: AbortSignal.timeout(10000),
+      headers: { 'Cache-Control': 'no-cache' } });
+    const body = await r.text();
+    ok = r.status === 200 && body.includes('"ok":true');
+    if (!ok) why = r.status === 200 ? 'отвечает не исполнитель' : `ответ ${r.status}`
+      + (/cloudflare|cf-ray|just a moment/i.test(body) ? ' от Cloudflare' : '');
+  } catch (e) { why = e.name === 'TimeoutError' ? 'нет ответа 10 с' : e.message; }
+  tunnel.fails = ok ? 0 : tunnel.fails + 1;
+  // Один промах - ещё не обрыв: сеть мигнула. Тревога со второго подряд.
+  const now = ok ? true : (tunnel.fails >= 2 ? false : tunnel.ok);
+  if (now !== tunnel.ok) {
+    if (now === true) log(`туннель: ${pub} доступен снаружи`);
+    else if (now === false) {
+      log(`!! туннель: ${pub} снаружи недоступен (${why}) - сигналы из Apps Script не дойдут`);
+      await tgAlert(`туннель ${pub} недоступен снаружи (${why}) - сигналы не дойдут`);
+    }
+    if (tunnel.ok === false && now === true) await tgAlert(`туннель ${pub} снова доступен`);
+    tunnel.ok = now; tunnel.since = Date.now();
+  }
+  tunnel.why = ok ? '' : why;
 }
 
 async function tgAlert(text) {
@@ -2896,9 +2937,16 @@ function exchangeByTiming(sig, asset) {
   if (claim.length > 1) {
     const onShift = claim.filter(n => inActiveHours(null, n));
     if (onShift.length) hit = onShift[0];
-    if (onShift.length > 1) {
+    // Биржи с «делить сигналы», которые обе в смене, ставят обе: два
+    // аккаунта Toobit в общие часы отрабатывают один и тот же сигнал.
+    const share = onShift.filter(n => exCfg(n).shareSignals);
+    if (share.length > 1) {
+      hit = share[0];
+      sig.shareEx = share;
+    } else if (onShift.length > 1) {
       log(`метку "${raw}" заявили ${onShift.map(n => exCfg(n).title).join(' и ')}, и обе`
-        + ` сейчас в смене - беру ${exCfg(hit).title}; часы у них лучше не пересекать`);
+        + ` сейчас в смене - беру ${exCfg(hit).title}; чтобы ставили обе,`
+        + ' включи у них в панели «Делить сигналы»');
     }
   }
   // Метка вида "TOOBIT_10m" / "MEXC_30m" называет биржу прямо в себе.
@@ -3042,6 +3090,16 @@ function markWake(ex) {
 
 // Возвращает 'queued' | 'merged' | причину отказа.
 function acceptSignal(sig, src) {
+  // Общий сигнал для нескольких бирж: каждая получает свою копию и дальше
+  // проходит все проверки сама - цели, слоты, лимиты, дедуп у каждой свои.
+  // Ставки идут по очереди: одна вкладка за раз.
+  if (Array.isArray(sig.shareEx) && sig.shareEx.length > 1) {
+    const list = sig.shareEx;
+    log(`сигнал ${sig.asset} ${sig.direction} (метка "${sig.tag || sig.timing}") делят `
+      + list.map(n => exCfg(n).title).join(' и '));
+    const rs = list.map(n => acceptSignal({ ...sig, ex: n, shareEx: undefined }, src));
+    return rs.find(r => r === 'queued') || rs.find(r => r === 'merged') || rs[0];
+  }
   const mode = state.dryRun ? 'DRY' : 'LIVE';
   const skip = (reason, status, msg) => {
     if (msg) log(`пропуск (${src}): ${msg}`);
@@ -4863,6 +4921,11 @@ function snapshot() {
           todayWindows: todayWindows(n),
           requirePagePayout: e.requirePagePayout,
           checkPayout: e.checkPayout,
+          shareSignals: e.shareSignals,
+          // С кем у биржи общие метки потока - только им есть что делить.
+          sharesWith: exNames().filter(m => m !== n
+            && exCfg(m).signalTimings.some(t => e.signalTimings.includes(t)))
+            .map(m => exCfg(m).title),
           maxOpenBets: e.maxOpenBets,
           slots: openSlots(n),
         };
@@ -5023,16 +5086,26 @@ function applySettings(s) {
   if (s.checkPayouts) {
     for (const n of exNames()) {
       if (s.checkPayouts[n] == null) continue;
-      const was = exCfg(n).checkPayout;
-      // Где выплата обязательна, выключить проверку нельзя ни из панели,
-      // ни запросом мимо неё: снятая галочка означала бы ставку вслепую.
-      if (exCfg(n).requirePagePayout && !s.checkPayouts[n]) {
-        log(`проверку выплаты ${exCfg(n).title} выключить нельзя: она там обязательна`);
-        continue;
-      }
+      const was = exCfg(n).checkPayout || exCfg(n).requirePagePayout;
+      // Снятая галочка выключает и обязательную проверку: раз источник
+      // сигнала уже отобрал их по выплате, второе чтение со страницы
+      // только тратит время и, бывает, читает не ту цифру. Решение за
+      // хозяином - в журнал оно пишется явно.
       const v = !!s.checkPayouts[n];
-      if (v !== was) changed.push(`проверка выплаты ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`);
+      if (v !== was) changed.push(`проверка выплаты ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`
+        + (!v && exCfg(n).requirePagePayout ? ' (была обязательной; порог теперь держит источник сигнала)' : ''));
       CFG.exchanges[n].checkPayout = v;
+      if (!v) CFG.exchanges[n].requirePagePayout = false;
+      exReset();
+    }
+  }
+  // Делить сигналы общей метки с другой биржей, когда обе в смене.
+  if (s.shareSignals) {
+    for (const n of exNames()) {
+      if (s.shareSignals[n] == null) continue;
+      const v = !!s.shareSignals[n];
+      if (v !== exCfg(n).shareSignals) changed.push(`делить сигналы ${exCfg(n).title} ${v ? 'вкл' : 'выкл'}`);
+      CFG.exchanges[n].shareSignals = v;
       exReset();
     }
   }
@@ -6271,7 +6344,17 @@ if (process.argv[2] === 'backup') {
         + ` | сейчас ${inActiveHours(null, n) ? 'в смене' : 'молчит'}`);
     }
     log(`панель: http://127.0.0.1:${CFG.port ?? 8787}/panel/${CFG.secret}`);
-    log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787));
+    const pub = publicUrl();
+    if (pub) {
+      log(`постоянный адрес: ${pub} | вебхук для Apps Script: ${pub}/signal?secret=<секрет>`);
+      log(`панель снаружи: ${pub}/panel/<секрет>`);
+      setTimeout(() => tunnelCheck().catch(() => {}), 8000);
+      const tt = setInterval(() => tunnelCheck().catch(() => {}), 120000);
+      if (tt.unref) tt.unref();
+    } else {
+      log('туннель: cloudflared tunnel --url http://localhost:' + (CFG.port ?? 8787)
+        + ' (постоянный адрес - см. README, «Постоянный туннель»)');
+    }
     log(`человечный клик: ${CFG.humanize !== false ? 'вкл' : 'выкл'}`
       + ` | холостая активность: ${(CFG.idleRotation || {}).enabled !== false ? 'вкл' : 'выкл'}`
       + ` | окно по расписанию: ${CFG.autoWindow === false ? 'выкл' : 'вкл'}`);

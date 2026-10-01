@@ -1405,11 +1405,9 @@ function buildAssetControls(st) {
           data-ex="${e.name}" title="${e.minPayoutStrict ? 'нужно строго больше' : 'нужно не меньше'}${
             e.requirePagePayout ? '; не прочитали со страницы - ставки не будет' : ''}"></div>
       <div class="row"><label class="chk"><input type="checkbox" id="cp_${e.name}"
-          data-ex="${e.name}"${e.requirePagePayout ? ' disabled' : ''}
-          title="${e.requirePagePayout
-            ? 'На этой бирже выплату обязательно читать: сигналы приходят без неё, и без чтения ставка идёт вслепую'
-            : 'Снять, если выплату уже отобрал источник сигнала - экономит секунду-полторы'}"
-          > Проверять выплату${e.requirePagePayout ? ' (обязательно)' : ''}</label></div>
+          data-ex="${e.name}"
+          title="Снять, если выплату уже отобрал источник сигнала: страница не читается, ставка быстрее на секунду-полторы, а порог держит источник"
+          > Проверять выплату</label></div>
       <div class="row"><span>Цена хуже сигнала, %</span>
         <input type="number" id="pg_${e.name}" min="0" max="5" step="0.01" data-ex="${e.name}"
           title="0 - входить только по цене лучше сигнала"></div>
@@ -1426,6 +1424,10 @@ function buildAssetControls(st) {
           <input type="number" id="sl_${e.name}" min="0" step="1" data-ex="${e.name}"
             placeholder="нет" title="Итог дня упал до минус этой суммы - стоп до ${(e.targets || {}).resumeAt || '03:00'}"></label>
       </div>
+      <div class="row"${(e.sharesWith || []).length ? '' : ' style="display:none"'}><label class="chk"><input type="checkbox" id="sh_${e.name}"
+          data-ex="${e.name}"
+          title="Общая метка потока и обе биржи в смене - ставят обе, каждая своей суммой. Галочка нужна у обеих."
+          > Делить сигналы с ${(e.sharesWith || []).join(', ')}</label></div>
       <div class="row"><label class="chk"><input type="checkbox" id="wk_${e.name}"
           data-ex="${e.name}"> Будить вне смены, раз</label>
         <input type="number" id="wn_${e.name}" min="0" max="50" step="1" data-ex="${e.name}"
@@ -1441,7 +1443,7 @@ function buildAssetControls(st) {
   for (const e of exs(s)) {
     for (const id of [...e.assets.map(a => `st_${e.name}_${a}`), `mp_${e.name}`,
                       `pg_${e.name}`, `sj_${e.name}`, `wk_${e.name}`, `wn_${e.name}`,
-                      `cp_${e.name}`, `tp_${e.name}`, `sl_${e.name}`]) {
+                      `cp_${e.name}`, `sh_${e.name}`, `tp_${e.name}`, `sl_${e.name}`]) {
       CARDS.stakes.push(id);
       ['input', 'change'].forEach(ev => $(id).addEventListener(ev, () => dirty.add(id)));
     }
@@ -1619,8 +1621,8 @@ async function refresh() {
     // Где выплата обязательна, галочка всегда стоит и не снимается:
     // выключенная, она означала бы ставку вслепую.
     setChk(`cp_${e.name}`, e.requirePagePayout || e.checkPayout !== false);
-    $(`cp_${e.name}`).disabled = !!e.requirePagePayout;
     $(`mp_${e.name}`).disabled = !e.requirePagePayout && e.checkPayout === false;
+    setChk(`sh_${e.name}`, !!e.shareSignals);
     setVal(`tp_${e.name}`, (e.targets || {}).tp ?? '');
     setVal(`sl_${e.name}`, (e.targets || {}).sl ?? '');
     setChk(`wk_${e.name}`, (e.wake || {}).enabled);
@@ -1820,6 +1822,10 @@ $('btnSaveStakes').onclick = async () => {
   document.querySelectorAll('#stakeRows input[id^="cp_"]').forEach(i => {
     checkPayouts[i.dataset.ex] = i.checked;
   });
+  const shareSignals = {};
+  document.querySelectorAll('#stakeRows input[id^="sh_"]').forEach(i => {
+    if (i.closest('.row').style.display !== 'none') shareSignals[i.dataset.ex] = i.checked;
+  });
   const wakes = {};
   document.querySelectorAll('#stakeRows input[id^="wk_"]').forEach(i => {
     wakes[i.dataset.ex] = { enabled: i.checked };
@@ -1835,7 +1841,7 @@ $('btnSaveStakes').onclick = async () => {
     (targets[i.dataset.ex] = targets[i.dataset.ex] || {}).stopLoss = i.value;
   });
   await post('settings', {
-    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts, targets,
+    stakes, minPayouts, priceGuards, stakeJitters, wakes, checkPayouts, targets, shareSignals,
     priceGuard: { enabled: $('priceOn').checked },
     requireKnownTag: $('knownTag').checked,
     maxBetsPerDay: +$('perDay').value,

@@ -2,6 +2,7 @@
   "port": 8787,
   "secret": "ПРИДУМАЙ-ДЛИННЫЙ-СЕКРЕТ-И-ВСТАВЬ-ЕГО-ЖЕ-В-URL-ХУКА",
   "dryRun": true,
+  "publicUrl": "",
   "defaultExchange": "mexc",
   "priorityExchanges": [
     "mexc"
@@ -78,6 +79,7 @@
     },
     "toobit": {
       "title": "Toobit",
+      "shareSignals": true,
       "enabled": true,
       "maxOpenBets": 5,
       "minPayout": 75,
@@ -170,6 +172,7 @@
     },
     "toobit2": {
       "title": "Toobit-2",
+      "shareSignals": true,
       "enabled": false,
       "maxOpenBets": 5,
       "minPayout": 75,

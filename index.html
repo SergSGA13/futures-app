@@ -783,6 +783,16 @@
           <p class="pnl-chart-footnote" data-i18n="mexc.pnl.note">Расчёт на стартовом депозите 5000 USDT по выбранным выше ставкам: 10м с выплатой 0.8, 30м с выплатой 0.85.</p>
         </div>
 
+        <!-- Скользящий PNL по группам: крипта против акций. Накопленная кривая
+             выше показывает итог, эта - текущую форму каждой группы. -->
+        <div class="pnl-chart-card" id="mexcGroupCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="mexc.grp">Скользящий PNL: крипта и акции</span></div>
+          <div id="mexcGroupSums"></div>
+          <div class="pnl-chart-wrap" style="height:170px"><canvas id="mexcGroupChart"></canvas></div>
+          <p class="pnl-chart-footnote" id="mexcGroupNote"></p>
+          <p class="pnl-chart-footnote" data-i18n="mexc.grp.note">Каждая точка - сумма PNL группы за последние N дней, а не за всё время. Накопленная кривая выше отвечает на вопрос «сколько заработано всего», эта - «кто из групп тянет прямо сейчас». Акции торгуются только тридцатиминутками, поэтому при экспирации 10м их линии нет.</p>
+        </div>
+
         <div class="pnl-chart-card" id="mexcDrawdownCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="1 6 8 6 12 18 16 6 23 6"/></svg><span data-i18n="mexc.dd">Просадка (Drawdown) - MEXC</span></div>
           <p class="dev-note" id="mexcDrawdownNote" style="margin-bottom:8px"></p>

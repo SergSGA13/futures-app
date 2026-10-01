@@ -6002,6 +6002,129 @@ function mexcShow_(cardId, on) {
   if (el) el.style.display = on ? 'block' : 'none';
 }
 
+// ===== СКОЛЬЗЯЩИЙ PNL: КРИПТА ПРОТИВ АКЦИЙ =====
+// Накопленная кривая отвечает на вопрос «сколько заработано всего» и прошлое
+// в ней держится вечно: группа, которая полгода назад дала плюс, продолжает
+// тянуть линию вверх, даже если последний месяц сливает. Скользящее окно
+// показывает текущую форму: сумма PNL группы за последние N дней.
+const MEXC_CRYPTO = new Set(['ETH', 'BTC']);
+// Окно под выбранный период: на 7 днях длинное окно съело бы весь график,
+// на 90 днях короткое превратило бы его в шум.
+const MEXC_GRP_WIN = { 7: 3, 30: 7, 90: 14 };
+
+function mexcGroupOf_(s) { return MEXC_CRYPTO.has(s.pair) ? 'crypto' : 'stocks'; }
+
+// Суточные суммы PNL по каждой группе на сплошной шкале дат: дни без сделок
+// должны быть нулями, иначе скользящее окно «съедет» по оси.
+function mexcGroupSeries_(sigs, winDays) {
+  const perDay = {};
+  for (const s of sigs) {
+    const g = mexcGroupOf_(s);
+    const d = (perDay[s.dk] = perDay[s.dk] || { crypto: 0, stocks: 0, nC: 0, nS: 0 });
+    d[g] += mexcPnlSig_(s);
+    if (g === 'crypto') d.nC++; else d.nS++;
+  }
+  const keys = Object.keys(perDay).sort();
+  if (keys.length < 2) return null;
+
+  // Сплошной ряд дат от первой до последней сделки.
+  const toDate = dk => { const [y, m, d] = dk.split('-').map(Number); return new Date(y, m - 1, d); };
+  const days = [];
+  for (let t = toDate(keys[0]); t <= toDate(keys[keys.length - 1]); t.setDate(t.getDate() + 1)) {
+    days.push(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`);
+  }
+
+  const labels = [], crypto = [], stocks = [];
+  let totC = 0, totS = 0, nC = 0, nS = 0;
+  for (let i = 0; i < days.length; i++) {
+    let sc = 0, ss = 0;
+    for (let j = Math.max(0, i - winDays + 1); j <= i; j++) {
+      const d = perDay[days[j]];
+      if (!d) continue;
+      sc += d.crypto; ss += d.stocks;
+    }
+    labels.push(`${days[i].slice(8, 10)}.${days[i].slice(5, 7)}`);
+    crypto.push(Math.round(sc));
+    stocks.push(Math.round(ss));
+    const d = perDay[days[i]];
+    if (d) { totC += d.crypto; totS += d.stocks; nC += d.nC; nS += d.nS; }
+  }
+  return { labels, crypto, stocks, totC, totS, nC, nS, winDays };
+}
+
+function mexcRenderGroupChart_(sigs) {
+  const sums = document.getElementById('mexcGroupSums');
+  const note = document.getElementById('mexcGroupNote');
+  if (typeof Chart === 'undefined') return false;
+  const ctx = document.getElementById('mexcGroupChart')?.getContext('2d');
+  if (!ctx) return false;
+
+  const win = MEXC_GRP_WIN[MEXC_STATS.days] || 7;
+  const d = mexcGroupSeries_(sigs, win);
+  if (!d) return false;
+  // Если акций в выборке нет (экспирация 10м), сравнивать не с чем.
+  if (!d.nS) {
+    if (sums) sums.innerHTML = '';
+    if (note) note.textContent = t('mexc.grp.nostocks');
+    return false;
+  }
+
+  const fmt = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU');
+  if (sums) {
+    sums.innerHTML = `<div class="mexc-grp-sums">
+      <div class="mexc-grp-sum"><span class="mexc-grp-dot" style="background:#66A3FF"></span>${t('mexc.grp.crypto')}
+        <b style="color:${d.totC >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(d.totC)} USDT</b>
+        <span class="mexc-grp-n">${d.nC} ${t('mexc.grp.sig')}</span></div>
+      <div class="mexc-grp-sum"><span class="mexc-grp-dot" style="background:#FFD166"></span>${t('mexc.grp.stocks')}
+        <b style="color:${d.totS >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(d.totS)} USDT</b>
+        <span class="mexc-grp-n">${d.nS} ${t('mexc.grp.sig')}</span></div>
+    </div>`;
+  }
+  if (note) note.textContent = `${t('mexc.grp.win')} ${win} ${t('mexc.grp.days')}.`;
+
+  // Нулевая линия: без неё не видно, где группа уходит в минус.
+  const zeroLine = {
+    id: 'mexcGrpZero',
+    afterDraw(chart) {
+      const { ctx: c, chartArea, scales: { y } } = chart;
+      if (!chartArea || y.min > 0 || y.max < 0) return;
+      const py = y.getPixelForValue(0);
+      c.save();
+      c.strokeStyle = 'rgba(232,234,255,0.28)';
+      c.lineWidth = 1; c.setLineDash([4, 4]);
+      c.beginPath(); c.moveTo(chartArea.left, py); c.lineTo(chartArea.right, py); c.stroke();
+      c.restore();
+    }
+  };
+
+  MEXC_STATS.charts.grp = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: d.labels,
+      datasets: [
+        { label: t('mexc.grp.crypto'), data: d.crypto, borderColor: '#66A3FF', backgroundColor: 'rgba(102,163,255,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 },
+        { label: t('mexc.grp.stocks'), data: d.stocks, borderColor: '#FFD166', backgroundColor: 'rgba(255,209,102,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 },
+      ]
+    },
+    plugins: [zeroLine],
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        // Своя легенда не нужна: ряд итогов над графиком уже называет обе
+        // группы их цветами и сразу даёт суммы.
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y} USDT` } }
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 7, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+  return true;
+}
+
 // Накопленный PNL ветки по текущей ставке страницы (mexcPnlSig_ - учитывает
 // и SPCX, и правку ставки через селекторы, в отличие от devPnlSig(s,'MEXC')).
 function mexcRenderPnlChart_(sigs) {
@@ -6149,7 +6272,7 @@ async function renderMexcStats() {
     if (MEXC_STATS.src && MEXC_STATS.src !== 'ALL') sigs = sigs.filter(s => s.src === MEXC_STATS.src);
 
     if (!sigs.length) {
-      for (const c of ['mexcPnlCard', 'mexcDrawdownCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
+      for (const c of ['mexcPnlCard', 'mexcGroupCard', 'mexcDrawdownCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
       if (sumEl) sumEl.innerHTML = 'Нет данных';
       mexcShow_('mexcEmpty', true);
       return;
@@ -6171,9 +6294,11 @@ async function renderMexcStats() {
     // отрисоваться - таблицы считаются из тех же сигналов и от Chart.js не зависят.
     try {
       mexcShow_('mexcPnlCard', mexcRenderPnlChart_(sigs));
+      mexcShow_('mexcGroupCard', mexcRenderGroupChart_(sigs));
     } catch (e) {
       console.log('MEXC pnl chart error:', e);
       mexcShow_('mexcPnlCard', false);
+      mexcShow_('mexcGroupCard', false);
     }
     try {
       mexcShow_('mexcDrawdownCard', mexcRenderDrawdownChart_(sigs));

@@ -5642,7 +5642,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
-const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, alt: 'ALL', charts: {} };
+const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, alt: 'ALL', grpMode: 'pct', charts: {} };
 
 // Источники ветки: 10-минутные сигналы и 30-минутные лежат в разных листах.
 // Экспирация у них разная, поэтому по умолчанию показываем их вместе, но
@@ -6016,13 +6016,19 @@ function mexcGroupOf_(s) { return MEXC_CRYPTO.has(s.pair) ? 'crypto' : 'stocks';
 
 // Суточные суммы PNL по каждой группе на сплошной шкале дат: дни без сделок
 // должны быть нулями, иначе скользящее окно «съедет» по оси.
+// Минимум сделок в окне, чтобы показать процент: на двух-трёх сигналах ROI
+// скачет от -100% до +85% и рисует не доходность, а случайность. Меньше -
+// разрыв в линии, честнее, чем выдуманная точка.
+const MEXC_GRP_MIN = 5;
+
 function mexcGroupSeries_(sigs, winDays) {
   const perDay = {};
   for (const s of sigs) {
     const g = mexcGroupOf_(s);
-    const d = (perDay[s.dk] = perDay[s.dk] || { crypto: 0, stocks: 0, nC: 0, nS: 0 });
-    d[g] += mexcPnlSig_(s);
-    if (g === 'crypto') d.nC++; else d.nS++;
+    const d = (perDay[s.dk] = perDay[s.dk] || { cP: 0, sP: 0, cV: 0, sV: 0, nC: 0, nS: 0 });
+    const pnl = mexcPnlSig_(s), stake = mexcStakeOf_(s);
+    if (g === 'crypto') { d.cP += pnl; d.cV += stake; d.nC++; }
+    else                { d.sP += pnl; d.sV += stake; d.nS++; }
   }
   const keys = Object.keys(perDay).sort();
   if (keys.length < 2) return null;
@@ -6034,22 +6040,32 @@ function mexcGroupSeries_(sigs, winDays) {
     days.push(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`);
   }
 
-  const labels = [], crypto = [], stocks = [];
-  let totC = 0, totS = 0, nC = 0, nS = 0;
+  const labels = [];
+  const cUsd = [], sUsd = [], cPct = [], sPct = [];
+  let totC = 0, totS = 0, volC = 0, volS = 0, nC = 0, nS = 0;
   for (let i = 0; i < days.length; i++) {
-    let sc = 0, ss = 0;
+    let cp = 0, sp = 0, cv = 0, sv = 0, cn = 0, sn = 0;
     for (let j = Math.max(0, i - winDays + 1); j <= i; j++) {
       const d = perDay[days[j]];
       if (!d) continue;
-      sc += d.crypto; ss += d.stocks;
+      cp += d.cP; sp += d.sP; cv += d.cV; sv += d.sV; cn += d.nC; sn += d.nS;
     }
     labels.push(`${days[i].slice(8, 10)}.${days[i].slice(5, 7)}`);
-    crypto.push(Math.round(sc));
-    stocks.push(Math.round(ss));
+    cUsd.push(Math.round(cp));
+    sUsd.push(Math.round(sp));
+    // Процент - это отдача на поставленное за окно, а не от депозита: только так
+    // группы с разным числом сделок сравнимы между собой.
+    cPct.push(cn >= MEXC_GRP_MIN && cv > 0 ? +(cp / cv * 100).toFixed(1) : null);
+    sPct.push(sn >= MEXC_GRP_MIN && sv > 0 ? +(sp / sv * 100).toFixed(1) : null);
     const d = perDay[days[i]];
-    if (d) { totC += d.crypto; totS += d.stocks; nC += d.nC; nS += d.nS; }
+    if (d) { totC += d.cP; totS += d.sP; volC += d.cV; volS += d.sV; nC += d.nC; nS += d.nS; }
   }
-  return { labels, crypto, stocks, totC, totS, nC, nS, winDays };
+  return {
+    labels, cUsd, sUsd, cPct, sPct,
+    totC, totS, nC, nS, winDays,
+    roiC: volC > 0 ? totC / volC * 100 : null,
+    roiS: volS > 0 ? totS / volS * 100 : null,
+  };
 }
 
 function mexcRenderGroupChart_(sigs) {
@@ -6069,20 +6085,31 @@ function mexcRenderGroupChart_(sigs) {
     return false;
   }
 
-  const fmt = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU');
+  const pct = MEXC_STATS.grpMode !== 'usd';
+  const cData = pct ? d.cPct : d.cUsd;
+  const sData = pct ? d.sPct : d.sUsd;
+  const unit = pct ? '%' : ' USDT';
+
+  const fmtU = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU') + ' USDT';
+  const fmtR = v => v == null ? '-' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  const col = v => (v >= 0 ? '#4EFFA0' : '#FF5272');
   if (sums) {
+    // Показываем обе величины сразу: процент сравнивает группы между собой,
+    // USDT говорит, сколько это в деньгах при нынешнем объёме сигналов.
     sums.innerHTML = `<div class="mexc-grp-sums">
       <div class="mexc-grp-sum"><span class="mexc-grp-dot" style="background:#66A3FF"></span>${t('mexc.grp.crypto')}
-        <b style="color:${d.totC >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(d.totC)} USDT</b>
-        <span class="mexc-grp-n">${d.nC} ${t('mexc.grp.sig')}</span></div>
+        <b style="color:${col(d.roiC)}">${fmtR(d.roiC)}</b>
+        <span class="mexc-grp-n">${fmtU(d.totC)} · ${d.nC} ${t('mexc.grp.sig')}</span></div>
       <div class="mexc-grp-sum"><span class="mexc-grp-dot" style="background:#FFD166"></span>${t('mexc.grp.stocks')}
-        <b style="color:${d.totS >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(d.totS)} USDT</b>
-        <span class="mexc-grp-n">${d.nS} ${t('mexc.grp.sig')}</span></div>
+        <b style="color:${col(d.roiS)}">${fmtR(d.roiS)}</b>
+        <span class="mexc-grp-n">${fmtU(d.totS)} · ${d.nS} ${t('mexc.grp.sig')}</span></div>
     </div>`;
   }
-  if (note) note.textContent = `${t('mexc.grp.win')} ${win} ${t('mexc.grp.days')}.`;
+  if (note) {
+    note.textContent = `${t('mexc.grp.win')} ${win} ${t('mexc.grp.days')}. ` +
+      (pct ? `${t('mexc.grp.gap')} ${MEXC_GRP_MIN}.` : '');
+  }
 
-  // Нулевая линия: без неё не видно, где группа уходит в минус.
   const zeroLine = {
     id: 'mexcGrpZero',
     afterDraw(chart) {
@@ -6102,8 +6129,8 @@ function mexcRenderGroupChart_(sigs) {
     data: {
       labels: d.labels,
       datasets: [
-        { label: t('mexc.grp.crypto'), data: d.crypto, borderColor: '#66A3FF', backgroundColor: 'rgba(102,163,255,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 },
-        { label: t('mexc.grp.stocks'), data: d.stocks, borderColor: '#FFD166', backgroundColor: 'rgba(255,209,102,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 },
+        { label: t('mexc.grp.crypto'), data: cData, borderColor: '#66A3FF', backgroundColor: 'rgba(102,163,255,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, spanGaps: false },
+        { label: t('mexc.grp.stocks'), data: sData, borderColor: '#FFD166', backgroundColor: 'rgba(255,209,102,0.10)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3, spanGaps: false },
       ]
     },
     plugins: [zeroLine],
@@ -6114,15 +6141,31 @@ function mexcRenderGroupChart_(sigs) {
         // Своя легенда не нужна: ряд итогов над графиком уже называет обе
         // группы их цветами и сразу даёт суммы.
         legend: { display: false },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y} USDT` } }
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? `${c.dataset.label}: -` : `${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y}${unit}` } }
       },
       scales: {
         x: { ticks: { color: '#7B84B0', maxTicksLimit: 7, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: { ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        y: { ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => pct ? `${v}%` : `${v}` }, grid: { color: 'rgba(255,255,255,0.04)' } }
       }
     }
   });
   return true;
+}
+
+function initMexcGroupUI() {
+  const seg = document.getElementById('mexcGrpSeg');
+  if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = '1';
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const mode = btn.dataset.grp;
+    if (!mode || mode === MEXC_STATS.grpMode) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    MEXC_STATS.grpMode = mode;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    renderMexcStats();
+  });
 }
 
 // Накопленный PNL ветки по текущей ставке страницы (mexcPnlSig_ - учитывает
@@ -6392,6 +6435,7 @@ function initMexcStatsUI() {
     });
   }
 
+  initMexcGroupUI();
   initMexcRiskUI();
 
   const altSeg = document.getElementById('mexcAltSeg');

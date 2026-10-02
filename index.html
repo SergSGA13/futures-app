@@ -787,10 +787,18 @@
              выше показывает итог, эта - текущую форму каждой группы. -->
         <div class="pnl-chart-card" id="mexcGroupCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="mexc.grp">Скользящий PNL: крипта и акции</span></div>
+          <div class="sig-head2 mexc-grp-row">
+            <span class="mexc-src-lbl" data-i18n="mexc.grp.mode">Шкала</span>
+            <span class="sig-div"></span>
+            <div class="fs-seg compact mexc-grp-seg" id="mexcGrpSeg">
+              <button class="active" data-grp="pct" data-i18n="mexc.grp.pct">% от ставок</button>
+              <button data-grp="usd" data-i18n="mexc.grp.usd">USDT</button>
+            </div>
+          </div>
           <div id="mexcGroupSums"></div>
           <div class="pnl-chart-wrap" style="height:170px"><canvas id="mexcGroupChart"></canvas></div>
           <p class="pnl-chart-footnote" id="mexcGroupNote"></p>
-          <p class="pnl-chart-footnote" data-i18n="mexc.grp.note">Каждая точка - сумма PNL группы за последние N дней, а не за всё время. Накопленная кривая выше отвечает на вопрос «сколько заработано всего», эта - «кто из групп тянет прямо сейчас». Акции торгуются только тридцатиминутками, поэтому при экспирации 10м их линии нет.</p>
+          <p class="pnl-chart-footnote" data-i18n="mexc.grp.note">Каждая точка - результат группы за последние N дней, а не за всё время. В процентах это отдача на поставленное за окно: по акциям сигналов в разы меньше, и в USDT их линия выглядит плоской просто из-за объёма, а процент сравнивает группы честно. Акции торгуются только тридцатиминутками, поэтому при экспирации 10м их линии нет.</p>
         </div>
 
         <div class="pnl-chart-card" id="mexcDrawdownCard" style="display:none">

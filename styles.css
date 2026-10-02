@@ -3005,3 +3005,10 @@ body.zones-only .app-main { bottom: 0; }
 .mexc-grp-sum b { font-size: 13px; font-weight: 800; }
 .mexc-grp-dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
 .mexc-grp-n { font-size: 10px; opacity: .75; }
+.mexc-grp-row { margin-bottom: 8px; }
+.sig-head2 .mexc-grp-seg button.active {
+  color: #0B0E1A;
+  background: linear-gradient(135deg, #66A3FF, #9D50FF);
+  border-color: rgba(102, 163, 255, 0.6);
+  box-shadow: 0 0 14px rgba(102, 163, 255, 0.35);
+}

@@ -3012,3 +3012,22 @@ body.zones-only .app-main { bottom: 0; }
   border-color: rgba(102, 163, 255, 0.6);
   box-shadow: 0 0 14px rgba(102, 163, 255, 0.35);
 }
+
+/* ===== Дневные стопы: матрица TP x SL ===== */
+.ds-table td, .ds-table th { white-space: nowrap; }
+.ds-table .ds-row-lbl { font-weight: 800; color: var(--text); }
+.ds-table td.ds-base { outline: 1px dashed rgba(123, 132, 176, 0.55); outline-offset: -3px; }
+.ds-table td.ds-best {
+  background: rgba(78, 255, 160, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(78, 255, 160, 0.55), 0 0 14px rgba(78, 255, 160, 0.18);
+}
+.ds-base-line { font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
+.ds-base-line b { color: var(--text); }
+.ds-verdict {
+  margin-top: 10px; padding: 9px 11px;
+  font-size: 11.5px; line-height: 1.6; color: var(--text-muted);
+  border-radius: 10px; border: 1px solid var(--card-border); background: var(--card);
+}
+.ds-verdict.good { border-color: rgba(78, 255, 160, 0.32); box-shadow: 0 0 14px rgba(78, 255, 160, 0.10); }
+.ds-verdict.bad { border-color: rgba(255, 209, 102, 0.32); box-shadow: 0 0 14px rgba(255, 209, 102, 0.10); }
+.ds-verdict b { color: var(--text); }

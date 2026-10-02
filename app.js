@@ -2812,6 +2812,102 @@ function devStreaksOfType(sigs, resultType) {
 
 function devFmtDk(dk) { return dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}` : '?'; }
 
+// ===== ДНЕВНЫЕ СТОПЫ: TP И SL ДО КОНЦА ДНЯ =====
+// Правило: внутри дня сигналы идут по порядку; как только накопленный за день
+// результат достиг +TP или -SL, остаток дня пропускается. Проверяем не одну
+// пару значений, а сетку: один подобранный порог почти всегда «улучшает»
+// прошлое, а таблица сразу показывает, держится улучшение по соседям или это
+// подгонка под одну клетку.
+const DAYSTOP_LEVELS = [2, 3, 4, 5];        // в ставках
+const DAYSTOP_OFF = Infinity;
+
+// Время внутри дня: порядок сигналов определяет, какие из них отсечёт стоп.
+function dayStopTime_(s) {
+  return (s.hour == null ? 0 : s.hour) * 60 + (s.minute == null ? 0 : s.minute);
+}
+
+function dayStopSim_(sigs, pnlFn, tp, sl) {
+  const byDay = {};
+  for (const s of sigs) (byDay[s.dk] = byDay[s.dk] || []).push(s);
+  const days = Object.keys(byDay).sort();
+
+  let total = 0, taken = 0, skipped = 0, w = 0, l = 0, tpDays = 0, slDays = 0;
+  let cum = 0, peak = 0, maxDd = 0;
+  for (const dk of days) {
+    const list = byDay[dk].slice().sort((a, b) => dayStopTime_(a) - dayStopTime_(b));
+    let day = 0, stopped = false;
+    for (const sig of list) {
+      if (stopped) { skipped++; continue; }
+      const p = pnlFn(sig);
+      day += p; taken++;
+      if (sig.res === 'WIN') w++; else if (sig.res === 'LOSE') l++;
+      if (day >= tp) { stopped = true; tpDays++; }
+      else if (day <= -sl) { stopped = true; slDays++; }
+    }
+    total += day;
+    cum += day;
+    if (cum > peak) peak = cum;
+    if (peak - cum > maxDd) maxDd = peak - cum;
+  }
+  const dec = w + l;
+  return { total, taken, skipped, wr: dec ? w / dec * 100 : null, tpDays, slDays, maxDd, days: days.length };
+}
+
+// unit - размер одной ставки в USDT: пороги задаём в ставках, чтобы таблица
+// читалась одинаково на разных страницах с разными суммами.
+function dayStopBuildSection_(sigs, pnlFn, unit) {
+  if (!sigs || sigs.length < 20 || !unit) return '';
+  const base = dayStopSim_(sigs, pnlFn, DAYSTOP_OFF, DAYSTOP_OFF);
+  if (!base.days) return '';
+
+  const cols = [DAYSTOP_OFF].concat(DAYSTOP_LEVELS);   // TP
+  const rows = [DAYSTOP_OFF].concat(DAYSTOP_LEVELS);   // SL
+  const grid = rows.map(slK => cols.map(tpK => dayStopSim_(
+    sigs, pnlFn,
+    tpK === DAYSTOP_OFF ? DAYSTOP_OFF : tpK * unit,
+    slK === DAYSTOP_OFF ? DAYSTOP_OFF : slK * unit,
+  )));
+
+  let best = { v: -Infinity, r: 0, c: 0 };
+  grid.forEach((line, r) => line.forEach((cell, c) => {
+    if (cell.total > best.v) best = { v: cell.total, r, c };
+  }));
+  const bestCell = grid[best.r][best.c];
+  const lbl = k => k === DAYSTOP_OFF ? t('ds.off') : '×' + k;
+  const fmt = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU');
+
+  let html = `<div class="stats-table-wrap"><table class="anal-table ds-table"><thead><tr>` +
+             `<th>SL \\ TP</th>${cols.map(c => `<th>${lbl(c)}</th>`).join('')}</tr></thead><tbody>`;
+  grid.forEach((line, r) => {
+    html += `<tr><td class="ds-row-lbl">${lbl(rows[r])}</td>`;
+    line.forEach((cell, c) => {
+      const isBase = rows[r] === DAYSTOP_OFF && cols[c] === DAYSTOP_OFF;
+      const isBest = r === best.r && c === best.c;
+      const cls = [cell.total >= 0 ? 'wr-green' : 'wr-red', isBest ? 'ds-best' : '', isBase ? 'ds-base' : ''].filter(Boolean).join(' ');
+      html += `<td class="${cls}">${fmt(cell.total)}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // Улучшение без разбора, чем оно куплено, вводит в заблуждение: показываем
+  // и цену - сколько сигналов отсечено и как изменилась просадка.
+  const diff = bestCell.total - base.total;
+  const noGain = best.r === 0 && best.c === 0;
+  const verdict = noGain
+    ? `<div class="ds-verdict bad">${t('ds.nogain')}</div>`
+    : `<div class="ds-verdict good">${t('ds.best')}: SL ${lbl(rows[best.r])} · TP ${lbl(cols[best.c])} → <b>${fmt(bestCell.total)} USDT</b> ` +
+      `(${diff >= 0 ? '+' : ''}${Math.round(diff)} ${t('ds.vsbase')}), ${t('ds.skipped')} <b>${bestCell.skipped}</b> ${t('ds.of')} ${base.taken}, ` +
+      `${t('ds.dd')} ${Math.round(base.maxDd)} → <b>${Math.round(bestCell.maxDd)}</b> USDT, ` +
+      `${t('ds.closed')} ${bestCell.tpDays} ${t('ds.bytp')} / ${bestCell.slDays} ${t('ds.bysl')} ${t('ds.outof')} ${base.days}.</div>`;
+
+  const baseLine = `<div class="ds-base-line">${t('ds.baseline')}: <b>${fmt(base.total)} USDT</b> · ` +
+    `${base.taken} ${t('ds.sig')} · WR ${base.wr == null ? '-' : base.wr.toFixed(1) + '%'} · ` +
+    `${t('ds.unit')} ${unit} USDT.</div>`;
+
+  return baseLine + html + verdict;
+}
+
 function devBuildStreakSection(sigs) {
   const losses = devStreaksOfType(sigs, 'LOSE');
   const wins = devStreaksOfType(sigs, 'WIN');
@@ -3411,6 +3507,12 @@ async function renderEraStats() {
 
     eraRenderSummary_(sigs, cache);
     statsRenderSlice_(ERA_SLICE, eraRows, sigs, { pnlOfRow: eraPnlRow_, pnlFn: eraPnlSig_ });
+    // Дневные стопы считаются по выбранной на странице ставке ETH - она же
+    // задаёт шаг порогов, поэтому таблица меняется вместе с селекторами.
+    try {
+      statsShowTable_('eraDayStopBlock', 'eraDayStopCard',
+        dayStopBuildSection_(sigs, eraPnlSig_, eraStakeOf_('ETH')));
+    } catch (e) { console.log('ERA daystop error:', e); }
   } catch (e) {
     console.log('ERA stats error:', e);
   }
@@ -4098,6 +4200,8 @@ async function renderDevL30d() {
     try { devShowTable('devBlockedBlock', 'devBlockedCard', devBuildBlockedSection(sigs)); } catch (e) { console.log('DEV blocked error:', e); }
     try { devShowTable('devConfidenceBlock', 'devConfidenceCard', devBuildConfidenceSection(sigs)); } catch (e) { console.log('DEV confidence error:', e); }
     try { devShowTable('devStreakBlock', 'devStreakCard', devBuildStreakSection(sigs)); } catch (e) { console.log('DEV streak error:', e); }
+    // Дневные стопы: ставка ветки PRO - та же, по которой считается PNL раздела.
+    try { devShowTable('devDayStopBlock', 'devDayStopCard', dayStopBuildSection_(sigs, x => devPnlSig(x, 'PRO'), DEV_STAKES.PRO.ETH)); } catch (e) { console.log('DEV daystop error:', e); }
 
     // Итог — автоматические выводы по срезу (в конце страницы)
     try {

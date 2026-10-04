@@ -43,7 +43,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit', 'set-password'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -5265,6 +5265,143 @@ function applySettings(s) {
   return changed;
 }
 
+// ── пароль панели ──
+// Секрет в адресе панели - это ключ, который легко утекает: ссылку
+// копируют в чат, она остаётся в истории браузера и в логах. С
+// постоянным адресом туннеля утёкший секрет - это открытая панель.
+// Поэтому снаружи (через Cloudflare) панель спрашивает ещё и пароль.
+// В config.json лежит не пароль, а его хеш scrypt с солью; задаётся
+// командой `node executor.js set-password`. Вход живёт в cookie,
+// подписанной ключом из хеша и секрета: смена пароля или секрета
+// выкидывает всех вошедших. Изнутри компьютера (127.0.0.1) пароль не
+// спрашиваем - иначе отчёт в Telegram не смог бы снять журнал;
+// "local": true в panelAuth требует его и там.
+const crypto = require('crypto');
+const AUTH_COOKIE = 'exauth';
+const AUTH_DAYS = 30;
+function authCfg() {
+  const a = CFG.panelAuth || {};
+  return (a.hash && a.salt) ? a : null;
+}
+// Запрос пришёл через туннель: cloudflared добавляет эти заголовки, а
+// подделать их можно только уже сидя на этом компьютере.
+function fromOutside(req) {
+  return !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray'] || req.headers['x-forwarded-for']);
+}
+function needAuth(req) {
+  const a = authCfg();
+  return !!a && (a.local === true || fromOutside(req));
+}
+function pwHash(pw, salt) {
+  return crypto.scryptSync(String(pw), Buffer.from(salt, 'hex'), 32, { N: 16384, r: 8, p: 1 }).toString('hex');
+}
+function authKey() {
+  const a = authCfg();
+  return crypto.createHash('sha256').update(`exauth|${a.hash}|${CFG.secret}`).digest();
+}
+function authToken() {
+  const exp = Date.now() + AUTH_DAYS * 86400000;
+  const sig = crypto.createHmac('sha256', authKey()).update(String(exp)).digest('hex');
+  return `${exp}.${sig}`;
+}
+function authed(req) {
+  if (!needAuth(req)) return true;
+  const m = String(req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${AUTH_COOKIE}=([0-9]+)\\.([0-9a-f]{64})`));
+  if (!m || Number(m[1]) < Date.now()) return false;
+  const want = crypto.createHmac('sha256', authKey()).update(m[1]).digest();
+  return crypto.timingSafeEqual(want, Buffer.from(m[2], 'hex'));
+}
+// Перебор: не больше 5 промахов за 15 минут с одного адреса и 30 со
+// всех вместе. Дальше - отказ, не глядя на пароль.
+const authFails = [];
+function authBlocked(ip) {
+  const since = Date.now() - 15 * 60000;
+  while (authFails.length && authFails[0].t < since) authFails.shift();
+  return authFails.length >= 30 || authFails.filter(f => f.ip === ip).length >= 5;
+}
+function clientIp(req) {
+  return String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')
+    .split(',')[0].trim().slice(0, 64);
+}
+// Куда вернуть после входа: только на свою панель, никаких чужих адресов.
+function safeNext(v) {
+  const n = String(v || '');
+  return /^\/panel\/[A-Za-z0-9_-]+(\?[A-Za-z0-9_=&%.-]*)?$/.test(n) ? n : '';
+}
+function loginPage(next, msg) {
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Вход в пульт</title>
+<meta name="robots" content="noindex"><style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:#0b0f17;color:#e6edf6;font:15px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;padding:16px}
+form{width:100%;max-width:340px;background:#121a27;border:1px solid #22E8FF55;border-radius:14px;
+  padding:26px 22px;box-shadow:0 0 28px #22E8FF22}
+h1{font-size:19px;margin:0 0 16px;color:#22E8FF;text-shadow:0 0 12px #22E8FF66}
+input{width:100%;box-sizing:border-box;padding:11px 12px;border-radius:9px;border:1px solid #2a3a52;
+  background:#0b121d;color:#e6edf6;font-size:16px;margin-bottom:12px}
+button{width:100%;padding:11px;border:0;border-radius:9px;background:#22E8FF;color:#04121a;
+  font-weight:600;font-size:15px;cursor:pointer}
+.msg{color:#ff7a8a;margin:0 0 12px;font-size:14px}</style></head><body>
+<form method="post" action="/login"><h1>Пульт исполнителя</h1>
+${msg ? `<p class="msg">${esc(msg)}</p>` : ''}
+<input type="password" name="password" placeholder="Пароль" autocomplete="current-password" autofocus required>
+<input type="hidden" name="next" value="${esc(next)}">
+<button>Войти</button></form></body></html>`;
+}
+// Возвращает true, если запрос про вход и уже обработан.
+function handleAuth(req, res) {
+  const u = new URL(req.url, 'http://x');
+  const html = (code, body, extra = {}) => {
+    res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...extra });
+    res.end(body);
+  };
+  if (u.pathname === '/logout') {
+    res.writeHead(302, { Location: '/login',
+      'Set-Cookie': `${AUTH_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict` });
+    res.end();
+    return true;
+  }
+  if (u.pathname !== '/login') return false;
+  if (!authCfg()) { html(404, 'пароль панели не задан'); return true; }
+  if (req.method === 'GET') {
+    if (u.searchParams.get('ok') && authed(req)) {
+      html(200, loginPage('', '').replace(/<input[^>]*password[^>]*>|<button>[^<]*<\/button>/g, '')
+        .replace('</h1>', '</h1><p>Вход выполнен. Открой свою ссылку на панель.</p>'));
+      return true;
+    }
+    html(200, loginPage(safeNext(u.searchParams.get('next')), ''));
+    return true;
+  }
+  if (req.method !== 'POST') { res.writeHead(405); res.end(); return true; }
+  let body = '';
+  req.on('data', d => { body += d; if (body.length > 4096) req.destroy(); });
+  req.on('end', () => {
+    const f = new URLSearchParams(body);
+    const next = safeNext(f.get('next'));
+    const ip = clientIp(req);
+    if (authBlocked(ip)) {
+      log(`вход в панель: слишком много неверных попыток (${ip}) - пауза 15 минут`);
+      return html(429, loginPage(next, 'Слишком много попыток. Подождите 15 минут.'));
+    }
+    const a = authCfg();
+    const got = Buffer.from(pwHash(f.get('password') || '', a.salt), 'hex');
+    if (!crypto.timingSafeEqual(got, Buffer.from(a.hash, 'hex'))) {
+      authFails.push({ ip, t: Date.now() });
+      log(`вход в панель: неверный пароль (${ip})`);
+      return html(401, loginPage(next, 'Неверный пароль.'));
+    }
+    log(`вход в панель выполнен (${ip})`);
+    res.writeHead(302, {
+      Location: next || '/login?ok=1',
+      'Set-Cookie': `${AUTH_COOKIE}=${authToken()}; Path=/; Max-Age=${AUTH_DAYS * 86400}; HttpOnly; Secure; SameSite=Strict`,
+      'Cache-Control': 'no-store',
+    });
+    res.end();
+  });
+  return true;
+}
+
 const server = http.createServer((req, res) => {
   const sendJson = (code, obj) => {
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -5273,11 +5410,20 @@ const server = http.createServer((req, res) => {
 
   // браузер сам просит favicon - отвечаем пустым, чтобы не сорить 404
   if (req.method === 'GET' && req.url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+  if (handleAuth(req, res)) return;
 
   // ── Панель. Секрет обязателен: сервер смотрит наружу через туннель,
   // и без него любой, кто знает адрес, управлял бы ставками. ──
   const pm = req.url.match(/^\/panel\/([^/?]+)/);
   if (req.method === 'GET' && pm) {
+    // Пароль спрашиваем раньше секрета: иначе по ответу можно было бы
+    // подбирать секрет, не зная пароля.
+    if (!authed(req)) {
+      res.writeHead(302, { Location: '/login?next=' + encodeURIComponent(safeNext(req.url) || ''),
+                           'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
     if (pm[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
     const f = path.join(ROOT, 'panel.html');
     if (!fs.existsSync(f)) { res.writeHead(404); res.end('panel.html не найден'); return; }
@@ -5310,6 +5456,7 @@ const server = http.createServer((req, res) => {
 
   const am = req.url.match(/^\/api\/([^/?]+)\/([a-z-]+)/);
   if (am) {
+    if (!authed(req)) return sendJson(401, { error: 'нужен вход' });
     if (am[1] !== CFG.secret) { res.writeHead(403); res.end('forbidden'); return; }
     const action = am[2];
     if (action === 'state') return sendJson(200, { ...snapshot(), bets: recentBets(150) });
@@ -6200,6 +6347,83 @@ function kitMode(args) {
   if (zip) console.log('Папку рядом с архивом можно удалить.');
 }
 
+// ── режим set-password: пароль для входа в панель снаружи ──
+//   node executor.js set-password         задать или сменить
+//   node executor.js set-password --off   убрать
+// Пароль вводится скрыто и в config.json попадает только хешем.
+function readHidden(q) {
+  return new Promise(resolve => {
+    const stdin = process.stdin;
+    process.stdout.write(q);
+    if (!stdin.isTTY) {
+      // Из конвейера (проверки, скрипты) - построчно.
+      readHidden.buf = readHidden.buf || [];
+      const take = () => { const l = readHidden.buf.shift(); process.stdout.write('\n'); resolve(l); };
+      if (readHidden.buf.length) return take();
+      let acc = '';
+      const on = d => {
+        acc += d;
+        if (!acc.includes('\n')) return;
+        stdin.removeListener('data', on); stdin.pause();
+        readHidden.buf.push(...acc.split(/\r?\n/).filter((x, i, a) => i < a.length - 1 || x));
+        take();
+      };
+      stdin.setEncoding('utf8'); stdin.on('data', on); stdin.resume();
+      return;
+    }
+    let s = '';
+    stdin.setRawMode(true); stdin.setEncoding('utf8'); stdin.resume();
+    const on = ch => {
+      for (const c of ch) {
+        if (c === '\r' || c === '\n') {
+          stdin.setRawMode(false); stdin.pause(); stdin.removeListener('data', on);
+          process.stdout.write('\n'); return resolve(s);
+        }
+        if (c === '\u0003') { process.stdout.write('\n'); process.exit(1); }
+        if (c === '\u007f' || c === '\b') {
+          if (s.length) { s = s.slice(0, -1); process.stdout.write('\b \b'); }
+          continue;
+        }
+        s += c; process.stdout.write('*');
+      }
+    };
+    stdin.on('data', on);
+  });
+}
+async function setPasswordMode(args) {
+  // Работающий исполнитель при следующем сохранении из панели записал
+  // бы config.json своей копией - и пароль бы пропал.
+  const port = CFG.port ?? 8787;
+  const busy = await new Promise(r => {
+    const t = require('net').createServer();
+    t.once('error', () => r(true));
+    t.once('listening', () => t.close(() => r(false)));
+    t.listen(port, '127.0.0.1');
+  });
+  if (busy) {
+    console.error(`На порту ${port} работает исполнитель. Останови его (Ctrl+C в его окне) и повтори команду.`);
+    process.exit(1);
+  }
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^﻿/, ''));
+  if (args.includes('--off')) {
+    delete raw.panelAuth;
+    fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+    console.log('Пароль панели убран: снаружи панель снова открывается по одной ссылке с секретом.');
+    return;
+  }
+  const pw = await readHidden('Новый пароль панели (от 10 знаков): ');
+  if (!pw || pw.length < 10) { console.error('Слишком короткий: нужно хотя бы 10 знаков.'); process.exit(1); }
+  const pw2 = await readHidden('Повтори пароль: ');
+  if (pw !== pw2) { console.error('Пароли не совпали - ничего не меняю.'); process.exit(1); }
+  const salt = crypto.randomBytes(16).toString('hex');
+  raw.panelAuth = { ...(raw.panelAuth || {}), salt, hash: pwHash(pw, salt) };
+  fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');
+  console.log('Пароль сохранён (в config.json лежит только его хеш).');
+  console.log('Снаружи панель теперь спрашивает пароль; на этом компьютере - нет.');
+  console.log('Все, кто входил раньше, выйдут: вход привязан к паролю.');
+  process.exit(0);
+}
+
 function backupMode(args) {
   const withProfile = args.includes('--profile');
   const where = args.find(a => a && !a.startsWith('--'));
@@ -6291,6 +6515,8 @@ function backupMode(args) {
 
 if (process.argv[2] === 'backup') {
   backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'set-password') {
+  setPasswordMode(process.argv.slice(3));
 } else if (process.argv[2] === 'move') {
   moveMode(process.argv.slice(3));
 } else if (process.argv[2] === 'kit') {

@@ -22,6 +22,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+// Биржи на телефоне (Binance Events): ставка через adb, без браузера.
+const ADB = require('./adb');
 
 const ROOT = __dirname;
 const CFG_PATH = path.join(ROOT, 'config.json');
@@ -43,7 +45,7 @@ try { playwright = require('playwright'); }
 catch (e) {
   // migrate и add-asset только переписывают config.json - браузер им не
   // нужен, и требовать установку Playwright ради правки файла незачем.
-  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit', 'set-password'].includes(process.argv[2])) {
+  if (!['migrate', 'add-asset', 'timings', 'backup', 'move', 'kit', 'set-password', 'adb-diag'].includes(process.argv[2])) {
     console.error('Playwright не установлен. В папке mexc-executor выполни:\n  npm install playwright && npx playwright install chromium');
     process.exit(1);
   }
@@ -68,6 +70,8 @@ function defaultEx() {
   const d = CFG.defaultExchange;
   return (d && names.includes(d)) ? d : (names[0] || 'mexc');
 }
+// Биржа, которую исполнитель ведёт через телефон, а не через браузер.
+function isAdb(name) { return ((CFG.exchanges || {})[name] || {}).driver === 'adb'; }
 function exCfg(name) {
   const key = name || defaultEx();
   if (EX_CACHE.has(key)) return EX_CACHE.get(key);
@@ -174,6 +178,10 @@ function exCfg(name) {
     targets: { ...(CFG.targets || {}), ...(e.targets || {}) },
     // Свой профиль браузера - для второго аккаунта той же биржи.
     profile: e.profile || '',
+    // driver: "adb" - биржа в приложении на телефоне (Binance Events).
+    // urls у неё - не адреса, а символы приложения: {"BTC": "BTCUSDT"}.
+    driver: e.driver || '',
+    adb: e.adb || {},
     // Делить сигналы общей метки: если несколько бирж с этим флагом
     // сейчас в смене, ставят все, а не одна.
     shareSignals: e.shareSignals === true,
@@ -605,6 +613,7 @@ async function browser() { await ctxFor('default'); }
 // Вкладка биржи: живая - отдаём, нет - заводим. Первую вкладку контекста
 // переиспользуем, иначе рядом всегда висела бы пустая.
 async function pageFor(name) {
+  if (isAdb(name)) throw new Error(`${exCfg(name).title} работает через телефон - вкладка браузера ей не нужна`);
   const c = await ctxFor(profileOf(name));
   const have = pages.get(name);
   if (have && !have.isClosed()) return have;
@@ -2237,6 +2246,23 @@ function clockWrite(status) {
   log(`этапы (${status}, всего ${sec(total)}с): ${shown.join(' · ')}`);
 }
 
+// Ставка через телефон. Всё общее - очередь, лимиты, журнал, замер этапов -
+// остаётся здесь; сам разговор с приложением - в adb.js.
+async function placeBetAdb(sig) {
+  EX = exCfg(sig.ex);
+  const A = EX.adb || {};
+  let stake = betStake(sig);
+  const lo = A.minStake ?? 5;
+  if (stake < lo) { log(`${EX.title}: сумма ${stake} меньше минимума ${lo} - ставлю ${lo}`); stake = lo; }
+  return ADB.placeBet(sig, {
+    E: EX, log, mark, stake, dryRun: state.dryRun,
+    lagSec: (Date.now() - (sig.receivedAt || Date.now())) / 1000,
+    lateSec: Math.max(0, CFG.lateSec ?? 40),
+    confirmTimeoutMs: CFG.confirmTimeoutMs ?? 9000,
+    shotsDir: SHOTS,
+  });
+}
+
 async function placeBet(sig) {
   const t0 = Date.now();
   // С этой строки и до конца ставки все страничные помощники смотрят в
@@ -3334,7 +3360,7 @@ async function pump() {
         if (!browserOpen()) log('биржа спала - холодный старт займёт лишние секунды');
       }
       clockStart(sig);
-      const r = await placeBet(sig);
+      const r = isAdb(sig.ex) ? await placeBetAdb(sig) : await placeBet(sig);
       clockWrite(r.status);
       // Заметка складывается: множитель пачки и, если цена участвовала в
       // решении, насколько вход отличался от сигнала. Без этого пропуск
@@ -3393,6 +3419,7 @@ async function pump() {
 // страница достаётся ставке.
 async function afterBetHome(sig) {
   if (process.env.TEST_MODE === '1') return;
+  if (isAdb(sig.ex)) return;
   // Ставка по пробуждению: вкладку всё равно закроет расписание, и
   // возвращать её на рабочий актив незачем - это лишняя минута жизни
   // окна там, где биржа должна спать.
@@ -3566,7 +3593,7 @@ async function idleAction() {
     // спящей бирже - ровно тот след, которого мы избегаем. И работаем в
     // ЕЁ вкладке: раньше бралась последняя использованная, то есть
     // холостое действие могло бродить по чужой бирже.
-    const names = activeExchanges();
+    const names = activeExchanges().filter(n => !isAdb(n));
     if (!names.length) return;
     const name = names[randInt(0, names.length - 1)];
     EX = exCfg(name);
@@ -3977,6 +4004,7 @@ async function todayPnl() {
 async function targetHit(name) {
   const T = targetsCfg(name);
   if (!T.on) return '';
+  if (isAdb(name)) return '';   // итог дня с телефона пока не читается
   const pnl = await todayPnl();
   if (pnl == null) { log(`${exCfg(name).title}: итог дня прочитать не удалось - цели не проверяю`); return ''; }
   if (T.tp != null && pnl >= T.tp) {
@@ -4072,6 +4100,7 @@ async function collectClosed(name) {
 // Собрать сводку за вчера. Возвращает запись или null.
 async function collectPnl(exName) {
   const name = exName || defaultEx();
+  if (isAdb(name)) { log(`сводка ${exCfg(name).title}: с телефона пока не собирается`); return null; }
   const E = exCfg(name);
   const url = homeUrl(E);
   if (!url) { log(`сводка ${E.title}: не задан ни один адрес актива`); return null; }
@@ -4610,7 +4639,8 @@ async function windowBySchedule() {
   if (process.env.TEST_MODE === '1') return;
   // Под руку не лезем: идёт ставка, что-то в очереди - не наше время.
   if (state.busy || state.queue.length) return;
-  const active = activeExchanges();
+  // Телефонным биржам окно браузера не нужно.
+  const active = activeExchanges().filter(n => !isAdb(n));
   const open = openExchanges();
 
   // Никто не в смене - закрываем окно целиком.
@@ -6515,6 +6545,17 @@ function backupMode(args) {
 
 if (process.argv[2] === 'backup') {
   backupMode(process.argv.slice(3));
+} else if (process.argv[2] === 'adb-diag') {
+  // Что исполнитель видит на телефоне: без ставок, только чтение экрана.
+  const want = (process.argv[3] || '').toLowerCase();
+  const name = want || Object.keys(CFG.exchanges).find(isAdb);
+  if (!name || !isAdb(name)) {
+    console.error('Нет биржи с "driver": "adb" в config.json' + (want ? ` (искал ${want})` : ''));
+    process.exit(1);
+  }
+  ADB.diag(exCfg(name), { log: console.log, shotsDir: SHOTS })
+    .then(ok => { console.log(ok ? '\nЭкран читается - можно ставить.' : '\nЭкран прочитан не полностью - смотри выше.'); process.exit(ok ? 0 : 1); })
+    .catch(e => { console.error('adb-diag: ' + e.message); process.exit(1); });
 } else if (process.argv[2] === 'set-password') {
   setPasswordMode(process.argv.slice(3));
 } else if (process.argv[2] === 'move') {

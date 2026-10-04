@@ -85,8 +85,12 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
 
-  if (pageId === 'statistics') { renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
-  if (pageId === 'stats-l30d-dev') { renderDevL30d(); devRenderUpdatedAt(); }
+  if (pageId === 'statistics') { devGateApply(); devGateTapHook(document.getElementById('statsTitleTap')); renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
+  if (pageId === 'stats-l30d-dev') {
+    // Прямой переход (из консоли, по старой ссылке) тоже должен упираться в замок.
+    if (!devGateUnlocked()) { goBack(); devGateOpen(); return; }
+    renderDevL30d(); devRenderUpdatedAt();
+  }
   if (pageId === 'stats-all')  { initAllPeriodsUI(); renderAllPeriods(); }
   if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
@@ -1848,6 +1852,103 @@ function isDevAdmin() {
   if (!u) return false;
   if (u.id === DEV_ADMIN_TG_ID) return true;
   return String(u.username || '').toLowerCase() === DEV_ADMIN_TG_USERNAME;
+}
+
+// ===== ЗАМОК НА DEV-РАЗДЕЛ =====
+// Владелец входит молча: его Telegram ID уже проверяется isDevAdmin(), пароль
+// ему вводить не надо. Пароль - запасной вход для случаев, когда ID недоступен:
+// открыли в браузере, с другого аккаунта или устройства.
+//
+// Честно о границах: это статическая страница, весь её код открыт. Замок прячет
+// раздел от посторонних глаз, но не защищает данные от того, кто откроет
+// исходник или консоль. Настоящая защита требует сервера, который отдавал бы
+// DEV-данные только после проверки подписи Telegram.
+//
+// В коде лежит не пароль, а его SHA-256: случайный взгляд в исходник пароля не
+// выдаёт. Сменить пароль:
+//   node -e "console.log(require('crypto').createHash('sha256').update('НОВЫЙ','utf8').digest('hex'))"
+// и подставить результат сюда. Старые разблокировки при этом перестают
+// действовать - ключ в localStorage сверяется с этим же хешем.
+const DEV_GATE_HASH = '60b4056b0ef4c159703068a2a354f0ac3cfa545991216b21710b212714f934f3';
+const DEV_GATE_KEY = 'fp_dev_gate';
+
+function devGateUnlocked() {
+  if (isDevAdmin()) return true;
+  try { return localStorage.getItem(DEV_GATE_KEY) === DEV_GATE_HASH; } catch (e) { return false; }
+}
+
+async function devGateHash_(text) {
+  // crypto.subtle есть только в защищённом контексте (https и localhost).
+  // Если его нет - замок остаётся закрытым, а не открывается «на всякий случай».
+  if (!(window.crypto && crypto.subtle)) return null;
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Кнопка раздела видна только разблокировавшим: прятать её - и есть смысл замка.
+function devGateApply() {
+  const btn = document.getElementById('devEntryBtn');
+  if (btn) btn.style.display = devGateUnlocked() ? '' : 'none';
+}
+
+function devGateClose() {
+  const ov = document.getElementById('devGateOverlay');
+  if (ov) ov.remove();
+}
+
+function devGateOpen() {
+  if (document.getElementById('devGateOverlay')) return;
+  const ov = document.createElement('div');
+  ov.className = 'dev-gate-ov';
+  ov.id = 'devGateOverlay';
+  ov.innerHTML = `
+    <div class="dev-gate-box">
+      <div class="dev-gate-title">${t('gate.title')}</div>
+      <p class="dev-gate-note">${t('gate.note')}</p>
+      <input type="password" id="devGateInput" class="dev-gate-input" autocomplete="off" inputmode="text" placeholder="${t('gate.ph')}">
+      <div class="dev-gate-err" id="devGateErr"></div>
+      <div class="dev-gate-btns">
+        <button class="dev-gate-cancel" onclick="devGateClose()">${t('gate.cancel')}</button>
+        <button class="dev-gate-ok" onclick="devGateSubmit()">${t('gate.ok')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const inp = document.getElementById('devGateInput');
+  inp?.focus();
+  inp?.addEventListener('keydown', e => { if (e.key === 'Enter') devGateSubmit(); });
+}
+
+async function devGateSubmit() {
+  const inp = document.getElementById('devGateInput');
+  const err = document.getElementById('devGateErr');
+  if (!inp) return;
+  const h = await devGateHash_(inp.value || '');
+  if (h && h === DEV_GATE_HASH) {
+    try { localStorage.setItem(DEV_GATE_KEY, DEV_GATE_HASH); } catch (e) {}
+    devGateClose();
+    devGateApply();
+    if (tg) tg.HapticFeedback?.notificationOccurred?.('success');
+    navigate('stats-l30d-dev');
+    return;
+  }
+  if (err) err.textContent = h === null ? t('gate.nocrypto') : t('gate.wrong');
+  inp.value = '';
+  inp.focus();
+  if (tg) tg.HapticFeedback?.notificationOccurred?.('error');
+}
+
+// Запасной вход, когда кнопка скрыта: пять быстрых касаний по заголовку
+// «Статистика» на одноимённой странице открывают ввод пароля.
+function devGateTapHook(el) {
+  if (!el || el.dataset.gateWired) return;
+  el.dataset.gateWired = '1';
+  let taps = 0, last = 0;
+  el.addEventListener('click', () => {
+    const now = Date.now();
+    taps = (now - last < 600) ? taps + 1 : 1;
+    last = now;
+    if (taps >= 5) { taps = 0; if (!devGateUnlocked()) devGateOpen(); }
+  });
 }
 
 // ===== ОТМЕТКИ "ИСПРАВЛЕНО" (localStorage этого устройства) =====
@@ -6593,6 +6694,7 @@ const ZONES_ONLY = (() => {
 
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
+  devGateApply();
 
   if (ZONES_ONLY) {
     // Тяжёлую загрузку главной пропускаем: партнёру она не нужна, а зоны

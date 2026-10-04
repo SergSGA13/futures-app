@@ -763,7 +763,11 @@
 <script>
 // Секрет берём из адреса панели: /panel/<secret>
 const SECRET = location.pathname.split('/')[2];
-const api = (a, opt) => fetch(`/api/${SECRET}/${a}`, opt).then(r => r.json());
+// 401 - вход по паролю истёк: перезагрузка уведёт на страницу входа.
+const api = (a, opt) => fetch(`/api/${SECRET}/${a}`, opt).then(r => {
+  if (r.status === 401) { location.reload(); throw new Error('нужен вход'); }
+  return r.json();
+});
 const post = (a, body) => api(a, body === undefined
   ? { method: 'POST' }
   : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

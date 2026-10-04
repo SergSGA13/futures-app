@@ -34,7 +34,32 @@ if (!fs.existsSync(CFG_PATH)) {
 // .replace() снимает BOM: блокнот и PowerShell (Set-Content -Encoding UTF8
 // в версии 5.1) пишут UTF-8 с меткой в начале файла, а JSON.parse на ней
 // падает с "Unexpected token" - причём в сообщении метка невидима.
-const CFG = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
+const CFG = (() => {
+  const raw = fs.readFileSync(CFG_PATH, 'utf8').replace(/^﻿/, '');
+  try { return JSON.parse(raw); } catch (e) {
+    // Сломанный config.json - самая частая беда после ручной правки. Голое
+    // «Unexpected token at position 8235» ничего не говорит, поэтому
+    // показываем само место: строку с ошибкой и соседние, секреты скрыты.
+    const lines = raw.split(/\r?\n/);
+    let line = Number((/line (\d+)/.exec(e.message) || [])[1]) || 0;
+    const pos = Number((/position (\d+)/.exec(e.message) || [])[1]);
+    if (!line && Number.isFinite(pos)) line = raw.slice(0, pos).split('\n').length;
+    const hide = t => t.replace(/("(secret|token|tgToken|chatId|tgChatId|hash|salt)"\s*:\s*")[^"]*/g, '$1***');
+    console.error(`\nconfig.json сломан: ${e.message}`);
+    if (line) {
+      console.error(`Место ошибки - строка ${line}:\n`);
+      for (let i = Math.max(1, line - 8); i <= Math.min(lines.length, line + 3); i++) {
+        console.error(`${i === line ? '>>' : '  '} ${String(i).padStart(4)}  ${hide(lines[i - 1])}`);
+      }
+    }
+    console.error('\nЧастые причины:');
+    console.error('  - лишняя "}," после вставленного блока (две подряд) - удали одну;');
+    console.error('  - нет запятой между блоками: перед следующим "имя": { нужно "}," а не "}";');
+    console.error('  - запятая после последнего элемента перед "}" или "]" - убери её;');
+    console.error('  - кавычки «ёлочки» или одиночные вместо обычных двойных.');
+    process.exit(1);
+  }
+})();
 const PROFILE = path.join(ROOT, 'profile');           // куки/логин живут тут
 const LOGS = path.join(ROOT, 'logs');
 const SHOTS = path.join(LOGS, 'shots');

@@ -35,8 +35,26 @@ if (!fs.existsSync(CFG_PATH)) {
 // в версии 5.1) пишут UTF-8 с меткой в начале файла, а JSON.parse на ней
 // падает с "Unexpected token" - причём в сообщении метка невидима.
 const CFG = (() => {
-  const raw = fs.readFileSync(CFG_PATH, 'utf8').replace(/^﻿/, '');
-  try { return JSON.parse(raw); } catch (e) {
+  const raw = fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, '');
+  const FIX = require('./config-fix');
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  // Биржа, вставленная снаружи "exchanges", исполнителю не видна - и
+  // молча. Переносим её на место и говорим об этом.
+  const settle = (c, text, why) => {
+    const moved = FIX.moveStrayExchanges(c);
+    if (!why.length && !moved.length) return c;
+    const bak = CFG_PATH.replace(/\.json$/, `.broken-${stamp()}.json`);
+    fs.writeFileSync(bak, raw);
+    fs.writeFileSync(CFG_PATH, moved.length ? JSON.stringify(c, null, 2) + '\n' : text);
+    console.log('\nconfig.json был сломан - починил сам:');
+    for (const w of why) console.log('  - ' + w);
+    for (const m of moved) console.log(`  - блок "${m}" стоял вне "exchanges" - перенёс внутрь`);
+    console.log(`  прежний файл сохранён рядом: ${path.basename(bak)}\n`);
+    return c;
+  };
+  try { return settle(JSON.parse(raw), raw, []); } catch (e) {
+    const fixed = FIX.repair(raw);
+    if (fixed) return settle(fixed.obj, fixed.text, fixed.fixes);
     // Сломанный config.json - самая частая беда после ручной правки. Голое
     // «Unexpected token at position 8235» ничего не говорит, поэтому
     // показываем само место: строку с ошибкой и соседние, секреты скрыты.
@@ -6459,7 +6477,7 @@ async function setPasswordMode(args) {
     console.error(`На порту ${port} работает исполнитель. Останови его (Ctrl+C в его окне) и повтори команду.`);
     process.exit(1);
   }
-  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^﻿/, ''));
+  const raw = JSON.parse(fs.readFileSync(CFG_PATH, 'utf8').replace(/^\uFEFF/, ''));
   if (args.includes('--off')) {
     delete raw.panelAuth;
     fs.writeFileSync(CFG_PATH, JSON.stringify(raw, null, 2) + '\n');

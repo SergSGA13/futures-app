@@ -263,6 +263,50 @@
         "resumeAt": "03:00"
       },
       "profile": "toobit2"
+    },
+    "binance": {
+      "title": "Binance",
+      "enabled": false,
+      "driver": "adb",
+      "adb": {
+        "path": "C:\\Users\\JakubPC\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\\scrcpy-win64-v4.1\\adb.exe",
+        "serial": "",
+        "minStake": 5
+      },
+      "urls": {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT"
+      },
+      "stakes": {
+        "BTC": 5,
+        "ETH": 5
+      },
+      "stakeLimits": {
+        "BTC": 250,
+        "ETH": 250
+      },
+      "execTimings": [
+        10,
+        30
+      ],
+      "signalTimings": [
+        "BINANCE_10m",
+        "BINANCE_30m"
+      ],
+      "minPayout": 80,
+      "checkPayout": true,
+      "maxOpenBets": 5,
+      "schedule": {
+        "hours": [
+          "111111111111111111111111",
+          "111111111111111111111111",
+          "111111111111111111111111",
+          "111111111111111111111111",
+          "111111111111111111111111",
+          "111111111111111111111111",
+          "111111111111111111111111"
+        ]
+      }
     }
   },
   "dirLimits": {

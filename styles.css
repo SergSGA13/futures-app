@@ -3103,3 +3103,4 @@ body.zones-only .app-main { bottom: 0; }
 }
 .dev-blk-cand { margin: 8px 0 0; padding-left: 18px; }
 .dev-blk-cand b { color: var(--text); }
+.dev-blk-merged { opacity: .8; }

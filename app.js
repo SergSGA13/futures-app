@@ -1867,7 +1867,41 @@ function isDevAdmin() {
 const DEV_BLK_HEADS = ['reason', 'block', 'blocked', 'filter', 'причина', 'фильтр', 'блок', 'blockreason', 'why'];
 const DEV_BLK_WINDOWS = [7, 14, 30, 0];       // 0 = всё время
 const DEV_BLK_MIN = 8;                        // меньше - вывода не делаем
-const DEV_BLK_STATE = { days: 30 };
+const DEV_BLK_STATE = { days: 30, level: 'rule' };
+
+// Причина приходит строкой вида «F7: Mon 00:05 (окно 00:00-00:09)» - это
+// КОНКРЕТНЫЙ случай срабатывания, а не правило. Если фильтр режет первые
+// десять минут каждого часа, то 00:00-00:09, 10:00-10:09 и 20:00-20:09 - одно
+// и то же правило, и разносить их по строкам значит дробить статистику там,
+// где её надо складывать. Поэтому группировать можно на трёх уровнях:
+//   filter - только код (F4, F7, F8);
+//   rule   - код плюс форма окна: окно внутри одного часа сводится к минутам
+//            (:00-:09), счётчики слотов «(1/1)» отбрасываются;
+//   raw    - строка как есть, без склейки.
+function devBlkCode_(reason) {
+  const m = String(reason).match(/^\s*([A-Za-zА-Яа-я]{1,2}\d{1,3})\s*[:\-]/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+function devBlkKey_(reason, level) {
+  const raw = String(reason || '').trim();
+  if (level === 'raw') return raw;
+  const code = devBlkCode_(raw);
+  if (level === 'filter') return code || raw;
+
+  const win = raw.match(/(\d{1,2}):(\d{2})\s*[-\u2013\u2014]\s*(\d{1,2}):(\d{2})/);
+  if (win) {
+    const h1 = +win[1], h2 = +win[3];
+    // Окно внутри одного часа - правило задаётся минутами, час к делу не
+    // относится. Окно, перешагивающее час, оставляем как есть.
+    return h1 === h2
+      ? `${code || '?'}: :${win[2]}-:${win[4]}`
+      : `${code || '?'}: ${win[0]}`;
+  }
+  // Не окно: убираем хвостовой счётчик слотов «(1/1)», он различает попытки,
+  // а не правила.
+  return raw.replace(/\s*\(\d+\s*\/\s*\d+\)\s*$/, '').trim();
+}
 
 function devBlkFindReasonCol_(rows) {
   const head = (rows && rows[0]) || [];
@@ -1898,7 +1932,7 @@ function devBlkCandidates_(rows) {
   return out.slice(0, 6);
 }
 
-function devBlkAgg_(rows, idx, days) {
+function devBlkAgg_(rows, idx, days, level) {
   const cutoff = days ? cutoffDk(days) : null;
   const by = {};
   let total = 0;
@@ -1908,8 +1942,10 @@ function devBlkAgg_(rows, idx, days) {
     if (!s) continue;
     if (cutoff && s.dk < cutoff) continue;
     const reason = String(raw[idx] || '').trim() || '-';
-    const o = (by[reason] = by[reason] || { reason, n: 0, w: 0, l: 0, pnl: 0 });
+    const key = devBlkKey_(reason, level);
+    const o = (by[key] = by[key] || { reason: key, n: 0, w: 0, l: 0, pnl: 0, variants: new Set() });
     o.n++;
+    o.variants.add(reason);
     if (s.res === 'WIN') o.w++; else if (s.res === 'LOSE') o.l++;
     o.pnl += devPnlSig(s, 'PRO');
     total++;
@@ -1930,8 +1966,8 @@ function devBuildBlockedFilterSection(rows) {
     return `<div class="dev-blk-nocol">${t('blk.nocol')}${list}</div>`;
   }
 
-  const days = DEV_BLK_STATE.days;
-  const agg = devBlkAgg_(rows, found.idx, days);
+  const days = DEV_BLK_STATE.days, level = DEV_BLK_STATE.level;
+  const agg = devBlkAgg_(rows, found.idx, days, level);
   if (!agg.total) return `<div class="dev-blk-nocol">${t('blk.empty')}</div>`;
 
   const seg = `<div class="sig-head2 dev-blk-row">
@@ -1939,6 +1975,14 @@ function devBuildBlockedFilterSection(rows) {
     <span class="sig-div"></span>
     <div class="fs-seg compact dev-blk-seg" id="devBlkSeg">
       ${DEV_BLK_WINDOWS.map(d => `<button class="${d === days ? 'active' : ''}" data-blkdays="${d}">${d ? d + 'Д' : t('blk.all')}</button>`).join('')}
+    </div>
+  </div>
+  <div class="sig-head2 dev-blk-row">
+    <span class="mexc-src-lbl">${t('blk.group')}</span>
+    <span class="sig-div"></span>
+    <div class="fs-seg compact dev-blk-seg" id="devBlkLvl">
+      ${[['filter', t('blk.lvl.filter')], ['rule', t('blk.lvl.rule')], ['raw', t('blk.lvl.raw')]]
+        .map(([k, lbl]) => `<button class="${k === level ? 'active' : ''}" data-blklvl="${k}">${lbl}</button>`).join('')}
     </div>
   </div>`;
 
@@ -1948,13 +1992,21 @@ function devBuildBlockedFilterSection(rows) {
     const wr = dec ? o.w / dec * 100 : null;
     // Фильтр сэкономил ровно то, что заблокированные сигналы потеряли бы.
     const saved = -o.pnl;
+    // Вердикт идёт по ДЕНЬГАМ, а не по винрейту. Ставки у пар разные (ETH 125,
+    // BTC 250), поэтому фильтр, отсеявший проигрышные ETH и выигрышные BTC,
+    // показывает винрейт ниже безубытка и при этом отнимает прибыль. Деньги
+    // разницу в ставках уже учитывают, винрейт - нет.
     let cls, verdict;
     if (dec < DEV_BLK_MIN) { cls = 'thin'; verdict = t('blk.thin'); }
-    else if (wr < WR_BREAKEVEN) { cls = 'good'; verdict = t('blk.good'); }
+    else if (saved > 0) { cls = 'good'; verdict = t('blk.good'); }
     else { cls = 'bad'; verdict = t('blk.bad'); }
+    // Сколько разных исходных формулировок попало в эту строку: при склейке
+    // важно видеть, что сложено несколько случаев, а не один.
+    const vn = o.variants.size;
+    const merged = vn > 1 ? ` · <span class="dev-blk-merged">${t('blk.merged')} ${vn}</span>` : '';
     return `<div class="dev-blk-item ${cls}">
       <div class="dev-blk-head"><b>${devEscapeHtml(o.reason)}</b><span class="dev-blk-verdict">${verdict}</span></div>
-      <div class="dev-blk-nums">${t('blk.cut')} <b>${o.n}</b> · WR <b>${wr == null ? '-' : Math.round(wr) + '%'}</b> · ${t('blk.saved')} <b>${fmt(saved)} USDT</b></div>
+      <div class="dev-blk-nums">${t('blk.cut')} <b>${o.n}</b> · WR <b>${wr == null ? '-' : Math.round(wr) + '%'}</b> · ${t('blk.saved')} <b>${fmt(saved)} USDT</b>${merged}</div>
     </div>`;
   }).join('');
 
@@ -1968,19 +2020,28 @@ async function devRenderBlockedFilters() {
   try {
     const rows = await fetchBlockedSignals();
     devShowTable('devBlkBlock', 'devBlkCard', devBuildBlockedFilterSection(rows));
+    // Разметка блока пересоздаётся на каждый рендер, поэтому обработчики
+    // вешаем заново - флага «уже подключено» здесь быть не должно.
     const seg = document.getElementById('devBlkSeg');
-    if (seg && !seg.dataset.wired) {
-      seg.dataset.wired = '1';
-      seg.addEventListener('click', e => {
-        const btn = e.target.closest('button');
-        if (!btn) return;
-        const d = parseInt(btn.dataset.blkdays, 10);
-        if (!Number.isFinite(d) || d === DEV_BLK_STATE.days) return;
-        DEV_BLK_STATE.days = d;
-        if (tg) tg.HapticFeedback?.selectionChanged();
-        devRenderBlockedFilters();
-      });
-    }
+    if (seg) seg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const d = parseInt(btn.dataset.blkdays, 10);
+      if (!Number.isFinite(d) || d === DEV_BLK_STATE.days) return;
+      DEV_BLK_STATE.days = d;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      devRenderBlockedFilters();
+    });
+    const lvl = document.getElementById('devBlkLvl');
+    if (lvl) lvl.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const k = btn.dataset.blklvl;
+      if (!k || k === DEV_BLK_STATE.level) return;
+      DEV_BLK_STATE.level = k;
+      if (tg) tg.HapticFeedback?.selectionChanged();
+      devRenderBlockedFilters();
+    });
   } catch (e) { console.log('DEV blocked filters error:', e); }
 }
 

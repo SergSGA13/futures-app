@@ -1854,6 +1854,136 @@ function isDevAdmin() {
   return String(u.username || '').toLowerCase() === DEV_ADMIN_TG_USERNAME;
 }
 
+// ===== УСПЕШНОСТЬ ФИЛЬТРОВ БЛОКИРОВКИ =====
+// В BLOCKEDsignal лежат сигналы, которые фильтр не пропустил, и у каждого есть
+// причина блокировки. Вопрос: фильтр работает или мешает? Ответ даёт результат
+// самих заблокированных: если они в большинстве проигрышные - фильтр сэкономил
+// деньги, если выигрышные - он их отнял.
+//
+// Колонку причины ищем ПО ЗАГОЛОВКУ: раскладка листа менялась уже дважды, а
+// фиксированный индекс молча начал бы группировать по соседней колонке. Если
+// заголовок не опознан, блок честно говорит об этом и показывает кандидатов,
+// а не выдаёт правдоподобную чушь.
+const DEV_BLK_HEADS = ['reason', 'block', 'blocked', 'filter', 'причина', 'фильтр', 'блок', 'blockreason', 'why'];
+const DEV_BLK_WINDOWS = [7, 14, 30, 0];       // 0 = всё время
+const DEV_BLK_MIN = 8;                        // меньше - вывода не делаем
+const DEV_BLK_STATE = { days: 30 };
+
+function devBlkFindReasonCol_(rows) {
+  const head = (rows && rows[0]) || [];
+  const norm = v => String(v || '').trim().toLowerCase();
+  // 1) точное попадание в известные названия
+  for (let i = 0; i < head.length; i++) {
+    const h = norm(head[i]);
+    if (h && DEV_BLK_HEADS.some(k => h === k || h.includes(k))) return { idx: i, head: String(head[i]).trim(), how: 'head' };
+  }
+  return { idx: -1, head: null, how: 'none' };
+}
+
+// Колонки-кандидаты для подсказки: небольшой набор повторяющихся коротких
+// значений - именно так выглядит столбец с кодом фильтра.
+function devBlkCandidates_(rows) {
+  const head = (rows && rows[0]) || [];
+  const body = rows.slice(1, 400);
+  const out = [];
+  for (let i = 0; i < head.length; i++) {
+    const vals = body.map(r => String((r || [])[i] || '').trim()).filter(Boolean);
+    if (vals.length < Math.min(20, body.length * 0.3)) continue;
+    const uniq = [...new Set(vals)];
+    if (uniq.length < 2 || uniq.length > 40) continue;
+    if (uniq.some(v => v.length > 40)) continue;
+    if (uniq.every(v => DEV_RESOLVED.has(v))) continue;          // это колонка результата
+    out.push({ i, head: String(head[i] || '').trim() || `#${i}`, uniq: uniq.slice(0, 4) });
+  }
+  return out.slice(0, 6);
+}
+
+function devBlkAgg_(rows, idx, days) {
+  const cutoff = days ? cutoffDk(days) : null;
+  const by = {};
+  let total = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const raw = rows[i];
+    const s = devParseSignal(devNormalizeBlockedRow(raw));
+    if (!s) continue;
+    if (cutoff && s.dk < cutoff) continue;
+    const reason = String(raw[idx] || '').trim() || '-';
+    const o = (by[reason] = by[reason] || { reason, n: 0, w: 0, l: 0, pnl: 0 });
+    o.n++;
+    if (s.res === 'WIN') o.w++; else if (s.res === 'LOSE') o.l++;
+    o.pnl += devPnlSig(s, 'PRO');
+    total++;
+  }
+  return { list: Object.values(by).sort((a, b) => b.n - a.n), total };
+}
+
+function devBuildBlockedFilterSection(rows) {
+  if (!rows || rows.length < 2) return '';
+  const found = devBlkFindReasonCol_(rows);
+
+  if (found.idx < 0) {
+    // Не угадали - показываем, из чего выбирать, вместо выдуманной сводки.
+    const cand = devBlkCandidates_(rows);
+    const list = cand.length
+      ? `<ul class="dev-blk-cand">${cand.map(c => `<li><b>${devEscapeHtml(c.head)}</b> (колонка ${c.i}): ${devEscapeHtml(c.uniq.join(', '))}…</li>`).join('')}</ul>`
+      : '';
+    return `<div class="dev-blk-nocol">${t('blk.nocol')}${list}</div>`;
+  }
+
+  const days = DEV_BLK_STATE.days;
+  const agg = devBlkAgg_(rows, found.idx, days);
+  if (!agg.total) return `<div class="dev-blk-nocol">${t('blk.empty')}</div>`;
+
+  const seg = `<div class="sig-head2 dev-blk-row">
+    <span class="mexc-src-lbl">${t('blk.period')}</span>
+    <span class="sig-div"></span>
+    <div class="fs-seg compact dev-blk-seg" id="devBlkSeg">
+      ${DEV_BLK_WINDOWS.map(d => `<button class="${d === days ? 'active' : ''}" data-blkdays="${d}">${d ? d + 'Д' : t('blk.all')}</button>`).join('')}
+    </div>
+  </div>`;
+
+  const fmt = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU');
+  const items = agg.list.map(o => {
+    const dec = o.w + o.l;
+    const wr = dec ? o.w / dec * 100 : null;
+    // Фильтр сэкономил ровно то, что заблокированные сигналы потеряли бы.
+    const saved = -o.pnl;
+    let cls, verdict;
+    if (dec < DEV_BLK_MIN) { cls = 'thin'; verdict = t('blk.thin'); }
+    else if (wr < WR_BREAKEVEN) { cls = 'good'; verdict = t('blk.good'); }
+    else { cls = 'bad'; verdict = t('blk.bad'); }
+    return `<div class="dev-blk-item ${cls}">
+      <div class="dev-blk-head"><b>${devEscapeHtml(o.reason)}</b><span class="dev-blk-verdict">${verdict}</span></div>
+      <div class="dev-blk-nums">${t('blk.cut')} <b>${o.n}</b> · WR <b>${wr == null ? '-' : Math.round(wr) + '%'}</b> · ${t('blk.saved')} <b>${fmt(saved)} USDT</b></div>
+    </div>`;
+  }).join('');
+
+  const savedAll = agg.list.reduce((a, o) => a - o.pnl, 0);
+  const head = `<div class="dev-blk-sum">${t('blk.total')}: <b>${agg.total}</b> · ${t('blk.saved')} <b style="color:${savedAll >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(savedAll)} USDT</b> · ${t('blk.col')} «${devEscapeHtml(found.head)}»</div>`;
+
+  return seg + head + `<div class="dev-blk-list">${items}</div>`;
+}
+
+async function devRenderBlockedFilters() {
+  try {
+    const rows = await fetchBlockedSignals();
+    devShowTable('devBlkBlock', 'devBlkCard', devBuildBlockedFilterSection(rows));
+    const seg = document.getElementById('devBlkSeg');
+    if (seg && !seg.dataset.wired) {
+      seg.dataset.wired = '1';
+      seg.addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const d = parseInt(btn.dataset.blkdays, 10);
+        if (!Number.isFinite(d) || d === DEV_BLK_STATE.days) return;
+        DEV_BLK_STATE.days = d;
+        if (tg) tg.HapticFeedback?.selectionChanged();
+        devRenderBlockedFilters();
+      });
+    }
+  } catch (e) { console.log('DEV blocked filters error:', e); }
+}
+
 // ===== ЗАМОК НА DEV-РАЗДЕЛ =====
 // Владелец входит молча: его Telegram ID уже проверяется isDevAdmin(), пароль
 // ему вводить не надо. Пароль - запасной вход для случаев, когда ID недоступен:
@@ -4303,6 +4433,7 @@ async function renderDevL30d() {
     try { devShowTable('devStreakBlock', 'devStreakCard', devBuildStreakSection(sigs)); } catch (e) { console.log('DEV streak error:', e); }
     // Дневные стопы: ставка ветки PRO - та же, по которой считается PNL раздела.
     try { devShowTable('devDayStopBlock', 'devDayStopCard', dayStopBuildSection_(sigs, x => devPnlSig(x, 'PRO'), DEV_STAKES.PRO.ETH)); } catch (e) { console.log('DEV daystop error:', e); }
+    try { devRenderBlockedFilters(); } catch (e) { console.log('DEV blocked filters error:', e); }
 
     // Итог — автоматические выводы по срезу (в конце страницы)
     try {

@@ -1866,7 +1866,7 @@ function isDevAdmin() {
 // а не выдаёт правдоподобную чушь.
 const DEV_BLK_HEADS = ['reason', 'block', 'blocked', 'filter', 'причина', 'фильтр', 'блок', 'blockreason', 'why'];
 const DEV_BLK_WINDOWS = [7, 14, 30, 0];       // 0 = всё время
-const DEV_BLK_MIN = 8;                        // меньше - вывода не делаем
+const DEV_BLK_MIN = 10;                       // правило с меньшим числом сигналов не показываем вовсе
 const DEV_BLK_STATE = { days: 30, level: 'rule' };
 
 // Причина приходит строкой вида «F7: Mon 00:05 (окно 00:00-00:09)» - это
@@ -1987,7 +1987,15 @@ function devBuildBlockedFilterSection(rows) {
   </div>`;
 
   const fmt = v => (v >= 0 ? '+' : '') + Math.round(v).toLocaleString('ru-RU');
-  const items = agg.list.map(o => {
+  // Правила с мелкой выборкой не показываем вовсе: на горстке сигналов вердикт
+  // ничего не значит, а список они забивают. Скрытое не исчезает из итога
+  // сверху - иначе сумма строк не сходилась бы с ним и это читалось бы как
+  // ошибка счёта, поэтому пишем, сколько и чего спрятано.
+  const shown = agg.list.filter(o => o.n >= DEV_BLK_MIN);
+  const hiddenRules = agg.list.length - shown.length;
+  const hiddenSigs = agg.list.reduce((a, o) => a + (o.n >= DEV_BLK_MIN ? 0 : o.n), 0);
+
+  const items = shown.map(o => {
     const dec = o.w + o.l;
     const wr = dec ? o.w / dec * 100 : null;
     // Фильтр сэкономил ровно то, что заблокированные сигналы потеряли бы.
@@ -1996,10 +2004,8 @@ function devBuildBlockedFilterSection(rows) {
     // BTC 250), поэтому фильтр, отсеявший проигрышные ETH и выигрышные BTC,
     // показывает винрейт ниже безубытка и при этом отнимает прибыль. Деньги
     // разницу в ставках уже учитывают, винрейт - нет.
-    let cls, verdict;
-    if (dec < DEV_BLK_MIN) { cls = 'thin'; verdict = t('blk.thin'); }
-    else if (saved > 0) { cls = 'good'; verdict = t('blk.good'); }
-    else { cls = 'bad'; verdict = t('blk.bad'); }
+    const cls = saved > 0 ? 'good' : 'bad';
+    const verdict = saved > 0 ? t('blk.good') : t('blk.bad');
     // Сколько разных исходных формулировок попало в эту строку: при склейке
     // важно видеть, что сложено несколько случаев, а не один.
     const vn = o.variants.size;
@@ -2011,9 +2017,13 @@ function devBuildBlockedFilterSection(rows) {
   }).join('');
 
   const savedAll = agg.list.reduce((a, o) => a - o.pnl, 0);
-  const head = `<div class="dev-blk-sum">${t('blk.total')}: <b>${agg.total}</b> · ${t('blk.saved')} <b style="color:${savedAll >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(savedAll)} USDT</b> · ${t('blk.col')} «${devEscapeHtml(found.head)}»</div>`;
+  const hiddenTxt = hiddenRules
+    ? ` · <span class="dev-blk-hidden">${t('blk.hidden')} ${hiddenRules} (${hiddenSigs} ${t('blk.sig')}, ${t('blk.under')} ${DEV_BLK_MIN})</span>`
+    : '';
+  const head = `<div class="dev-blk-sum">${t('blk.total')}: <b>${agg.total}</b> · ${t('blk.saved')} <b style="color:${savedAll >= 0 ? '#4EFFA0' : '#FF5272'}">${fmt(savedAll)} USDT</b>${hiddenTxt} · ${t('blk.col')} «${devEscapeHtml(found.head)}»</div>`;
 
-  return seg + head + `<div class="dev-blk-list">${items}</div>`;
+  const body = items || `<div class="dev-blk-nocol">${t('blk.allthin')} ${DEV_BLK_MIN}.</div>`;
+  return seg + head + `<div class="dev-blk-list">${body}</div>`;
 }
 
 async function devRenderBlockedFilters() {

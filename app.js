@@ -89,6 +89,7 @@ function navigate(pageId) {
   if (pageId === 'stats-l30d-dev') {
     // Прямой переход (из консоли, по старой ссылке) тоже должен упираться в замок.
     if (!devGateUnlocked()) { goBack(); devGateOpen(); return; }
+    devBuildTabs_();
     renderDevL30d(); devRenderUpdatedAt();
   }
   if (pageId === 'stats-all')  { initAllPeriodsUI(); renderAllPeriods(); }
@@ -2030,6 +2031,22 @@ async function devRenderBlockedFilters() {
   try {
     const rows = await fetchBlockedSignals();
     devShowTable('devBlkBlock', 'devBlkCard', devBuildBlockedFilterSection(rows));
+    // График живёт на тех же строках и той же колонке причины.
+    try {
+      const col = devBlkFindReasonCol_(rows);
+      mexcShow_('devBchCard', col.idx >= 0 && devRenderBlockedChart(rows, col.idx, DEV_BLK_STATE.days));
+      const chips = document.getElementById('devBchChips');
+      if (chips && !chips.dataset.wired) {
+        chips.dataset.wired = '1';
+        chips.addEventListener('click', e => {
+          const b = e.target.closest('button[data-bch]');
+          if (!b || b.dataset.bch === DEV_BCH.code) return;
+          DEV_BCH.code = b.dataset.bch;
+          if (tg) tg.HapticFeedback?.selectionChanged();
+          devRenderBlockedFilters();
+        });
+      }
+    } catch (e) { console.log('DEV blocked chart error:', e); }
     // Разметка блока пересоздаётся на каждый рендер, поэтому обработчики
     // вешаем заново - флага «уже подключено» здесь быть не должно.
     const seg = document.getElementById('devBlkSeg');
@@ -2053,6 +2070,184 @@ async function devRenderBlockedFilters() {
       devRenderBlockedFilters();
     });
   } catch (e) { console.log('DEV blocked filters error:', e); }
+}
+
+// ===== ВКЛАДКИ DEV-РАЗДЕЛА =====
+// Карточек в разделе за три десятка, одной лентой это не читается. Разносим их
+// по смысловым группам, НЕ трогая порядок в разметке: контейнеры создаются на
+// лету и карточки переезжают в них при первом открытии страницы. Так не нужно
+// переставлять сотни строк HTML, а каждая карточка продолжает сама управлять
+// своей видимостью (devShowTable ставит ей display) - группа прячет только
+// обёртку.
+const DEV_TABS = [
+  { key: 'now',   lbl: 'dev.tab.now',   cards: ['devWrDailyCard', 'devBranchesCard', 'devBranchPnlCard', 'devPnlCard', 'devUrgentCard', 'devInsightsCard'] },
+  { key: 'time',  lbl: 'dev.tab.time',  cards: ['devStopCard', 'devGoodCard', 'devDowCard', 'devHourCard', 'devTFCard', 'dev5minCard', 'devHeatmapCard', 'devQHeatmapCard', 'devQHeatmapWdCard'] },
+  { key: 'ind',   lbl: 'dev.tab.ind',   cards: ['devBadlistCard', 'devToplistCard', 'devOpportunityCard', 'devCrossCard', 'devCrossEthCard', 'devCrossBtcCard', 'devShareCard', 'devTrendCard', 'devConfidenceCard'] },
+  { key: 'money', lbl: 'dev.tab.money', cards: ['devPairsCard', 'devDrawdownCard', 'devPnlEthCard', 'devPnlBtcCard', 'devVolatilityCard', 'devDayStopCard', 'devStreakCard'] },
+  { key: 'block', lbl: 'dev.tab.block', cards: ['devBchCard', 'devBlkCard', 'devBlockedCard'] },
+];
+const DEV_TAB_STATE = { key: 'now' };
+
+function devTabsApply_() {
+  document.querySelectorAll('#devTabs button[data-devtab]').forEach(b =>
+    b.classList.toggle('active', b.dataset.devtab === DEV_TAB_STATE.key));
+  document.querySelectorAll('#page-stats-l30d-dev .dev-group').forEach(g => {
+    g.style.display = g.dataset.grp === DEV_TAB_STATE.key ? '' : 'none';
+  });
+}
+
+function devBuildTabs_() {
+  const host = document.querySelector('#page-stats-l30d-dev .page-content');
+  if (!host || document.getElementById('devTabs')) return;
+
+  const bar = document.createElement('div');
+  bar.className = 'dev-tabs';
+  bar.id = 'devTabs';
+  bar.innerHTML = DEV_TABS.map(g =>
+    `<button data-devtab="${g.key}">${t(g.lbl)}</button>`).join('');
+
+  // Карточка, не попавшая ни в одну группу (появилась позже этого списка),
+  // уходит в последнюю вкладку, а не исчезает с экрана.
+  const known = new Set(DEV_TABS.flatMap(g => g.cards));
+  const all = [...host.querySelectorAll(':scope > .pnl-chart-card')];
+  const place = {};
+  DEV_TABS.forEach(g => { place[g.key] = []; });
+  all.forEach(el => {
+    const g = DEV_TABS.find(x => x.cards.includes(el.id));
+    place[(g || DEV_TABS[DEV_TABS.length - 1]).key].push(el);
+    if (el.id && !known.has(el.id)) console.log('DEV: карточка вне вкладок:', el.id);
+  });
+
+  // Панель вкладок встаёт перед первой карточкой, шапка остаётся выше.
+  if (all.length) host.insertBefore(bar, all[0]);
+  for (const g of DEV_TABS) {
+    const box = document.createElement('div');
+    box.className = 'dev-group';
+    box.dataset.grp = g.key;
+    host.appendChild(box);
+    place[g.key].forEach(el => box.appendChild(el));
+  }
+
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('button[data-devtab]');
+    if (!b || b.dataset.devtab === DEV_TAB_STATE.key) return;
+    DEV_TAB_STATE.key = b.dataset.devtab;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    devTabsApply_();
+    document.getElementById('page-stats-l30d-dev').scrollTop = 0;
+  });
+  devTabsApply_();
+}
+
+// ===== ГРАФИК ЗАБЛОКИРОВАННЫХ СИГНАЛОВ =====
+// Сводка по фильтрам отвечает «сколько и на сколько», но не показывает, КОГДА
+// блокировки случались и как они накапливались. Здесь по дням: столбики - что
+// отсеяно (зелёным - выигрышные, которые мы потеряли, красным - проигрышные,
+// от которых уберегло), линия - накопленный результат пропущенного.
+// Линия выше нуля значит, что блокировки в сумме спасали деньги.
+const DEV_BCH = { code: 'ALL', chart: null };
+
+function devBchCodes_(rows, idx, days) {
+  const cutoff = days ? cutoffDk(days) : null;
+  const by = {};
+  for (let i = 1; i < rows.length; i++) {
+    const s = devParseSignal(devNormalizeBlockedRow(rows[i]));
+    if (!s || (cutoff && s.dk < cutoff)) continue;
+    const code = devBlkCode_(String(rows[i][idx] || '')) || '?';
+    by[code] = (by[code] || 0) + 1;
+  }
+  return Object.entries(by).sort((a, b) => b[1] - a[1]).map(([code, n]) => ({ code, n }));
+}
+
+function devBchSeries_(rows, idx, days, code) {
+  const cutoff = days ? cutoffDk(days) : null;
+  const per = {};
+  for (let i = 1; i < rows.length; i++) {
+    const raw = rows[i];
+    const s = devParseSignal(devNormalizeBlockedRow(raw));
+    if (!s || (cutoff && s.dk < cutoff)) continue;
+    if (code !== 'ALL' && (devBlkCode_(String(raw[idx] || '')) || '?') !== code) continue;
+    const d = (per[s.dk] = per[s.dk] || { w: 0, l: 0, pnl: 0 });
+    if (s.res === 'WIN') d.w++; else if (s.res === 'LOSE') d.l++;
+    d.pnl += devPnlSig(s, 'PRO');
+  }
+  const keys = Object.keys(per).sort();
+  if (!keys.length) return null;
+
+  // Сплошной ряд дат: пропуск дня сдвинул бы столбики по оси.
+  const toDate = dk => { const [y, m, d] = dk.split('-').map(Number); return new Date(y, m - 1, d); };
+  const days_ = [];
+  for (let t = toDate(keys[0]); t <= toDate(keys[keys.length - 1]); t.setDate(t.getDate() + 1)) {
+    days_.push(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`);
+  }
+  const labels = [], wins = [], losses = [], cum = [];
+  let acc = 0, totW = 0, totL = 0;
+  for (const dk of days_) {
+    const d = per[dk] || { w: 0, l: 0, pnl: 0 };
+    labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+    wins.push(d.w); losses.push(d.l);
+    // Знак как в сводке: «сэкономил» - это минус потерянного блокировками.
+    acc += -d.pnl;
+    cum.push(Math.round(acc));
+    totW += d.w; totL += d.l;
+  }
+  return { labels, wins, losses, cum, totW, totL, saved: acc };
+}
+
+function devRenderBlockedChart(rows, idx, days) {
+  const host = document.getElementById('devBchCard');
+  if (!host) return false;
+  const codes = devBchCodes_(rows, idx, days);
+  if (!codes.length) return false;
+  if (DEV_BCH.code !== 'ALL' && !codes.some(c => c.code === DEV_BCH.code)) DEV_BCH.code = 'ALL';
+
+  const chips = document.getElementById('devBchChips');
+  if (chips) {
+    const all = codes.reduce((a, c) => a + c.n, 0);
+    chips.innerHTML = [{ code: 'ALL', n: all }].concat(codes).map(c =>
+      `<button class="dev-bch-chip${c.code === DEV_BCH.code ? ' active' : ''}" data-bch="${c.code}">${c.code === 'ALL' ? t('bch.all') : c.code}<span class="dev-bch-n">${c.n}</span></button>`).join('');
+  }
+
+  const d = devBchSeries_(rows, idx, days, DEV_BCH.code);
+  const note = document.getElementById('devBchNote');
+  if (!d) { if (note) note.textContent = t('bch.empty'); return true; }
+  if (note) {
+    const sign = d.saved >= 0 ? '+' : '';
+    note.innerHTML = `${t('bch.missed')} <b class="wr-green">${d.totW}</b> · ${t('bch.avoided')} <b class="wr-red">${d.totL}</b> · ` +
+      `${t('bch.result')} <b style="color:${d.saved >= 0 ? '#4EFFA0' : '#FF5272'}">${sign}${Math.round(d.saved).toLocaleString('ru-RU')} USDT</b>`;
+  }
+
+  if (typeof Chart === 'undefined') return true;
+  try { DEV_BCH.chart?.destroy(); } catch (e) { /* уже уничтожен */ }
+  const ctx = document.getElementById('devBchChart')?.getContext('2d');
+  if (!ctx) return true;
+
+  DEV_BCH.chart = new Chart(ctx, {
+    data: {
+      labels: d.labels,
+      datasets: [
+        { type: 'bar', label: t('bch.win'), data: d.wins, backgroundColor: 'rgba(78,255,160,0.55)', stack: 'b', order: 2, yAxisID: 'y' },
+        { type: 'bar', label: t('bch.lose'), data: d.losses, backgroundColor: 'rgba(255,82,114,0.55)', stack: 'b', order: 2, yAxisID: 'y' },
+        { type: 'line', label: t('bch.cum'), data: d.cum, borderColor: '#FFD166', borderWidth: 2, pointRadius: 0, tension: 0.3, order: 1, yAxisID: 'y1' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#7B84B0', boxWidth: 10, boxHeight: 10, font: { size: 9 } } },
+        tooltip: { callbacks: { label: c => c.dataset.type === 'line'
+          ? `${c.dataset.label}: ${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y} USDT`
+          : `${c.dataset.label}: ${c.parsed.y}` } }
+      },
+      scales: {
+        x: { stacked: true, ticks: { color: '#7B84B0', maxTicksLimit: 8, maxRotation: 0, font: { size: 9 } }, grid: { display: false } },
+        y: { stacked: true, beginAtZero: true, ticks: { color: '#7B84B0', font: { size: 10 }, precision: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y1: { position: 'right', ticks: { color: '#FFD166', font: { size: 9 } }, grid: { display: false } },
+      }
+    }
+  });
+  return true;
 }
 
 // ===== ЗАМОК НА DEV-РАЗДЕЛ =====

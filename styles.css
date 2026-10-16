@@ -3105,3 +3105,47 @@ body.zones-only .app-main { bottom: 0; }
 .dev-blk-cand b { color: var(--text); }
 .dev-blk-merged { opacity: .8; }
 .dev-blk-hidden { opacity: .8; }
+
+/* ===== График заблокированных по дням (DEV) ===== */
+.dev-bch-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dev-bch-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 9px;
+  font-size: 11px; font-weight: 700;
+  color: var(--text-muted);
+  background: var(--card); border: 1px solid var(--card-border); border-radius: 9px;
+  cursor: pointer;
+  transition: box-shadow .16s ease, border-color .16s ease, color .16s ease;
+}
+.dev-bch-chip .dev-bch-n { font-size: 9.5px; opacity: .7; }
+.dev-bch-chip:hover { border-color: rgba(255, 209, 102, 0.5); }
+.dev-bch-chip.active {
+  color: #0B0E1A;
+  background: linear-gradient(135deg, #FFD166, #FF9F43);
+  border-color: rgba(255, 209, 102, 0.65);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.32);
+}
+.dev-bch-chip.active .dev-bch-n { opacity: .85; }
+
+/* ===== Вкладки DEV-раздела ===== */
+.dev-tabs {
+  display: flex; gap: 5px; flex-wrap: wrap;
+  margin: 4px 0 14px;
+  padding: 4px;
+  background: var(--card); border: 1px solid var(--card-border); border-radius: 12px;
+}
+.dev-tabs button {
+  flex: 1 1 auto; min-width: 62px;
+  padding: 7px 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .2px;
+  color: var(--text-muted);
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  cursor: pointer;
+  transition: color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+.dev-tabs button.active {
+  color: #0B0E1A;
+  background: linear-gradient(135deg, #66A3FF, #9D50FF);
+  border-color: rgba(102, 163, 255, 0.55);
+  box-shadow: 0 0 14px rgba(102, 163, 255, 0.32);
+}

@@ -60,7 +60,7 @@ function install() {
     if (!key) continue;
     rows++;
     var chat = str_(v[r][cChat]);
-    if (!chat) { bad.push(key + ': пустой chat_id'); continue; }
+    if (!chat) { bad.push(key + ': пустой chat_id (быстро собрать: chatIdsFromLinks())'); continue; }
 
     var st;
     try {
@@ -93,8 +93,9 @@ function install() {
 
   if (!rows) {
     say('[3/5] Лист Channels пуст');
-    todo.push('Заполните лист Channels: по строке на канал. chat_id можно взять из кода, ' +
-              'которым вы уже рассылаете сигналы, - он там есть.');
+    todo.push('Заполните лист Channels: по строке на канал. chat_id быстрее всего ' +
+              'собрать функцией chatIdsFromLinks() - по ссылкам на посты в каналах. ' +
+              'Они же есть в коде, которым вы рассылаете сигналы.');
   } else {
     say('[3/5] Каналов в листе: ' + rows + ', готовых к работе: ' + okCount +
         (made ? ', выпущено новых ссылок: ' + made : ''));

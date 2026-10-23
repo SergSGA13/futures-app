@@ -624,6 +624,53 @@ function setupHookSecret() {
 }
 
 /**
+ * ПОИСК chat_id ПО ССЫЛКАМ НА СООБЩЕНИЯ.
+ *
+ * Самая долгая часть заполнения Channels - собрать десяток chat_id. Быстрый
+ * способ: в канале правый клик по любому посту -> «Копировать ссылку».
+ *   приватный канал -> t.me/c/2809766098/5608  -> chat_id = -1002809766098
+ *   публичный канал -> t.me/mychannel/12       -> подойдёт @mychannel
+ *
+ * Вставьте ссылки в массив ниже и запустите. Функция не только пересчитает
+ * id, но и спросит у Telegram название канала - по нему сразу видно, тот ли
+ * это канал, и добавлен ли бот. Готовые строки печатаются в лог.
+ */
+function chatIdsFromLinks() {
+  var links = [
+    // 'https://t.me/c/2809766098/5608',
+    // 'https://t.me/mychannel/12',
+  ];
+  if (!links.length) {
+    Logger.log('Вставьте ссылки на сообщения в массив links внутри chatIdsFromLinks().');
+    return;
+  }
+  var out = ['', 'ссылка -> chat_id -> название', ''];
+  links.forEach(function (link) {
+    var id = chatIdFromLink_(link);
+    if (!id) { out.push(link + '  -> не разобрал ссылку'); return; }
+    var title = '';
+    try {
+      var chat = tgApi_('getChat', { chat_id: id });
+      title = '«' + (chat.title || chat.username || '?') + '»';
+    } catch (e) {
+      title = 'НЕ ВИДНО боту (' + String(e.message).replace(/^getChat: /, '') + ')';
+    }
+    out.push(id + '   ' + title);
+  });
+  out.push('', 'Значения из первого столбца - в Channels, столбец chat_id.');
+  Logger.log(out.join('\n'));
+}
+
+function chatIdFromLink_(link) {
+  var s = String(link || '').trim();
+  var mPriv = s.match(/t\.me\/c\/(\d+)/i);
+  if (mPriv) return '-100' + mPriv[1];
+  var mPub = s.match(/t\.me\/([A-Za-z][A-Za-z0-9_]{3,})/i);
+  if (mPub && mPub[1].toLowerCase() !== 'c') return '@' + mPub[1];
+  return '';
+}
+
+/**
  * Адрес веб-приложения этого проекта без хвоста /exec или /dev и без query.
  * В редакторе getUrl() иногда отдаёт /dev, поэтому сравниваем только основу.
  */
@@ -820,7 +867,7 @@ function install() {
     if (!key) continue;
     rows++;
     var chat = str_(v[r][cChat]);
-    if (!chat) { bad.push(key + ': пустой chat_id'); continue; }
+    if (!chat) { bad.push(key + ': пустой chat_id (быстро собрать: chatIdsFromLinks())'); continue; }
 
     var st;
     try {
@@ -853,8 +900,9 @@ function install() {
 
   if (!rows) {
     say('[3/5] Лист Channels пуст');
-    todo.push('Заполните лист Channels: по строке на канал. chat_id можно взять из кода, ' +
-              'которым вы уже рассылаете сигналы, - он там есть.');
+    todo.push('Заполните лист Channels: по строке на канал. chat_id быстрее всего ' +
+              'собрать функцией chatIdsFromLinks() - по ссылкам на посты в каналах. ' +
+              'Они же есть в коде, которым вы рассылаете сигналы.');
   } else {
     say('[3/5] Каналов в листе: ' + rows + ', готовых к работе: ' + okCount +
         (made ? ', выпущено новых ссылок: ' + made : ''));

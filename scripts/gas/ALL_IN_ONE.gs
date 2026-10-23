@@ -1,13 +1,17 @@
 /**
- * ДОСТУП К КАНАЛАМ - весь серверный код одним файлом.
+ * ДОСТУП К КАНАЛАМ - для ДОБАВЛЕНИЯ В ПРОЕКТ С СИГНАЛАМИ.
  *
- * ЭТО СОБРАННЫЙ ФАЙЛ, РУКАМИ ЕГО НЕ ПРАВЯТ. Исходники лежат рядом
- * (01_config.gs ... 06_install.gs), пересобрать:
+ * Здесь НЕТ своего doPost - он у вас уже есть. В него добавляются четыре
+ * строки (README, шаг 5), и логика сигналов не меняется.
+ *
+ * Если код доступа живёт в ОТДЕЛЬНОМ проекте - берите
+ * ALL_IN_ONE_STANDALONE.gs вместо этого файла.
+ *
+ * ЭТО СОБРАННЫЙ ФАЙЛ, РУКАМИ ЕГО НЕ ПРАВЯТ. Исходники лежат рядом,
+ * пересобрать оба файла:
  *     python3 scripts/gas/build_all_in_one.py
  *
- * Вставьте его в проект Apps Script одним новым файлом и дальше следуйте
- * README.md в этой же папке. Инструкция по сигналам не меняется: ваш doPost
- * остаётся вашим, в него добавляются четыре строки.
+ * Дальше следуйте README.md в этой же папке.
  */
 
 
@@ -619,6 +623,61 @@ function setupHookSecret() {
   Logger.log('TG_HOOK_QS записан. Теперь запустите webhookCheckJoinRequests().');
 }
 
+/**
+ * Адрес веб-приложения этого проекта без хвоста /exec или /dev и без query.
+ * В редакторе getUrl() иногда отдаёт /dev, поэтому сравниваем только основу.
+ */
+function hookBase_(u) {
+  return String(u || '').split('?')[0].replace(/\/(exec|dev)\/?$/, '');
+}
+
+function myWebAppUrl_() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+/**
+ * Ставит вебхук бота на ЭТОТ проект. Нужно, когда код доступа живёт отдельно
+ * от кода сигналов и у бота вебхука ещё нет.
+ *
+ * У бота может быть ровно один адрес вебхука. Если он уже занят, функция
+ * останавливается и показывает занятый адрес: перебить его вслепую - верный
+ * способ оборвать то, что по нему работает.
+ */
+function webhookSetHere() { webhookHere_(false); }
+
+/** То же, но перезаписывает уже стоящий вебхук. Только осознанно. */
+function webhookSetHereForce() { webhookHere_(true); }
+
+function webhookHere_(force) {
+  var url = myWebAppUrl_();
+  if (!url) throw new Error('Веб-приложение не развёрнуто. Сначала Развёртывание -> Веб-приложение.');
+
+  var secret = prop_('TG_HOOK_QS', true);
+  var full = secret ? url + '?s=' + encodeURIComponent(secret) : url;
+
+  var info = tgApi_('getWebhookInfo');
+  if (info.url && hookBase_(info.url) !== hookBase_(url) && !force) {
+    Logger.log('СТОП. У бота уже стоит вебхук:');
+    Logger.log('  ' + info.url);
+    Logger.log('');
+    Logger.log('Адрес у бота один. Если по этому адресу работает ваш проект сигналов,');
+    Logger.log('правильнее добавить код доступа ТУДА (README, шаг 5), а не менять адрес:');
+    Logger.log('тогда один вебхук обслуживает и сигналы, и заявки.');
+    Logger.log('Если точно хотите заменить адрес: webhookSetHereForce().');
+    return;
+  }
+
+  var payload = { url: full, allowed_updates: ['chat_join_request'], drop_pending_updates: false };
+  var token = prop_('TG_SECRET_TOKEN', true);
+  if (token) payload.secret_token = token;
+  tgApi_('setWebhook', payload);
+
+  Logger.log('Вебхук установлен на этот проект:');
+  Logger.log('  ' + full);
+  Logger.log('Подписка сужена до chat_join_request - ничего другого сюда не придёт.');
+  Logger.log('Учтите: пока стоит вебхук, опрос getUpdates для этого бота не работает.');
+}
+
 /** Показывает текущее состояние вебхука и говорит, нужно ли его менять. */
 function webhookInfo() {
   var i = tgApi_('getWebhookInfo');
@@ -810,9 +869,17 @@ function install() {
   // --- вебхук ---
   try {
     var info = tgApi_('getWebhookInfo');
+    var mine = myWebAppUrl_();
     if (!info.url) {
-      say('[5/5] Вебхук НЕ установлен');
-      todo.push('Вебхук не установлен - разберитесь, как сейчас приходят апдейты, до запуска ветки заявок.');
+      say('[5/5] Вебхук у бота НЕ установлен - заявки сейчас никуда не приходят');
+      todo.push(mine
+        ? 'Запустите webhookSetHere() - вебхук встанет на этот проект.'
+        : 'Разверните веб-приложение, затем запустите webhookSetHere().');
+    } else if (mine && hookBase_(info.url) !== hookBase_(mine)) {
+      say('[5/5] Вебхук стоит на ДРУГОЙ адрес: ' + info.url);
+      todo.push('Заявки уходят не в этот проект. Либо добавьте код доступа в тот проект, ' +
+                'что стоит на вебхуке (README, шаг 5), либо перенесите вебхук сюда: ' +
+                'webhookSetHere(). Адрес у бота только один.');
     } else if (!info.allowed_updates || !info.allowed_updates.length) {
       say('[5/5] Вебхук: allowed_updates не задан -> chat_join_request уже приходит, менять нечего');
     } else if (info.allowed_updates.indexOf('chat_join_request') < 0) {
@@ -826,8 +893,10 @@ function install() {
     say('[5/5] Вебхук проверить не удалось: ' + e.message);
   }
 
-  todo.push('Добавьте четыре строки в начало вашего doPost (README, шаг 5), ' +
-            'если ещё не добавили.');
+  // В отдельном проекте doPost приходит из 07_standalone_doPost.gs и уже всё
+  // вызывает; четыре строки нужны только тем, кто добавил код к сигналам.
+  todo.push('Если код доступа добавлен в проект с сигналами - добавьте четыре строки ' +
+            'в начало вашего doPost (README, шаг 5). В отдельном проекте doPost уже готов.');
   todo.push('Разверните НОВУЮ ВЕРСИЮ существующего развёртывания, потом запустите checkDeployment().');
 
   done();

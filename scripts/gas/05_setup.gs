@@ -79,6 +79,61 @@ function setupHookSecret() {
   Logger.log('TG_HOOK_QS записан. Теперь запустите webhookCheckJoinRequests().');
 }
 
+/**
+ * Адрес веб-приложения этого проекта без хвоста /exec или /dev и без query.
+ * В редакторе getUrl() иногда отдаёт /dev, поэтому сравниваем только основу.
+ */
+function hookBase_(u) {
+  return String(u || '').split('?')[0].replace(/\/(exec|dev)\/?$/, '');
+}
+
+function myWebAppUrl_() {
+  try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+/**
+ * Ставит вебхук бота на ЭТОТ проект. Нужно, когда код доступа живёт отдельно
+ * от кода сигналов и у бота вебхука ещё нет.
+ *
+ * У бота может быть ровно один адрес вебхука. Если он уже занят, функция
+ * останавливается и показывает занятый адрес: перебить его вслепую - верный
+ * способ оборвать то, что по нему работает.
+ */
+function webhookSetHere() { webhookHere_(false); }
+
+/** То же, но перезаписывает уже стоящий вебхук. Только осознанно. */
+function webhookSetHereForce() { webhookHere_(true); }
+
+function webhookHere_(force) {
+  var url = myWebAppUrl_();
+  if (!url) throw new Error('Веб-приложение не развёрнуто. Сначала Развёртывание -> Веб-приложение.');
+
+  var secret = prop_('TG_HOOK_QS', true);
+  var full = secret ? url + '?s=' + encodeURIComponent(secret) : url;
+
+  var info = tgApi_('getWebhookInfo');
+  if (info.url && hookBase_(info.url) !== hookBase_(url) && !force) {
+    Logger.log('СТОП. У бота уже стоит вебхук:');
+    Logger.log('  ' + info.url);
+    Logger.log('');
+    Logger.log('Адрес у бота один. Если по этому адресу работает ваш проект сигналов,');
+    Logger.log('правильнее добавить код доступа ТУДА (README, шаг 5), а не менять адрес:');
+    Logger.log('тогда один вебхук обслуживает и сигналы, и заявки.');
+    Logger.log('Если точно хотите заменить адрес: webhookSetHereForce().');
+    return;
+  }
+
+  var payload = { url: full, allowed_updates: ['chat_join_request'], drop_pending_updates: false };
+  var token = prop_('TG_SECRET_TOKEN', true);
+  if (token) payload.secret_token = token;
+  tgApi_('setWebhook', payload);
+
+  Logger.log('Вебхук установлен на этот проект:');
+  Logger.log('  ' + full);
+  Logger.log('Подписка сужена до chat_join_request - ничего другого сюда не придёт.');
+  Logger.log('Учтите: пока стоит вебхук, опрос getUpdates для этого бота не работает.');
+}
+
 /** Показывает текущее состояние вебхука и говорит, нужно ли его менять. */
 function webhookInfo() {
   var i = tgApi_('getWebhookInfo');

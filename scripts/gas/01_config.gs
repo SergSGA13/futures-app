@@ -42,6 +42,21 @@ function prop_(name, optional) {
 
 function botToken_() { return prop_('BOT_TOKEN'); }
 
+/**
+ * Токен бота, ЧЕРЕЗ КОТОРОГО открыто мини-приложение.
+ *
+ * Это не всегда тот же бот, что рассылает сигналы и сидит админом в каналах.
+ * initData подписывается токеном владельца мини-приложения, и если боты
+ * разные, подпись не сойдётся никогда - запросы будут отвергаться все до
+ * одного. Тогда токен приложения кладут в MINIAPP_BOT_TOKEN, а BOT_TOKEN
+ * остаётся за каналами.
+ *
+ * Если бот один - свойство не нужно.
+ */
+function miniAppBotToken_() {
+  return prop_('MINIAPP_BOT_TOKEN', true) || botToken_();
+}
+
 function tgApi_(method, payload) {
   var opt = { method: 'post', contentType: 'application/json', muteHttpExceptions: true };
   if (payload) opt.payload = JSON.stringify(payload);

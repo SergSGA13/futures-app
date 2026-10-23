@@ -63,6 +63,21 @@ function prop_(name, optional) {
 
 function botToken_() { return prop_('BOT_TOKEN'); }
 
+/**
+ * Токен бота, ЧЕРЕЗ КОТОРОГО открыто мини-приложение.
+ *
+ * Это не всегда тот же бот, что рассылает сигналы и сидит админом в каналах.
+ * initData подписывается токеном владельца мини-приложения, и если боты
+ * разные, подпись не сойдётся никогда - запросы будут отвергаться все до
+ * одного. Тогда токен приложения кладут в MINIAPP_BOT_TOKEN, а BOT_TOKEN
+ * остаётся за каналами.
+ *
+ * Если бот один - свойство не нужно.
+ */
+function miniAppBotToken_() {
+  return prop_('MINIAPP_BOT_TOKEN', true) || botToken_();
+}
+
 function tgApi_(method, payload) {
   var opt = { method: 'post', contentType: 'application/json', muteHttpExceptions: true };
   if (payload) opt.payload = JSON.stringify(payload);
@@ -159,12 +174,15 @@ function validateInitData_(initData) {
   if (!hash || !parts.length) return { ok: false, error: 'no hash' };
 
   parts.sort();
-  var secret = Utilities.computeHmacSha256Signature('WebAppData', botToken_());
+  // Токен ИМЕННО того бота, через которого открыто мини-приложение.
+  var secret = Utilities.computeHmacSha256Signature('WebAppData', miniAppBotToken_());
   var sig = Utilities.computeHmacSha256Signature(
     Utilities.newBlob(parts.join('\n')).getBytes(), secret);
 
   if (!eqConst_(bytesToHex_(sig), String(hash).toLowerCase())) {
-    return { ok: false, error: 'bad signature' };
+    // Самая частая причина не в подделке, а в том, что мини-приложение
+    // принадлежит другому боту, чем тот, чей токен лежит в свойствах.
+    return { ok: false, error: 'bad signature (проверьте, тем ли ботом открыто мини-приложение: см. MINIAPP_BOT_TOKEN)' };
   }
 
   var age = Math.floor(Date.now() / 1000) - Number(map.auth_date || 0);
@@ -243,6 +261,9 @@ function miniAppTryHandle_(e) {
     var v = validateInitData_(req.initData);
     if (!v.ok) {
       // Без действительной подписи не отдаём ничего, даже названий каналов.
+      // Причину пишем в журнал: с телефона ответ сервера не посмотришь, а
+      // «Выполнения» в Apps Script открываются в два клика.
+      Logger.log('getMyChannels: отказ по подписи - ' + v.error);
       out = { ok: false, error: 'auth: ' + v.error };
     } else if (req.action === 'getMyChannels') {
       out = getMyChannels_(v.user, req.lang);
@@ -947,6 +968,19 @@ function install() {
     // Самая частая причина, по которой всё встаёт на черновой адрес, -
     // незаполненное свойство. Показываем его состояние сразу, не дожидаясь
     // жалоб на пятом шаге.
+    // Если мини-приложение открыто другим ботом, подпись initData не сойдётся,
+    // и экран будет показывать ошибку при живом эндпоинте. Показываем оба бота.
+    var mab = prop_('MINIAPP_BOT_TOKEN', true);
+    if (mab) {
+      try {
+        var me2 = JSON.parse(UrlFetchApp.fetch(
+          'https://api.telegram.org/bot' + mab + '/getMe',
+          { muteHttpExceptions: true }).getContentText());
+        say('      Бот мини-приложения: ' + (me2.ok ? '@' + me2.result.username : 'ТОКЕН НЕ РАБОТАЕТ'));
+      } catch (e) { say('      Бот мини-приложения: проверить не удалось'); }
+    } else {
+      say('      Бот мини-приложения: тот же (MINIAPP_BOT_TOKEN не задан)');
+    }
     var wa = prop_('WEB_APP_URL', true);
     say('      WEB_APP_URL: ' + (wa
       ? (isDevUrl_(wa) ? 'ЧЕРНОВОЙ /dev - нужен адрес на /exec' : wa)

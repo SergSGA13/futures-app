@@ -27,6 +27,9 @@ function miniAppTryHandle_(e) {
     var v = validateInitData_(req.initData);
     if (!v.ok) {
       // Без действительной подписи не отдаём ничего, даже названий каналов.
+      // Причину пишем в журнал: с телефона ответ сервера не посмотришь, а
+      // «Выполнения» в Apps Script открываются в два клика.
+      Logger.log('getMyChannels: отказ по подписи - ' + v.error);
       out = { ok: false, error: 'auth: ' + v.error };
     } else if (req.action === 'getMyChannels') {
       out = getMyChannels_(v.user, req.lang);

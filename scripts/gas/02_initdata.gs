@@ -38,12 +38,15 @@ function validateInitData_(initData) {
   if (!hash || !parts.length) return { ok: false, error: 'no hash' };
 
   parts.sort();
-  var secret = Utilities.computeHmacSha256Signature('WebAppData', botToken_());
+  // Токен ИМЕННО того бота, через которого открыто мини-приложение.
+  var secret = Utilities.computeHmacSha256Signature('WebAppData', miniAppBotToken_());
   var sig = Utilities.computeHmacSha256Signature(
     Utilities.newBlob(parts.join('\n')).getBytes(), secret);
 
   if (!eqConst_(bytesToHex_(sig), String(hash).toLowerCase())) {
-    return { ok: false, error: 'bad signature' };
+    // Самая частая причина не в подделке, а в том, что мини-приложение
+    // принадлежит другому боту, чем тот, чей токен лежит в свойствах.
+    return { ok: false, error: 'bad signature (проверьте, тем ли ботом открыто мини-приложение: см. MINIAPP_BOT_TOKEN)' };
   }
 
   var age = Math.floor(Date.now() / 1000) - Number(map.auth_date || 0);

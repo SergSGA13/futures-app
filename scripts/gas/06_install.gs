@@ -35,6 +35,19 @@ function install() {
     // Самая частая причина, по которой всё встаёт на черновой адрес, -
     // незаполненное свойство. Показываем его состояние сразу, не дожидаясь
     // жалоб на пятом шаге.
+    // Если мини-приложение открыто другим ботом, подпись initData не сойдётся,
+    // и экран будет показывать ошибку при живом эндпоинте. Показываем оба бота.
+    var mab = prop_('MINIAPP_BOT_TOKEN', true);
+    if (mab) {
+      try {
+        var me2 = JSON.parse(UrlFetchApp.fetch(
+          'https://api.telegram.org/bot' + mab + '/getMe',
+          { muteHttpExceptions: true }).getContentText());
+        say('      Бот мини-приложения: ' + (me2.ok ? '@' + me2.result.username : 'ТОКЕН НЕ РАБОТАЕТ'));
+      } catch (e) { say('      Бот мини-приложения: проверить не удалось'); }
+    } else {
+      say('      Бот мини-приложения: тот же (MINIAPP_BOT_TOKEN не задан)');
+    }
     var wa = prop_('WEB_APP_URL', true);
     say('      WEB_APP_URL: ' + (wa
       ? (isDevUrl_(wa) ? 'ЧЕРНОВОЙ /dev - нужен адрес на /exec' : wa)

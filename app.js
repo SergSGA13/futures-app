@@ -7191,7 +7191,10 @@ function chanRender_(data, note) {
       statusEl.textContent = t(note === 'notg' ? 'chan.notg' : 'chan.offline');
     } else if (note === 'err') {
       statusEl.className = 'chan-status chan-status-err';
-      statusEl.textContent = t('chan.err');
+      statusEl.innerHTML = chanEsc_(t('chan.err')) +
+        (isDevAdmin() && CHAN_STATE.err
+          ? '<div class="chan-err-tech">' + chanEsc_(CHAN_STATE.err) + '</div>'
+          : '');
     } else {
       const open = chans.filter(c => c.state === 'joined' || c.state === 'open').length;
       statusEl.className = 'chan-status chan-status-count';
@@ -7236,6 +7239,9 @@ async function renderChannels(force) {
     // Ошибку показываем вместе с основным каналом: пустой экран выглядит как
     // поломка приложения, хотя недоступен только список.
     CHAN_STATE.data = chanFallback_(); CHAN_STATE.note = 'err'; CHAN_STATE.at = 0;
+    // Текст ошибки сервера нужен только владельцу: с телефона иначе не понять,
+    // упал ли запрос по сети или сервер отверг подпись.
+    CHAN_STATE.err = String((e && e.message) || e);
     chanRender_(CHAN_STATE.data, 'err');
   } finally {
     CHAN_STATE.loading = false;

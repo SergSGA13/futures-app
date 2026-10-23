@@ -127,6 +127,10 @@ function install() {
       todo.push(mine
         ? 'Запустите webhookSetHere() - вебхук встанет на этот проект.'
         : 'Разверните веб-приложение, затем запустите webhookSetHere().');
+    } else if (isDevUrl_(info.url)) {
+      say('[5/5] Вебхук стоит на ЧЕРНОВОЙ адрес /dev - Telegram по нему не достучится');
+      todo.push('Заявки сейчас НЕ обрабатываются. Положите боевой адрес /exec в свойство ' +
+                'WEB_APP_URL и запустите webhookSetHere() заново.');
     } else if (mine && hookBase_(info.url) !== hookBase_(mine)) {
       say('[5/5] Вебхук стоит на ДРУГОЙ адрес: ' + info.url);
       todo.push('Заявки уходят не в этот проект. Либо добавьте код доступа в тот проект, ' +
@@ -181,9 +185,9 @@ function tail_(todo, bad, notes) {
  * кода сигналов он не доходит.
  */
 function checkDeployment() {
-  var url;
-  try { url = ScriptApp.getService().getUrl(); } catch (e) { url = ''; }
+  var url = myWebAppUrl_();
   if (!url) { Logger.log('Веб-приложение не развёрнуто.'); return; }
+  if (isDevUrl_(url)) { Logger.log(devUrlComplaint_(url)); return; }
   Logger.log('Адрес: ' + url);
 
   var res = UrlFetchApp.fetch(url, {
@@ -207,6 +211,13 @@ function checkDeployment() {
     Logger.log('ТРЕВОГА: сервер отдал данные на запрос БЕЗ подписи. Проверьте 02_initdata.gs.');
     return;
   }
-  Logger.log('Ответ не от новой ветки - значит четыре строки в doPost не добавлены ' +
-             'или развёрнута старая версия. Получено:\n' + body.slice(0, 500));
+  if (/<!DOCTYPE html|<html/i.test(body)) {
+    Logger.log('Пришла html-страница Google, а не ответ скрипта. Обычно это значит, что');
+    Logger.log('адрес требует входа: проверьте, что в WEB_APP_URL боевой /exec, а в');
+    Logger.log('настройках развёртывания «У кого есть доступ» стоит «Все».');
+    return;
+  }
+  Logger.log('Ответ не от новой ветки - значит развёрнута старая версия кода ' +
+             '(или, в общем проекте, не добавлены четыре строки в doPost). Получено:\n' +
+             body.slice(0, 300));
 }

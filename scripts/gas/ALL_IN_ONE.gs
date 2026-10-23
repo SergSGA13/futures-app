@@ -747,8 +747,43 @@ function hookBase_(u) {
   return String(u || '').split('?')[0].replace(/\/(exec|dev)\/?$/, '');
 }
 
+/**
+ * Адрес веб-приложения этого проекта.
+ *
+ * ScriptApp.getService().getUrl() при запуске из редактора отдаёт ЧЕРНОВОЙ
+ * адрес /dev: он открывается только владельцу после входа в Google, и ни
+ * Telegram, ни мини-приложение по нему ничего не получат - вместо ответа
+ * придёт html страницы логина. Боевой адрес /exec лежит в «Управление
+ * развёртываниями» и имеет ДРУГОЙ идентификатор, подменой хвоста его не
+ * получить.
+ *
+ * Поэтому главный источник - свойство скрипта WEB_APP_URL. getUrl() остаётся
+ * запасным: если он отдал /exec, всё в порядке.
+ */
 function myWebAppUrl_() {
+  var p = prop_('WEB_APP_URL', true);
+  if (p) return str_(p);
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
+}
+
+/** Черновой адрес .../dev - рабочим он не бывает никогда. */
+function isDevUrl_(u) {
+  return /\/dev\/?$/.test(String(u || '').split('?')[0]);
+}
+
+/** Общая жалоба на черновой адрес - её печатают три функции. */
+function devUrlComplaint_(url) {
+  return [
+    'СТОП. Это ЧЕРНОВОЙ адрес веб-приложения:',
+    '  ' + url,
+    'Он открывается только вам после входа в Google - ни Telegram, ни',
+    'мини-приложение по нему ничего не получат.',
+    '',
+    'Возьмите боевой адрес: Развёртывание -> Управление развёртываниями ->',
+    'строка «Веб-приложение» -> «URL веб-приложения», он оканчивается на /exec.',
+    'Положите его в Настройки проекта -> Свойства скрипта -> WEB_APP_URL',
+    'и повторите запуск.',
+  ].join('\n');
 }
 
 /**
@@ -767,12 +802,13 @@ function webhookSetHereForce() { webhookHere_(true); }
 function webhookHere_(force) {
   var url = myWebAppUrl_();
   if (!url) throw new Error('Веб-приложение не развёрнуто. Сначала Развёртывание -> Веб-приложение.');
+  if (isDevUrl_(url)) { Logger.log(devUrlComplaint_(url)); return; }
 
   var secret = prop_('TG_HOOK_QS', true);
   var full = secret ? url + '?s=' + encodeURIComponent(secret) : url;
 
   var info = tgApi_('getWebhookInfo');
-  if (info.url && hookBase_(info.url) !== hookBase_(url) && !force) {
+  if (info.url && hookBase_(info.url) !== hookBase_(url) && !force && !isDevUrl_(info.url)) {
     Logger.log('СТОП. У бота уже стоит вебхук:');
     Logger.log('  ' + info.url);
     Logger.log('');
@@ -1003,6 +1039,10 @@ function install() {
       todo.push(mine
         ? 'Запустите webhookSetHere() - вебхук встанет на этот проект.'
         : 'Разверните веб-приложение, затем запустите webhookSetHere().');
+    } else if (isDevUrl_(info.url)) {
+      say('[5/5] Вебхук стоит на ЧЕРНОВОЙ адрес /dev - Telegram по нему не достучится');
+      todo.push('Заявки сейчас НЕ обрабатываются. Положите боевой адрес /exec в свойство ' +
+                'WEB_APP_URL и запустите webhookSetHere() заново.');
     } else if (mine && hookBase_(info.url) !== hookBase_(mine)) {
       say('[5/5] Вебхук стоит на ДРУГОЙ адрес: ' + info.url);
       todo.push('Заявки уходят не в этот проект. Либо добавьте код доступа в тот проект, ' +
@@ -1057,9 +1097,9 @@ function tail_(todo, bad, notes) {
  * кода сигналов он не доходит.
  */
 function checkDeployment() {
-  var url;
-  try { url = ScriptApp.getService().getUrl(); } catch (e) { url = ''; }
+  var url = myWebAppUrl_();
   if (!url) { Logger.log('Веб-приложение не развёрнуто.'); return; }
+  if (isDevUrl_(url)) { Logger.log(devUrlComplaint_(url)); return; }
   Logger.log('Адрес: ' + url);
 
   var res = UrlFetchApp.fetch(url, {
@@ -1083,7 +1123,14 @@ function checkDeployment() {
     Logger.log('ТРЕВОГА: сервер отдал данные на запрос БЕЗ подписи. Проверьте 02_initdata.gs.');
     return;
   }
-  Logger.log('Ответ не от новой ветки - значит четыре строки в doPost не добавлены ' +
-             'или развёрнута старая версия. Получено:\n' + body.slice(0, 500));
+  if (/<!DOCTYPE html|<html/i.test(body)) {
+    Logger.log('Пришла html-страница Google, а не ответ скрипта. Обычно это значит, что');
+    Logger.log('адрес требует входа: проверьте, что в WEB_APP_URL боевой /exec, а в');
+    Logger.log('настройках развёртывания «У кого есть доступ» стоит «Все».');
+    return;
+  }
+  Logger.log('Ответ не от новой ветки - значит развёрнута старая версия кода ' +
+             '(или, в общем проекте, не добавлены четыре строки в doPost). Получено:\n' +
+             body.slice(0, 300));
 }
 

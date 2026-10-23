@@ -7090,7 +7090,7 @@ function initMexcStatsUI() {
 // Пока эндпоинт не прописан (CHAN_API пустой), экран не ломается и не пугает
 // ошибкой: он показывает карточку основного канала - ровно то, что делала
 // кнопка на главной до этой правки.
-const CHAN_API = '';                                      // URL веб-приложения Apps Script (.../exec)
+const CHAN_API = 'https://script.google.com/macros/s/AKfycbxzuUnymRVKBRbLkd7OzGaT5CcHn-tZUhK5d-0K0Q4wfBLNqWNqB0x1xqcEzQWJkOwwZg/exec';
 const CHAN_MAIN_LINK = 'https://t.me/+Bx9PHt1Dy743ZTgy';  // основной канал - остаётся карточкой в любом режиме
 const CHAN_TTL_MS = 60 * 1000;                            // ответ живёт минуту: лишний заход не бьёт по getChatMember
 const CHAN_STATE = { data: null, at: 0, loading: false };

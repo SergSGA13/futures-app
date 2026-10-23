@@ -13,8 +13,9 @@ function install() {
   var out = ['', '=== ДОСТУП К КАНАЛАМ: УСТАНОВКА ==='];
   var todo = [];
   var bad = [];
+  var notes = [];
   var say = function (s) { out.push(s); };
-  var done = function () { Logger.log(out.concat(tail_(todo, bad)).join('\n')); };
+  var done = function () { Logger.log(out.concat(tail_(todo, bad, notes)).join('\n')); };
 
   // --- свойства ---
   var missing = [];
@@ -60,7 +61,17 @@ function install() {
     if (!key) continue;
     rows++;
     var chat = str_(v[r][cChat]);
-    if (!chat) { bad.push(key + ': пустой chat_id (быстро собрать: chatIdsFromLinks())'); continue; }
+    if (!chat) {
+      // Канал без chat_id, но с готовой ссылкой - не поломка: карточка работает,
+      // просто заявки в него бот не разбирает. Так настроен основной канал.
+      if (str_(v[r][cLink])) {
+        notes.push(key + ': без chat_id - карточка работает по готовой ссылке, ' +
+                   'но заявки в этот канал бот не обрабатывает');
+      } else {
+        bad.push(key + ': пустой chat_id (быстро собрать: chatIdsFromLinks())');
+      }
+      continue;
+    }
 
     var st;
     try {
@@ -143,8 +154,12 @@ function install() {
   done();
 }
 
-function tail_(todo, bad) {
+function tail_(todo, bad, notes) {
   var out = [];
+  if (notes && notes.length) {
+    out.push('', '--- ЗАМЕТКИ ---');
+    notes.forEach(function (s, i) { out.push((i + 1) + '. ' + s); });
+  }
   if (bad.length) {
     out.push('', '--- ПРОБЛЕМЫ ПО КАНАЛАМ ---');
     bad.forEach(function (s, i) { out.push((i + 1) + '. ' + s); });

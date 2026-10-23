@@ -80,6 +80,75 @@ function setupHookSecret() {
 }
 
 /**
+ * РАЗОВОЕ ЗАПОЛНЕНИЕ ЛИСТА Channels.
+ *
+ * Набивать десяток каналов по двенадцати столбцам руками долго и легко
+ * промахнуться. Опишите их в массиве ниже и запустите функцию один раз.
+ *
+ * Строки с уже существующим key не трогаются - функцию можно запускать
+ * повторно, чтобы дописать новые каналы.
+ *
+ * join_link не указывайте: его выпустит install().
+ */
+function seedChannels() {
+  var rows = [
+    // { key: 'pro10', tier: 'pro', sort: 2, chat: '-1001234567890',
+    //   ru: 'PRO 10m',  en: 'PRO 10m',  uk: 'PRO 10m',
+    //   dru: 'Сигналы на 10 минут.', den: '10-minute signals.', duk: 'Сигнали на 10 хвилин.' },
+  ];
+  if (!rows.length) {
+    Logger.log('Опишите каналы в массиве rows внутри seedChannels().');
+    return;
+  }
+
+  var sh = accessSS_().getSheetByName(CH_SHEET);
+  if (!sh) throw new Error('Нет листа ' + CH_SHEET);
+  var v = sh.getDataRange().getValues();
+  var head = v[0].map(function (h) { return String(h).trim().toLowerCase(); });
+
+  var idx = {};
+  ['key','title_ru','title_en','title_uk','description_ru','description_en','description_uk',
+   'chat_id','join_link','tier','sort_order','active'].forEach(function (name) {
+    idx[name] = head.indexOf(name);
+    if (idx[name] < 0) throw new Error('В листе Channels нет столбца ' + name);
+  });
+
+  var have = {};
+  for (var r = 1; r < v.length; r++) {
+    var k = str_(v[r][idx.key]).toLowerCase();
+    if (k) have[k] = true;
+  }
+
+  var added = 0, skipped = [];
+  rows.forEach(function (c) {
+    var key = str_(c.key).toLowerCase();
+    if (!key) return;
+    if (have[key]) { skipped.push(key); return; }
+
+    var line = new Array(head.length).fill('');
+    line[idx.key] = key;
+    line[idx.title_ru] = c.ru || key;
+    line[idx.title_en] = c.en || c.ru || key;
+    line[idx.title_uk] = c.uk || c.ru || key;
+    line[idx.description_ru] = c.dru || '';
+    line[idx.description_en] = c.den || '';
+    line[idx.description_uk] = c.duk || '';
+    line[idx.chat_id] = c.chat || '';
+    line[idx.join_link] = '';
+    line[idx.tier] = c.tier || '';
+    line[idx.sort_order] = c.sort || '';
+    line[idx.active] = 'TRUE';
+    sh.appendRow(line);
+    have[key] = true;
+    added++;
+  });
+
+  Logger.log('Добавлено каналов: ' + added +
+             (skipped.length ? ', уже были и не тронуты: ' + skipped.join(', ') : ''));
+  Logger.log('Дальше: install() - он проверит права бота и выпустит ссылки.');
+}
+
+/**
  * ПОИСК chat_id ПО ССЫЛКАМ НА СООБЩЕНИЯ.
  *
  * Самая долгая часть заполнения Channels - собрать десяток chat_id. Быстрый

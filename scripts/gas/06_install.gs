@@ -32,6 +32,13 @@ function install() {
   try {
     me = tgApi_('getMe');
     say('[1/5] Бот: @' + me.username + ' (id ' + me.id + ')');
+    // Самая частая причина, по которой всё встаёт на черновой адрес, -
+    // незаполненное свойство. Показываем его состояние сразу, не дожидаясь
+    // жалоб на пятом шаге.
+    var wa = prop_('WEB_APP_URL', true);
+    say('      WEB_APP_URL: ' + (wa
+      ? (isDevUrl_(wa) ? 'ЧЕРНОВОЙ /dev - нужен адрес на /exec' : wa)
+      : 'НЕ ЗАДАН -> беру черновой адрес из редактора'));
   } catch (e) {
     say('СТОП. BOT_TOKEN не работает: ' + e.message);
     Logger.log(out.join('\n'));

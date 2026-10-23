@@ -35,6 +35,9 @@ function setLanguage(lang) {
   currentLang = lang;
   localStorage.setItem('fp_lang', lang);
   applyTranslations();
+  // Названия каналов приходят с сервера уже на нужном языке, поэтому один
+  // applyTranslations экран доступа не переведёт - нужен повторный запрос.
+  if (currentPage === 'channels') renderChannels(true);
 }
 
 // ===== NAVIGATION =====
@@ -48,6 +51,7 @@ const navMap = {
   'stats-era': 'nav-statistics',
   'stats-mexc': 'nav-statistics',
   'zones': 'nav-home',
+  'channels': 'nav-home',
   'articles': 'nav-articles',
 };
 const pageTitleKeys = {
@@ -61,6 +65,7 @@ const pageTitleKeys = {
   'stats-era': 'title.stats.era',
   'stats-mexc': 'title.stats.mexc',
   'zones': 'title.zones',
+  'channels': 'title.chan',
   'article-tilt': 'title.art',
   'article-paradigm': 'title.art',
   'article-what-is': 'title.art',
@@ -96,6 +101,7 @@ function navigate(pageId) {
   if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
   if (pageId === 'zones') { renderZones(); }
+  if (pageId === 'channels') { renderChannels(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
   if (pageId === 'futures-prediction') { ensureSignalChart(); }
 
@@ -7070,6 +7076,176 @@ function initMexcStatsUI() {
     });
   }
 
+}
+
+// ===== ДОСТУП К КАНАЛАМ =====
+// Экран показывает персональный список приватных каналов: куда можно вступить,
+// где пользователь уже есть и что в его тариф не входит. Список приходит из
+// Apps Script и только после проверки подписи initData - иначе любой желающий
+// подставил бы чужой user_id и выгреб все инвайт-ссылки разом.
+//
+// Вступление идёт через join request: ссылка лишь создаёт заявку, а впускает
+// бот, сверившись с листом Access. Поэтому утечка самой ссылки доступ не даёт.
+//
+// Пока эндпоинт не прописан (CHAN_API пустой), экран не ломается и не пугает
+// ошибкой: он показывает карточку основного канала - ровно то, что делала
+// кнопка на главной до этой правки.
+const CHAN_API = '';                                      // URL веб-приложения Apps Script (.../exec)
+const CHAN_MAIN_LINK = 'https://t.me/+Bx9PHt1Dy743ZTgy';  // основной канал - остаётся карточкой в любом режиме
+const CHAN_TTL_MS = 60 * 1000;                            // ответ живёт минуту: лишний заход не бьёт по getChatMember
+const CHAN_STATE = { data: null, at: 0, loading: false };
+
+function chanApiUrl_() {
+  // Переопределение через localStorage нужно только для отладки на стенде.
+  try { return localStorage.getItem('fp_chan_api') || CHAN_API; } catch (e) { return CHAN_API; }
+}
+
+function chanEsc_(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Ссылку отдаём в href только если она действительно телеграмная: в листе
+// Channels может оказаться опечатка или javascript:-мусор.
+function chanSafeLink_(v) {
+  const u = String(v || '').trim();
+  return /^https:\/\/t\.me\//i.test(u) ? u : '';
+}
+
+const CHAN_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.678l-2.95-.924c-.64-.203-.654-.64.136-.954l11.521-4.443c.536-.194 1.006.131.685.891z"/></svg>';
+const CHAN_LOCK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>';
+const CHAN_CHECK = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+// Запасной список: основной канал. Он публичный, ссылка на него и так есть в
+// двух других местах приложения, поэтому показать её без бэкенда не страшно.
+function chanFallback_() {
+  return {
+    channels: [{ key: 'main', title: t('chan.main'), description: t('chan.mainsub'), state: 'open', join_link: CHAN_MAIN_LINK }],
+    folder_link: '',
+    fallback: true,
+  };
+}
+
+async function chanLoad_() {
+  const url = chanApiUrl_();
+  if (!url) return { data: chanFallback_(), note: 'offline' };
+
+  const initData = (tg && tg.initData) || '';
+  if (!initData) return { data: chanFallback_(), note: 'notg' };
+
+  // Content-Type намеренно text/plain: на application/json браузер шлёт
+  // preflight OPTIONS, а веб-приложения Apps Script его не обрабатывают.
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'getMyChannels', initData, lang: currentLang }),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  if (!j || j.ok !== true) throw new Error((j && j.error) || 'bad response');
+  return { data: { channels: j.channels || [], folder_link: j.folder_link || '' }, note: '' };
+}
+
+function chanCardHtml_(c) {
+  const state = c.state === 'joined' ? 'joined' : (c.state === 'open' ? 'open' : 'locked');
+  const link = state === 'open' ? chanSafeLink_(c.join_link) : '';
+  const title = chanEsc_(c.title || c.key || '');
+  const desc = c.description ? '<div class="chan-desc">' + chanEsc_(c.description) + '</div>' : '';
+
+  let badge = '';
+  if (state === 'joined') badge = '<span class="chan-badge chan-badge-ok">' + CHAN_CHECK + chanEsc_(t('chan.joined')) + '</span>';
+  if (state === 'locked') badge = '<span class="chan-badge chan-badge-lock">' + CHAN_LOCK + chanEsc_(t('chan.locked')) + '</span>';
+
+  let action = '';
+  if (state === 'open' && link) {
+    action = '<a class="chan-btn" href="' + chanEsc_(link) + '" target="_blank" rel="noopener">' +
+             chanEsc_(t('chan.join')) +
+             '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></a>';
+  } else if (state === 'locked') {
+    action = '<div class="chan-lockhint">' + chanEsc_(t('chan.lockhint')) + '</div>';
+  }
+
+  return '<div class="chan-card chan-' + state + '">' +
+         '<div class="chan-top"><span class="chan-ico">' + CHAN_ICON + '</span>' +
+         '<div class="chan-body"><div class="chan-name">' + title + '</div>' + desc + '</div>' +
+         badge + '</div>' + action + '</div>';
+}
+
+function chanRender_(data, note) {
+  const list = document.getElementById('chanList');
+  const statusEl = document.getElementById('chanStatus');
+  const folderEl = document.getElementById('chanFolder');
+  if (!list) return;
+
+  const chans = (data && data.channels) || [];
+  if (!chans.length) {
+    list.innerHTML = '<div class="signals-empty">' + chanEsc_(t('chan.empty')) + '</div>';
+  } else {
+    list.innerHTML = chans.map(chanCardHtml_).join('');
+  }
+
+  if (statusEl) {
+    if (note === 'offline' || note === 'notg') {
+      statusEl.className = 'chan-status chan-status-note';
+      statusEl.textContent = t(note === 'notg' ? 'chan.notg' : 'chan.offline');
+    } else if (note === 'err') {
+      statusEl.className = 'chan-status chan-status-err';
+      statusEl.textContent = t('chan.err');
+    } else {
+      const open = chans.filter(c => c.state === 'joined' || c.state === 'open').length;
+      statusEl.className = 'chan-status chan-status-count';
+      statusEl.textContent = t('chan.count').replace('{a}', open).replace('{b}', chans.length);
+    }
+  }
+
+  const folder = chanSafeLink_(data && data.folder_link);
+  if (folderEl) {
+    if (folder) {
+      folderEl.style.display = '';
+      folderEl.innerHTML = '<a class="chan-folder-btn" href="' + chanEsc_(folder) + '" target="_blank" rel="noopener">' +
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>' +
+        chanEsc_(t('chan.folder')) + '</a>';
+    } else {
+      folderEl.style.display = 'none';
+      folderEl.innerHTML = '';
+    }
+  }
+}
+
+async function renderChannels(force) {
+  const list = document.getElementById('chanList');
+  if (!list) return;
+
+  // Свежий ответ переиспользуем: пользователь часто уходит в Telegram вступать
+  // и возвращается обратно, и каждый такой заход бил бы по API ботом.
+  if (!force && CHAN_STATE.data && Date.now() - CHAN_STATE.at < CHAN_TTL_MS) {
+    chanRender_(CHAN_STATE.data, CHAN_STATE.note);
+    return;
+  }
+  if (CHAN_STATE.loading) return;
+  CHAN_STATE.loading = true;
+  if (!CHAN_STATE.data) list.innerHTML = '<div class="signals-loading">' + chanEsc_(t('chan.loading')) + '</div>';
+
+  try {
+    const r = await chanLoad_();
+    CHAN_STATE.data = r.data; CHAN_STATE.note = r.note; CHAN_STATE.at = Date.now();
+    chanRender_(r.data, r.note);
+  } catch (e) {
+    console.warn('channels:', e);
+    // Ошибку показываем вместе с основным каналом: пустой экран выглядит как
+    // поломка приложения, хотя недоступен только список.
+    CHAN_STATE.data = chanFallback_(); CHAN_STATE.note = 'err'; CHAN_STATE.at = 0;
+    chanRender_(CHAN_STATE.data, 'err');
+  } finally {
+    CHAN_STATE.loading = false;
+  }
+}
+
+function refreshChannels() {
+  const btn = document.getElementById('chanRefreshBtn');
+  if (btn) btn.classList.add('spinning');
+  renderChannels(true).finally(() => { if (btn) btn.classList.remove('spinning'); });
 }
 
 // ===== INIT =====

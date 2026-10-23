@@ -3149,3 +3149,121 @@ body.zones-only .app-main { bottom: 0; }
   border-color: rgba(102, 163, 255, 0.55);
   box-shadow: 0 0 14px rgba(102, 163, 255, 0.32);
 }
+
+/* ===== ДОСТУП К КАНАЛАМ ===== */
+.access-link { cursor: pointer; }
+.access-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Две плитки в ряд на 390px впритык: «Доступ к каналам» и «Ближайшие зоны»
+   обрезались многоточием. Чуть плотнее отступы и кегль - обе помещаются. */
+.links-row .tg-link { padding: 9px 10px; gap: 8px; font-size: 13px; }
+.links-row .tg-link svg { flex: 0 0 auto; width: 18px; height: 18px; }
+/* На совсем узких экранах подписи всё равно не влезают вдвоём -
+   там ставим плитки друг под другом, целиком. */
+@media (max-width: 374px) {
+  .links-section.links-row { flex-direction: column; }
+  .links-row .tg-link { width: 100%; }
+}
+.access-link {
+  border-color: rgba(157, 80, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(157, 80, 255, 0.05), 0 4px 18px -8px rgba(157, 80, 255, 0.45);
+}
+.access-link:active { border-color: rgba(157, 80, 255, 0.55); }
+
+.chan-status { font-size: 12px; line-height: 1.45; margin-bottom: 10px; }
+.chan-status-count { color: var(--text-muted); font-weight: 600; }
+.chan-status-note {
+  color: var(--yellow);
+  background: rgba(255, 209, 102, 0.07);
+  border: 1px solid rgba(255, 209, 102, 0.22);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+}
+.chan-status-err {
+  color: var(--red);
+  background: rgba(255, 82, 114, 0.07);
+  border: 1px solid rgba(255, 82, 114, 0.22);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+}
+
+.chan-list { display: flex; flex-direction: column; gap: 10px; }
+.chan-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 12px 13px;
+}
+.chan-top { display: flex; align-items: flex-start; gap: 10px; }
+.chan-ico {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  color: var(--blue);
+  background: rgba(102, 163, 255, 0.1);
+}
+.chan-body { min-width: 0; flex: 1 1 auto; }
+.chan-name { font-size: 14.5px; font-weight: 700; line-height: 1.3; }
+.chan-desc { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; margin-top: 3px; }
+
+.chan-badge {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+.chan-badge-ok {
+  color: var(--green);
+  background: rgba(78, 255, 160, 0.1);
+  border: 1px solid rgba(78, 255, 160, 0.28);
+}
+.chan-badge-lock {
+  color: var(--text-muted);
+  background: rgba(123, 132, 176, 0.1);
+  border: 1px solid rgba(123, 132, 176, 0.22);
+}
+
+.chan-btn {
+  margin-top: 11px;
+  width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px; font-weight: 700;
+  color: #0A0B14;
+  text-decoration: none;
+  background: var(--gradient);
+  box-shadow: 0 4px 18px -6px rgba(102, 163, 255, 0.55);
+}
+.chan-btn:active { opacity: 0.85; }
+
+.chan-lockhint {
+  margin-top: 9px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  padding-top: 9px;
+  border-top: 1px solid rgba(123, 132, 176, 0.14);
+}
+
+.chan-joined { border-color: rgba(78, 255, 160, 0.22); }
+.chan-joined .chan-ico { color: var(--green); background: rgba(78, 255, 160, 0.1); }
+.chan-open { border-color: rgba(157, 80, 255, 0.26); }
+.chan-locked { opacity: 0.72; }
+.chan-locked .chan-ico { color: var(--text-muted); background: rgba(123, 132, 176, 0.1); }
+
+.chan-folder { margin-top: 12px; }
+.chan-folder-btn {
+  width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+  background: rgba(102, 163, 255, 0.07);
+  border: 1px solid rgba(102, 163, 255, 0.26);
+}
+.chan-folder-btn:active { background: rgba(102, 163, 255, 0.14); }

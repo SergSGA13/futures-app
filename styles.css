@@ -3596,3 +3596,7 @@ html.mode-beginner .calc-adv:not(.open) { display: none; }
 .calc-cmp-cap { margin: 8px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
 /* На 320 px две подписи в строку не влезают - пусть переносятся. */
 .calc-mode-seg button { white-space: normal; }
+
+/* Калькулятор: готовые периоды под датами */
+.calc-range-seg { margin-top: 8px; }
+.calc-range-seg button { padding: 7px 4px; font-size: 12px; }

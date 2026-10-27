@@ -6164,6 +6164,7 @@ function initCalculator() {
   }
   calcAdvSummary_();
   calcCmpInit_();
+  for (const id of ['calcDateFrom', 'calcDateTo']) document.getElementById(id)?.addEventListener('change', calcSyncRange_);
 }
 
 // Сброс периода: «С» - начало новой системы (та же константа, что у среза
@@ -6172,11 +6173,55 @@ function calcResetPeriod() {
   const dateFrom = document.getElementById('calcDateFrom');
   const dateTo   = document.getElementById('calcDateTo');
   if (!dateFrom || !dateTo) return;
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Сегодня - по местному времени: toISOString дал бы дату по UTC, и после
+  // полуночи по Варшаве «по» отставало бы на день.
+  const todayStr = calcLocalDk_(new Date());
+  dateFrom.min = dateTo.min = CALC_DATA_SINCE;
   dateFrom.max = todayStr;
   dateTo.max   = todayStr;
   dateFrom.value = ERA_SINCE_DK;
   dateTo.value   = todayStr;
+  calcSyncRange_();
+}
+
+// ===== ГОТОВЫЕ ПЕРИОДЫ: ALL / 6M / 3M / 1M =====
+// Данные в листе начинаются с июля 2025: раньше выбирать нечего, поэтому
+// и календарь, и ALL упираются в эту дату.
+const CALC_DATA_SINCE = '2025-07-01';
+const CALC_RANGES = { ALL: 0, '6M': 6, '3M': 3, '1M': 1 };
+
+function calcLocalDk_(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// Начало окна «N месяцев назад»: 31 марта минус месяц - последний день
+// февраля, а не 3 марта.
+function calcRangeFrom_(code) {
+  const n = CALC_RANGES[code];
+  if (!n) return CALC_DATA_SINCE;
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() - n, 1);
+  d.setDate(Math.min(now.getDate(), new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  const dk = calcLocalDk_(d);
+  return dk < CALC_DATA_SINCE ? CALC_DATA_SINCE : dk;
+}
+function calcSetRange(code) {
+  const f = document.getElementById('calcDateFrom'), to = document.getElementById('calcDateTo');
+  if (!f || !to) return;
+  f.value = calcRangeFrom_(code);
+  to.value = calcLocalDk_(new Date());
+  calcSyncRange_();
+}
+// Даты раньше начала данных подтягиваем к нему (календарь не везде держит
+// min - вручную дату можно вбить любую) и подсвечиваем кнопку, если
+// период совпадает с готовым.
+function calcSyncRange_() {
+  const f = document.getElementById('calcDateFrom'), to = document.getElementById('calcDateTo');
+  if (!f || !to) return;
+  if (f.value && f.value < CALC_DATA_SINCE) f.value = CALC_DATA_SINCE;
+  if (to.value && to.value < CALC_DATA_SINCE) to.value = CALC_DATA_SINCE;
+  const today = calcLocalDk_(new Date());
+  document.querySelectorAll('#calcRangeSeg button').forEach(b =>
+    b.classList.toggle('active', to.value === today && f.value === calcRangeFrom_(b.dataset.range)));
 }
 
 // ===== НАСТРОЙКИ КАЛЬКУЛЯТОРА В РЕЖИМЕ НОВИЧКА =====

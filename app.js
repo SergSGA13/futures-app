@@ -7149,12 +7149,14 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // BTC 250 против 125/250 у PRO), свой набор пар и свой график работы,
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
-const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, alt: 'ALL', grpMode: 'pct', charts: {} };
+// Лимит слотов включён по умолчанию: на бирже больше 5 ставок одновременно
+// не открыть, и без лимита статистика считала бы сделки, которых не было.
+const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: true, alt: 'ALL', grpMode: 'pct', charts: {} };
 // Фильтры, по которым реально считаем. Новичок их не видит, поэтому у него
 // всегда умолчания; выбор, сделанный в «Про», остаётся в MEXC_STATS.
 function mexcFilters_() {
   return modeIsBeginner()
-    ? { src: 'ALL', alt: 'ALL', slot: false }
+    ? { src: 'ALL', alt: 'ALL', slot: true }
     : { src: MEXC_STATS.src, alt: MEXC_STATS.alt, slot: MEXC_STATS.slotFilter };
 }
 
@@ -7737,7 +7739,7 @@ function mexcSummaryHtml_(sigs, src, slotExcluded, pnlFn) {
   // При включённом лимите слотов показываем, сколько сигналов реально
   // исключено - иначе непонятно, работает фильтр или нет.
   const slotLine = slotExcluded != null
-    ? `<div class="mexc-src-line">Без слота (лимит 5): <b class="wr-red">${slotExcluded}</b></div>`
+    ? `<div class="mexc-src-line pro-only">Без слота (лимит 5): <b class="wr-red">${slotExcluded}</b></div>`
     : '';
 
   return {

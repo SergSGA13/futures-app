@@ -607,12 +607,6 @@
           <p class="pnl-chart-footnote" data-i18n="stats.wrdaily.note">Жёлтая черта - безубыток 55.6% при выплате 0.8. Серым отмечены дни, где сигналов слишком мало для выводов.</p>
         </div>
 
-        <div class="pnl-chart-card" id="periodCmpCard" style="display:none">
-          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="per.title">Сравнение периодов</span></div>
-          <div id="periodCmpTable"></div>
-          <p class="pnl-chart-footnote" data-i18n="per.note">Колонка «Δ» - отклонение винрейта периода от общего за всё время, в процентных пунктах. Показывает направление, а не разовый результат.</p>
-        </div>
-
         <div class="stats-l7d">
           <div class="pnl-chart-card" id="analPairsCard" style="display:none">
             <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="stats.pairs">By Trading Pair - Last 7 Days</span></div>
@@ -625,10 +619,13 @@
         </div>
 
         <div class="stats-subsections">
-          <div class="stats-sub-btn" onclick="navigate('stats-all')">
+          <div class="stats-sub-btn mexc" onclick="navigate('stats-mexc')">
+            <div class="stats-sub-icon mexc">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F7931A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
             <div class="stats-sub-info">
-              <div class="stats-sub-title">ALL Periods</div>
-              <div class="stats-sub-desc">Статистика сигналов за всё время</div>
+              <div class="stats-sub-title">MEXC <span class="mexc-chip">ветка</span></div>
+              <div class="stats-sub-desc" data-i18n="mexc.entry.desc">Отдельная статистика сигналов группы MEXC</div>
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
@@ -642,13 +639,10 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
-          <div class="stats-sub-btn mexc" onclick="navigate('stats-mexc')">
-            <div class="stats-sub-icon mexc">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F7931A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            </div>
+          <div class="stats-sub-btn" onclick="navigate('stats-all')">
             <div class="stats-sub-info">
-              <div class="stats-sub-title">MEXC <span class="mexc-chip">ветка</span></div>
-              <div class="stats-sub-desc" data-i18n="mexc.entry.desc">Отдельная статистика сигналов группы MEXC</div>
+              <div class="stats-sub-title">ALL Periods</div>
+              <div class="stats-sub-desc">Статистика сигналов за всё время</div>
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
@@ -659,6 +653,12 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
+        </div>
+
+        <div class="pnl-chart-card" id="periodCmpCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="per.title">Сравнение периодов</span></div>
+          <div id="periodCmpTable"></div>
+          <p class="pnl-chart-footnote" data-i18n="per.note">Колонка «Δ» - отклонение винрейта периода от общего за всё время, в процентных пунктах. Показывает направление, а не разовый результат.</p>
         </div>
 
         <!-- CALCULATOR -->

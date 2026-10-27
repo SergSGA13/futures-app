@@ -65,6 +65,7 @@ function applyTranslations() {
   fitHeaderTitle_();
   profileRenderChips_();
   profileRenderNotes_();
+  calcAdvSummary_();
   devRenderUpdatedAt();
 }
 
@@ -283,7 +284,7 @@ function profileRenderChips_() {
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2.5"/><path d="M16 13h2"/><path d="M2 10h20"/></svg>' +
       '<span class="pf-chip-txt">' + chanEsc_(txt) + '</span>' +
       '<svg class="pf-chip-pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>' +
-      '</button>';
+      '</button>' + modeSegHtml_();
   });
 }
 
@@ -481,6 +482,91 @@ document.addEventListener('keydown', e => {
 });
 
 profileLoad_();
+
+// ===== РЕЖИМ «НОВИЧОК / ПРО» =====
+// Новичку статистика показывает только главное: итог, кривую PNL, просадку и
+// калькулятор с настройками под одной строкой. «Про» - всё, что есть.
+// Режим - это класс mode-beginner на <html>: CSS прячет блоки с классом
+// pro-only, поэтому страницы строятся одинаково в обоих режимах, и переключение
+// ничего не теряет. Фильтры, спрятанные от новичка, в расчёте не участвуют -
+// иначе цифры менялись бы от настроек, которых он не видит (см. mexcFilters_,
+// eraSrc_). Выбор в «Про» при этом не сбрасывается.
+//
+// Хранение - как у профиля: облако Telegram и локальная копия с id в ключе.
+// По умолчанию новичок; владелец - «Про», ему нужны все разрезы.
+const MODE_KEY = 'fp_mode_v1';
+const MODE = { v: null };
+
+function modeLocalKey_() {
+  const uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+  return MODE_KEY + (uid ? ':' + uid : '');
+}
+function modeValid_(r) { return !!r && (r.mode === 'beginner' || r.mode === 'pro'); }
+// Умолчание считаем при первом обращении, а не при загрузке: id владельца
+// объявлен ниже по файлу.
+function modeGet() { return MODE.v ? MODE.v.mode : (isDevAdmin() ? 'pro' : 'beginner'); }
+function modeIsBeginner() { return modeGet() === 'beginner'; }
+
+function modeLoad_() {
+  try {
+    const raw = localStorage.getItem(modeLocalKey_());
+    if (raw) { const r = JSON.parse(raw); if (modeValid_(r)) MODE.v = r; }
+  } catch (e) {}
+  const cs = profileCloud_();
+  if (!cs) return;
+  try {
+    cs.getItem(MODE_KEY, (err, val) => {
+      try {
+        if (err || !val) return;
+        const r = JSON.parse(val);
+        if (!modeValid_(r) || (MODE.v && (+r.at || 0) <= (+MODE.v.at || 0))) return;
+        const was = modeGet();
+        MODE.v = r;
+        try { localStorage.setItem(modeLocalKey_(), val); } catch (e) {}
+        if (modeGet() !== was) modeApply_();
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+
+function modeSet(mode) {
+  if (mode === modeGet() && MODE.v) return;
+  const rec = { mode, at: Date.now() };
+  if (!modeValid_(rec)) return;
+  const was = modeGet();
+  MODE.v = rec;
+  const raw = JSON.stringify(rec);
+  try { localStorage.setItem(modeLocalKey_(), raw); } catch (e) {}
+  try { const cs = profileCloud_(); if (cs) cs.setItem(MODE_KEY, raw, () => {}); } catch (e) {}
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  if (mode !== was) modeApply_(); else profileRenderChips_();
+}
+
+function modeSyncClass_() {
+  document.documentElement.classList.toggle('mode-beginner', modeIsBeginner());
+}
+
+// Смена режима пересобирает открытую страницу: у новичка другие фильтры, а
+// графики, построенные в спрятанных карточках, должны получить размер.
+function modeApply_() {
+  modeSyncClass_();
+  if (document.readyState === 'loading') return;
+  profileRenderChips_();
+  calcAdvSummary_();
+  if (document.getElementById('calcResults')?.innerHTML.trim()) runCalculator();
+  if (currentPage === 'stats-all') renderAllPeriods();
+  if (currentPage === 'stats-era') renderEraStats();
+  if (currentPage === 'stats-mexc') renderMexcStats();
+}
+
+function modeSegHtml_() {
+  const m = modeGet();
+  const b = (v, key) => '<button type="button" class="' + (m === v ? 'active' : '') + '" data-mode="' + v + '" aria-pressed="' + (m === v) + '" onclick="modeSet(\'' + v + '\')">' + chanEsc_(t(key)) + '</button>';
+  return '<div class="fs-seg compact mode-seg" role="group" aria-label="' + chanEsc_(t('mode.aria')) + '">' +
+    b('beginner', 'mode.beginner') + b('pro', 'mode.pro') + '</div>';
+}
+
+modeLoad_();
 
 // ===== NAVIGATION =====
 const history = [];
@@ -4256,7 +4342,7 @@ function allpRenderSummary_(sigs, code) {
   const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
   el.innerHTML =
     `${t('allp.period')}: <b>${code}</b> · ${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><br>` +
-    `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
+    `${t('era.signals')}: <b>${sigs.length}</b><span class="pro-only"> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart}</span> · ` +
     `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
     `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${pnl} USDT</b>`;
 }
@@ -4325,6 +4411,9 @@ const ERA_SINCE_DK = '2026-06-01';
 // показывает, сколько даёт удвоенная ставка на BTC.
 const ERA_PAYOUT = 0.8;
 const ERA_STATE = { src: 'ALL' };
+// Новичку - только проторгованное (10m): «Все» подмешивает отсеянные сигналы,
+// которых в группе не было, а переключатель источника он не видит.
+function eraSrc_() { return modeIsBeginner() ? '10m' : ERA_STATE.src; }
 let eraRowsCache = null;
 
 // Ставка - из профиля (плашка вверху страницы), не выше боевой по паре.
@@ -4406,11 +4495,12 @@ function eraRenderSummary_(sigs, cache) {
   // PNL без указания ставок читается как факт, хотя это расчёт по выбранной
   // модели - показываем её рядом с числом.
   const st = `${t('era.stake')} ETH <b>${eraStakeOf_('ETH')}</b> / BTC <b>${eraStakeOf_('BTC')}</b>`;
+  // Новичку - диапазон, число сигналов, WR и PNL; остальное в «Про».
   el.innerHTML =
-    `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b> · ${t('era.src')}: ${comp}<br>` +
-    `${t('era.signals')}: <b>${sigs.length}</b> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart} · ` +
+    `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><span class="pro-only"> · ${t('era.src')}: ${comp}</span><br>` +
+    `${t('era.signals')}: <b>${sigs.length}</b><span class="pro-only"> · WIN <b>${w}</b> · LOSE <b>${l}</b>${drawPart}</span> · ` +
     `WR <b class="${wrClass(dec ? w / dec * 100 : 0)}">${wr}%</b> · ` +
-    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${Math.round(pnl)} USDT</b> · ${st}`;
+    `PNL <b style="color:${pnl >= 0 ? '#4EFFA0' : '#FF5272'}">${pnl >= 0 ? '+' : ''}${Math.round(pnl)} USDT</b><span class="pro-only"> · ${st}</span>`;
 }
 
 // id элементов страницы «Новая система» для общего рендера среза.
@@ -4440,7 +4530,7 @@ async function renderEraStats() {
   try {
     const cache = await eraFetchRows_();
     if (!cache) return;
-    const eraRows = eraRowsFor_(cache, ERA_STATE.src);
+    const eraRows = eraRowsFor_(cache, eraSrc_());
     const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
 
     // Смена источника или ставки обязана пересобрать графики, а они защищены
@@ -6050,6 +6140,15 @@ function initCalculator() {
       btn.classList.add('active');
     });
   });
+
+  // Сводка настроек для новичка: любое изменение направления, часов или
+  // дней (вручную, пресетом, «лучшими часами») доходит сюда всплытием.
+  const card = document.getElementById('calcCard');
+  if (card) {
+    card.addEventListener('change', calcAdvSummary_);
+    card.addEventListener('click', calcAdvSummary_);
+  }
+  calcAdvSummary_();
 }
 
 // Сброс периода: «С» - начало новой системы (та же константа, что у среза
@@ -6063,6 +6162,47 @@ function calcResetPeriod() {
   dateTo.max   = todayStr;
   dateFrom.value = ERA_SINCE_DK;
   dateTo.value   = todayStr;
+}
+
+// ===== НАСТРОЙКИ КАЛЬКУЛЯТОРА В РЕЖИМЕ НОВИЧКА =====
+// Направление, часы и дни новичку не показываем, но расчёт идёт по ним -
+// поэтому они свёрнуты в одну строку-сводку, а не убраны. Иначе цифры
+// получались бы по фильтрам, которых человек не видит и не может снять.
+function calcAdvSummary_() {
+  const el = document.getElementById('calcAdvSum');
+  if (!el) return;
+  const dirBtn = document.querySelector('.calc-dir-btn.active');
+  const dir = dirBtn ? dirBtn.dataset.dir : 'ALL';
+  const dirTxt = dir === 'UP' ? 'UP ↑' : dir === 'DOWN' ? 'DOWN ↓' : t('calc.adv.all');
+  const hours = [], days = [];
+  for (let h = 0; h < 24; h++) if (document.getElementById('calcH' + h)?.checked) hours.push(h);
+  for (let d = 1; d <= 7; d++) if (document.getElementById('calcD' + d)?.checked) days.push(d);
+  const dayNames = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map(k => t('calc.days.' + k));
+  el.textContent =
+    `${t('calc.adv.dir')}: ${dirTxt} · ` +
+    `${t('calc.adv.hours')}: ${calcRanges_(hours, 24, h => String(h).padStart(2, '0'))} · ` +
+    `${t('calc.adv.days')}: ${calcRanges_(days, 7, d => dayNames[d - 1])}`;
+}
+// [8,9,10,15] -> «08–10, 15»; все или ни одного - словом.
+function calcRanges_(list, total, fmt) {
+  if (!list.length) return t('calc.adv.none');
+  if (list.length === total) return t('calc.adv.all');
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    let j = i;
+    while (j + 1 < list.length && list[j + 1] === list[j] + 1) j++;
+    out.push(j > i ? fmt(list[i]) + '–' + fmt(list[j]) : fmt(list[i]));
+    i = j;
+  }
+  return out.join(', ');
+}
+function calcAdvToggle() {
+  const adv = document.getElementById('calcAdv');
+  const btn = document.getElementById('calcAdvToggle');
+  if (!adv) return;
+  const open = !adv.classList.contains('open');
+  adv.classList.toggle('open', open);
+  if (btn) { btn.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); }
 }
 
 // ===== РЕКОМЕНДАЦИЯ ПО ЧАСАМ =====
@@ -6515,15 +6655,15 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
     <div class="calc-res-grid">
       <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig} <span style="color:#7B84B0;font-size:11px;font-weight:400">/ ${totalRaw}</span></b></div>
       <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
-      <div class="calc-res-item"><span>${t('calc.res.ev')}</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
-      <div class="calc-res-item"><span>${t('calc.res.sig.day')}</span><b>${sigPerDay.toFixed(1)}</b></div>
+      <div class="calc-res-item pro-only"><span>${t('calc.res.ev')}</span><b style="color:${pc(evSig)}">${evSig >= 0 ? '+' : ''}${evSig.toFixed(2)} USDT</b></div>
+      <div class="calc-res-item pro-only"><span>${t('calc.res.sig.day')}</span><b>${sigPerDay.toFixed(1)}</b></div>
       <div class="calc-res-item"><span>${t('calc.res.pnl.month')}</span><b style="color:${pc(ppm)}">${fmt(ppm)} USDT</b></div>
       <div class="calc-res-item"><span>${t('calc.res.pnl.year')}</span><b style="color:${pc(ppy)}">${fmt(ppy)} USDT</b></div>
-      <div class="calc-res-item"><span>${t('calc.res.hours')}</span><b>${activeHCount}</b></div>
-      <div class="calc-res-item"><span>Break-even WR</span><b style="color:#FFD166">55.6%</b></div>
+      <div class="calc-res-item pro-only"><span>${t('calc.res.hours')}</span><b>${activeHCount}</b></div>
+      <div class="calc-res-item pro-only"><span>Break-even WR</span><b style="color:#FFD166">55.6%</b></div>
     </div>
     <div class="calc-dep-line">${calcDepLine_(ppm, ppy)}</div>
-    <div class="calc-pair-row">
+    <div class="calc-pair-row pro-only">
       <div class="calc-pair-card">
         <div class="calc-pair-hdr">ETH <span class="calc-pair-bet">${ethBet} USDT</span></div>
         <div class="calc-pair-stat"><span>Сигналов</span><b>${ethSig}</b></div>
@@ -6538,7 +6678,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       </div>
     </div>
     ${hasMonthly ? `
-    <div class="calc-monthly-chart-block" style="margin-top:12px">
+    <div class="calc-monthly-chart-block pro-only" style="margin-top:12px">
       <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
         ${t('calc.chart.monthly.wr')}
@@ -6546,7 +6686,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       <div class="pnl-chart-wrap" style="height:160px"><canvas id="calcMonthlyWrChart"></canvas></div>
     </div>` : ''}
     ${hasHourly ? `
-    <div class="calc-monthly-chart-block" style="margin-top:10px">
+    <div class="calc-monthly-chart-block pro-only" style="margin-top:10px">
       <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         ${t('calc.chart.hourly.wr')}
@@ -6712,6 +6852,13 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
 // поэтому в общих сводках она растворяется. DEV-страница сравнивает ветки
 // между собой, здесь же MEXC разобран сам по себе и за выбираемый период.
 const MEXC_STATS = { days: 30, src: 'ALL', slotFilter: false, alt: 'ALL', grpMode: 'pct', charts: {} };
+// Фильтры, по которым реально считаем. Новичок их не видит, поэтому у него
+// всегда умолчания; выбор, сделанный в «Про», остаётся в MEXC_STATS.
+function mexcFilters_() {
+  return modeIsBeginner()
+    ? { src: 'ALL', alt: 'ALL', slot: false }
+    : { src: MEXC_STATS.src, alt: MEXC_STATS.alt, slot: MEXC_STATS.slotFilter };
+}
 
 // Источники ветки: 10-минутные сигналы и 30-минутные лежат в разных листах.
 // Экспирация у них разная, поэтому по умолчанию показываем их вместе, но
@@ -6942,7 +7089,8 @@ function mexcRenderRisk_(sigs) {
   if (!r.n || !r.maxStake) return false;
 
   const D = Math.max(1, profileDeposit());
-  const k = +MEXC_RISK.k || 2;
+  // Запас прочности выбирают только в «Про»; новичку - умолчание ×2.
+  const k = modeIsBeginner() ? 2 : (+MEXC_RISK.k || 2);
   // Требуется на текущем масштабе ставок: просадка с запасом + 5 свободных ставок.
   const need = r.maxDd * k + 5 * r.maxStake;
   // Во сколько раз масштабировать ставки, чтобы уложиться в депозит.
@@ -6978,7 +7126,7 @@ function mexcRenderRisk_(sigs) {
     ? `<div class="mexc-risk-verdict ok">${t('mexc.risk.ok').replace('{stake}', fmtStake(r.maxStake)).replace('{k}', k).replace('{rec}', fmtStake(stakeRec))}</div>`
     : `<div class="mexc-risk-verdict over">${t('mexc.risk.over').replace('{stake}', fmtStake(r.maxStake)).replace('{dep}', fmt(D)).replace('{rec}', fmtStake(stakeRec))}</div>`);
 
-  out.innerHTML = warn + verdict + `<div class="mexc-risk-grid">
+  out.innerHTML = warn + verdict + `<div class="mexc-risk-grid pro-only">
     ${row(t('mexc.risk.maxdd'), fmt(r.maxDd) + ' USDT', 'wr-red')}
     ${row(t('mexc.risk.streak'), r.worstStreak + ' ' + t('mexc.risk.inrow'))}
     ${row(t('mexc.risk.need'), fmt(need) + ' USDT')}
@@ -6987,7 +7135,7 @@ function mexcRenderRisk_(sigs) {
     ${row(t('mexc.risk.slots'), pctAllSlots.toFixed(1) + '%')}
     ${row(t('mexc.risk.ddat'), '-' + fmt(ddAtRec) + ' USDT (' + ddPct.toFixed(0) + '%)', 'wr-red')}
   </div>
-  <p class="mexc-risk-expl">${t('mexc.risk.expl')
+  <p class="mexc-risk-expl pro-only">${t('mexc.risk.expl')
       .replace('{need}', fmt(need))
       .replace('{dep}', fmt(D))
       .replace('{f}', f >= 1 ? '×' + f.toFixed(2) : '×' + f.toFixed(2))
@@ -7282,7 +7430,7 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
     const n10 = sigs.filter(s => s.src === '10m').length;
     const n30 = sigs.filter(s => s.src === '30m').length;
     const nAlt = sigs.filter(s => s.alt).length;
-    srcLine = `<div class="mexc-src-line">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b>` +
+    srcLine = `<div class="mexc-src-line pro-only">10м: <b>${n10}</b> &nbsp;·&nbsp; 30м: <b>${n30}</b>` +
               ` &nbsp;·&nbsp; с ALT10m: <b>${nAlt}</b></div>`;
   }
 
@@ -7293,10 +7441,12 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
     : '';
 
   return {
-    html: `Сигналов: <b>${sigs.length}</b> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b>` +
+    // Новичку - число сигналов, WR и PNL; разбивка и безубыток - в «Про».
+    html: `Сигналов: <b>${sigs.length}</b><span class="pro-only"> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b></span>` +
           ` &nbsp;·&nbsp; WR <b class="${wrClassAt_(wr, be)}">${wrTxt}</b>` +
           ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` +
-          ` &nbsp;·&nbsp; <span class="mexc-be">б/у ${be.toFixed(1)}%</span>` + srcLine + slotLine,
+          `<span class="pro-only"> &nbsp;·&nbsp; <span class="mexc-be">б/у ${be.toFixed(1)}%</span></span>` +
+          srcLine + slotLine,
     wr, be,
   };
 }
@@ -7312,19 +7462,20 @@ async function renderMexcStats() {
     // список сузится до выбранного в «Экспирации» листа - иначе 30-минутные
     // ставки перестанут занимать слоты для 10-минутных и наоборот.
     let sigs = await mexcStatsSignals(days);
+    const flt = mexcFilters_();
     // Тег ALT отсекаем ДО симуляции слотов: «выключить ALT» - это решение не
     // брать такие сигналы, а значит и слотов они бы не занимали, и на их
     // месте прошли бы другие. Экспирация ниже, наоборот, только вид на
     // отобранное, поэтому она применяется последней.
-    if (MEXC_STATS.alt === 'NO')   sigs = sigs.filter(s => !s.alt);
-    if (MEXC_STATS.alt === 'ONLY') sigs = sigs.filter(s => s.alt);
+    if (flt.alt === 'NO')   sigs = sigs.filter(s => !s.alt);
+    if (flt.alt === 'ONLY') sigs = sigs.filter(s => s.alt);
     let slotExcluded = null;
-    if (MEXC_STATS.slotFilter) {
+    if (flt.slot) {
       const before = sigs.length;
       sigs = mexcApplySlotLimit_(sigs);
       slotExcluded = before - sigs.length;
     }
-    if (MEXC_STATS.src && MEXC_STATS.src !== 'ALL') sigs = sigs.filter(s => s.src === MEXC_STATS.src);
+    if (flt.src && flt.src !== 'ALL') sigs = sigs.filter(s => s.src === flt.src);
 
     if (!sigs.length) {
       for (const c of ['mexcPnlCard', 'mexcGroupCard', 'mexcDrawdownCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
@@ -7336,7 +7487,7 @@ async function renderMexcStats() {
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
-      const s = mexcSummaryHtml_(sigs, MEXC_STATS.src, slotExcluded);
+      const s = mexcSummaryHtml_(sigs, flt.src, slotExcluded);
       sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= s.be + 6 ? ' sig-wr-good' : s.wr < s.be ? ' sig-wr-bad' : '');
       sumEl.innerHTML = s.html;
     }
@@ -7673,6 +7824,7 @@ const ZONES_ONLY = (() => {
 })();
 
 document.addEventListener('DOMContentLoaded', () => {
+  modeSyncClass_();
   applyTranslations();
   devGateApply();
   syncPageAnimations_();

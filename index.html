@@ -607,7 +607,7 @@
           <p class="pnl-chart-footnote" data-i18n="stats.wrdaily.note">Жёлтая черта - безубыток 55.6% при выплате 0.8. Серым отмечены дни, где сигналов слишком мало для выводов.</p>
         </div>
 
-        <div class="stats-l7d">
+        <div class="stats-l7d pro-only">
           <div class="pnl-chart-card" id="analPairsCard" style="display:none">
             <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="stats.pairs">By Trading Pair - Last 7 Days</span></div>
             <div id="analPairsTable"></div>
@@ -646,7 +646,7 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
-          <div class="stats-sub-btn dev" id="devEntryBtn" style="display:none" onclick="navigate('stats-l30d-dev')">
+          <div class="stats-sub-btn dev pro-only" id="devEntryBtn" style="display:none" onclick="navigate('stats-l30d-dev')">
             <div class="stats-sub-info">
               <div class="stats-sub-title">Last 30 Days <span class="dev-badge" data-i18n="stats.dev.badge">для разработчика</span></div>
               <div class="stats-sub-desc" data-i18n="stats.dev.desc">ALLsignal + BLOCKEDsignal · расчёт из сырых данных</div>
@@ -655,7 +655,7 @@
           </div>
         </div>
 
-        <div class="pnl-chart-card" id="periodCmpCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="periodCmpCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="per.title">Сравнение периодов</span></div>
           <div id="periodCmpTable"></div>
           <p class="pnl-chart-footnote" data-i18n="per.note">Колонка «Δ» - отклонение винрейта периода от общего за всё время, в процентных пунктах. Показывает направление, а не разовый результат.</p>
@@ -700,6 +700,16 @@
             </button>
           </div>
 
+          <!-- Новичку настройки ниже свёрнуты в строку-сводку: расчёт идёт по
+               ним, поэтому их видно хотя бы одной строкой. В «Про» кнопки нет,
+               блок открыт всегда. -->
+          <button type="button" class="calc-adv-toggle beginner-only" id="calcAdvToggle" onclick="calcAdvToggle()" aria-expanded="false" aria-controls="calcAdv">
+            <span class="calc-adv-head"><span data-i18n="calc.adv.title">Настройки расчёта</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+            <span class="calc-adv-sum" id="calcAdvSum"></span>
+          </button>
+
+          <div class="calc-adv" id="calcAdv">
           <!-- Direction filter -->
           <div class="calc-section-hdr" style="margin-top:12px">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
@@ -746,6 +756,7 @@
             </div>
             <div class="calc-rec-box" id="calcRecBox" style="display:none"></div>
           </div>
+          </div><!-- /.calc-adv -->
 
           <button class="calc-run-btn" id="calcRunBtn" onclick="runCalculator()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -767,7 +778,7 @@
           MEXC <span class="mexc-chip">ветка</span>
         </h2>
         <div class="pf-chip-slot"></div>
-        <p class="dev-note" data-i18n="mexc.note">Только сигналы группы MEXC: листы MEXCsignal (10м) и MEXC30signal (30м). На 10 минутах торгуются только ETH и BTC - выплата 0.8. На 30 минутах к ним добавляются акции MU, NVDA и SPCX - выплата 0.85. Ставка - из вашего профиля, но не выше боевой для пары: BTC 250, остальные пары и акции 150. Безубыток зависит от выплаты: 55.6% при 0.8 и 54.1% при 0.85.</p>
+        <p class="dev-note pro-only" data-i18n="mexc.note">Только сигналы группы MEXC: листы MEXCsignal (10м) и MEXC30signal (30м). На 10 минутах торгуются только ETH и BTC - выплата 0.8. На 30 минутах к ним добавляются акции MU, NVDA и SPCX - выплата 0.85. Ставка - из вашего профиля, но не выше боевой для пары: BTC 250, остальные пары и акции 150. Безубыток зависит от выплаты: 55.6% при 0.8 и 54.1% при 0.85.</p>
 
         <div class="sig-headwrap mexc-headwrap">
           <div class="sig-head">
@@ -783,7 +794,7 @@
             </div>
           </div>
           <!-- Источник: MEXCsignal (10м) и MEXC30signal (30м) -->
-          <div class="sig-head2">
+          <div class="sig-head2 pro-only">
             <span class="mexc-src-lbl" data-i18n="mexc.src">Экспирация</span>
             <span class="sig-div"></span>
             <div class="fs-seg compact mexc-src-seg" id="mexcSrcSeg">
@@ -794,7 +805,7 @@
           </div>
           <!-- Тег ALT10m: колонка «ALT10» листа MEXCsignal. Ставится только
                десятиминуткам, поэтому у 30-минутных его нет никогда. -->
-          <div class="sig-head2">
+          <div class="sig-head2 pro-only">
             <span class="mexc-src-lbl" data-i18n="mexc.alt">ALT10m</span>
             <span class="sig-div"></span>
             <div class="fs-seg compact mexc-alt-seg" id="mexcAltSeg">
@@ -803,10 +814,10 @@
               <button data-alt="ONLY" data-i18n="mexc.alt.only">Только ALT</button>
             </div>
           </div>
-          <p class="mexc-slot-note" data-i18n="mexc.alt.note">Тег ALT10m берётся из колонки «ALT10» листа MEXCsignal и стоит только у десятиминуток. «Без ALT» отсекает такие сигналы до расчёта лимита слотов - раз мы их не берём, то и слотов они не занимают, и на их месте проходят другие.</p>
+          <p class="mexc-slot-note pro-only" data-i18n="mexc.alt.note">Тег ALT10m берётся из колонки «ALT10» листа MEXCsignal и стоит только у десятиминуток. «Без ALT» отсекает такие сигналы до расчёта лимита слотов - раз мы их не берём, то и слотов они не занимают, и на их месте проходят другие.</p>
           <!-- Лимит слотов биржи: одновременно не больше 5 открытых ставок,
                10м и 30м делят один пул - переключатель просто вкл/выкл -->
-          <div class="sig-head2">
+          <div class="sig-head2 pro-only">
             <span class="mexc-src-lbl" data-i18n="mexc.slot">Лимит слотов</span>
             <span class="sig-div"></span>
             <div class="fs-seg compact mexc-slot-seg" id="mexcSlotSeg">
@@ -814,7 +825,7 @@
               <button data-slot="on" data-i18n="mexc.slot.on">5 ставок</button>
             </div>
           </div>
-          <p class="mexc-slot-note" data-i18n="mexc.slot.note">Учитывает лимит биржи - не больше 5 ставок одновременно (10м и 30м делят один пул). Сигналы, которые не получили бы слот, исключаются из статистики.</p>
+          <p class="mexc-slot-note pro-only" data-i18n="mexc.slot.note">Учитывает лимит биржи - не больше 5 ставок одновременно (10м и 30м делят один пул). Сигналы, которые не получили бы слот, исключаются из статистики.</p>
           <div class="sig-chart-stat" id="mexcSummary"></div>
         </div>
 
@@ -826,7 +837,7 @@
 
         <!-- Скользящий PNL по группам: крипта против акций. Накопленная кривая
              выше показывает итог, эта - текущую форму каждой группы. -->
-        <div class="pnl-chart-card" id="mexcGroupCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcGroupCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span data-i18n="mexc.grp">Скользящий PNL: крипта и акции</span></div>
           <div class="sig-head2 mexc-grp-row">
             <span class="mexc-src-lbl" data-i18n="mexc.grp.mode">Шкала</span>
@@ -861,7 +872,7 @@
             <span class="mexc-risk-depval" data-pf-note="mexc.risk.depval"></span>
           </div>
 
-          <div class="sig-head2 mexc-risk-row">
+          <div class="sig-head2 mexc-risk-row pro-only">
             <span class="mexc-src-lbl" data-i18n="mexc.risk.k">Запас прочности</span>
             <span class="sig-div"></span>
             <div class="fs-seg compact mexc-risk-seg" id="mexcRiskSeg">
@@ -872,31 +883,31 @@
           </div>
 
           <div id="mexcRiskOut"></div>
-          <p class="mexc-slot-note" data-i18n="mexc.risk.note">Просадка считается по сделкам в хронологическом порядке на выбранной выборке. Запас прочности - во сколько раз депозит должен перекрывать худшую просадку из прошлого: будущая почти всегда глубже уже увиденной. К просадке добавляются 5 ставок, которые должны лежать свободными, чтобы вообще открыть все слоты.</p>
+          <p class="mexc-slot-note pro-only" data-i18n="mexc.risk.note">Просадка считается по сделкам в хронологическом порядке на выбранной выборке. Запас прочности - во сколько раз депозит должен перекрывать худшую просадку из прошлого: будущая почти всегда глубже уже увиденной. К просадке добавляются 5 ставок, которые должны лежать свободными, чтобы вообще открыть все слоты.</p>
         </div>
 
-        <div class="pnl-chart-card" id="mexcWrDailyCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcWrDailyCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span data-i18n="mexc.wrdaily">WinRate по дням - MEXC</span></div>
           <div class="pnl-chart-wrap" style="height:190px"><canvas id="mexcWrDailyChart"></canvas></div>
           <p class="dev-note" style="margin-top:8px" data-i18n="mexc.wrdaily.note">Жёлтая черта - безубыток 55.6% при выплате 0.8. Серым отмечены дни, где сигналов меньше 5 и выводы делать рано.</p>
         </div>
 
-        <div class="pnl-chart-card" id="mexcPairsCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcPairsCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="mexc.pairs">По торговым парам - MEXC</span></div>
           <div id="mexcPairsTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="mexcDowCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcDowCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span data-i18n="mexc.dow">По дням недели - MEXC</span></div>
           <div id="mexcDowTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="mexcHourCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcHourCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="mexc.hour">По часам - MEXC</span></div>
           <div id="mexcHourTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="mexcTFCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="mexcTFCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span data-i18n="mexc.tz">По 15-минутным зонам - MEXC</span></div>
           <div id="mexcTFTable"></div>
         </div>
@@ -1220,12 +1231,12 @@
           <p class="pnl-chart-footnote" data-pf-note="allp.pnl.note">Расчёт на депозите 5 000 USDT, ставка максимальная.</p>
         </div>
 
-        <div class="pnl-chart-card" id="allMonthCard">
+        <div class="pnl-chart-card pro-only" id="allMonthCard">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>WinRate by Month</div>
           <div class="pnl-chart-wrap"><canvas id="monthlyWrChart"></canvas></div>
         </div>
 
-        <div class="pnl-chart-card" id="allPairsCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allPairsCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg>By Trading Pair</div>
           <div id="allPairsTable"></div>
         </div>
@@ -1237,39 +1248,39 @@
           <p class="pnl-chart-footnote" data-i18n="dd.note">Насколько кривая доходности опускалась ниже своего пика. Отвечает на вопрос «сколько придётся терпеть», которого не видно по итоговому проценту.</p>
         </div>
 
-        <div class="pnl-chart-card" id="allDowCard">
+        <div class="pnl-chart-card pro-only" id="allDowCard">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>WinRate by Day of Week</div>
           <div class="pnl-chart-wrap" style="height:180px"><canvas id="allDowChart"></canvas></div>
         </div>
 
-        <div class="pnl-chart-card" id="allHourWrCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allHourWrCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="hw.title">WinRate по часам</span></div>
           <div class="pnl-chart-wrap" style="height:180px"><canvas id="allHourWrChart"></canvas></div>
           <p class="pnl-chart-footnote" data-i18n="hw.note">Жёлтая черта - безубыток 55.6%. Серым отмечены часы, где сигналов меньше 10. Время - как в таблице выше.</p>
         </div>
 
-        <div class="pnl-chart-card" id="allHeatmapCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allHeatmapCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n="hm.title">Час × день недели</span></div>
           <p class="pnl-chart-footnote" data-i18n="hm.note" style="margin-bottom:10px">Строки - часы, столбцы - дни недели. Серая клетка со счётчиком - сигналов меньше 10, винрейт по ним не показываем: на такой выборке он ничего не значит. Прочерк - сигналов не было вовсе. Справа Σ - итог по часу целиком: именно он решает, прибыльный час или нет, потому что считает сигналы, а не клетки (три зелёных клетки могут весить меньше трёх красных).</p>
           <div id="allHeatmapBlock"></div>
         </div>
 
-        <div class="pnl-chart-card" id="allTFCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allTFCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Time Zone</div>
           <div id="allTFTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="all5minCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="all5minCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>By 5min Zone</div>
           <div id="all5minTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="allHourCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allHourCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>By Hour Zone</div>
           <div id="allHourTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="allCrossCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="allCrossCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>By Indicator</div>
           <div id="allCrossTable"></div>
         </div>
@@ -1285,11 +1296,11 @@
       <div class="page-content">
         <h2 class="section-title" style="margin-bottom:10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:8px"><path d="M3 17l6-6 4 4 7-7"/><polyline points="14 8 20 8 20 14"/></svg><span data-i18n="era.title">Новая система</span> <span class="era-chip" data-i18n="era.chip">с 06.2026</span></h2>
         <div class="pf-chip-slot"></div>
-        <p class="dev-note" data-i18n="era.note">Тот же набор разрезов, что и в ALL Periods, но выборка начинается с 1 июня 2026 - месяца, в котором алгоритмы подачи сигналов перестроили под новую систему. Более ранняя история описывает уже другую стратегию и в общий итог не входит.</p>
+        <p class="dev-note pro-only" data-i18n="era.note">Тот же набор разрезов, что и в ALL Periods, но выборка начинается с 1 июня 2026 - месяца, в котором алгоритмы подачи сигналов перестроили под новую систему. Более ранняя история описывает уже другую стратегию и в общий итог не входит.</p>
 
         <!-- Источник строк: 10m - лист ALLsignal (дошло до группы PRO),
              ALT10 - лист BLOCKEDsignal (отсеяно фильтрами и лимитом окон). -->
-        <div class="sig-head2 era-head2">
+        <div class="sig-head2 era-head2 pro-only">
           <span class="mexc-src-lbl" data-i18n="era.src">Источник</span>
           <span class="sig-div"></span>
           <div class="fs-seg compact era-src-seg" id="eraSrcSeg">
@@ -1298,10 +1309,10 @@
             <button data-src="ALT10">ALT10</button>
           </div>
         </div>
-        <p class="mexc-slot-note" data-i18n="era.src.note">10m - сигналы, дошедшие до группы PRO (лист ALLsignal). ALT10 - отсеянные фильтрами и лимитом одновременных окон (лист BLOCKEDsignal): они не торговались, поэтому их результат показывает, чего отсев стоил. «Все» - объединение обоих листов.</p>
+        <p class="mexc-slot-note pro-only" data-i18n="era.src.note">10m - сигналы, дошедшие до группы PRO (лист ALLsignal). ALT10 - отсеянные фильтрами и лимитом одновременных окон (лист BLOCKEDsignal): они не торговались, поэтому их результат показывает, чего отсев стоил. «Все» - объединение обоих листов.</p>
 
         <!-- Ставка - из профиля пользователя (плашка под заголовком). -->
-        <p class="mexc-slot-note" data-i18n="era.stake.note">Ставка берётся из вашего профиля - плашка вверху страницы. Выплата 0.8, ничья считается нулём. Ставка меняет PNL и просадку, но не винрейт: безубыток остаётся 55.6% при любой сумме.</p>
+        <p class="mexc-slot-note pro-only" data-i18n="era.stake.note">Ставка берётся из вашего профиля - плашка вверху страницы. Выплата 0.8, ничья считается нулём. Ставка меняет PNL и просадку, но не винрейт: безубыток остаётся 55.6% при любой сумме.</p>
 
         <div class="dev-src-summary era-summary" id="eraSummary"></div>
         <div class="dev-urgent-empty" id="eraEmpty" style="display:none" data-i18n="era.empty">В этом источнике нет сигналов за выбранный период.</div>
@@ -1314,12 +1325,12 @@
           <p class="pnl-chart-footnote" data-pf-note="era.pnl.note"></p>
         </div>
 
-        <div class="pnl-chart-card" id="eraMonthCard">
+        <div class="pnl-chart-card pro-only" id="eraMonthCard">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span data-i18n="era.month">WinRate by Month - новая система</span></div>
           <div class="pnl-chart-wrap"><canvas id="eraMonthlyWrChart"></canvas></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraPairsCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraPairsCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="era.pairs">By Trading Pair - новая система</span></div>
           <div id="eraPairsTable"></div>
         </div>
@@ -1331,45 +1342,45 @@
           <p class="pnl-chart-footnote" data-i18n="dd.note">Насколько кривая доходности опускалась ниже своего пика. Отвечает на вопрос «сколько придётся терпеть», которого не видно по итоговому проценту.</p>
         </div>
 
-        <div class="pnl-chart-card" id="eraDowCard">
+        <div class="pnl-chart-card pro-only" id="eraDowCard">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span data-i18n="era.dow">WinRate by Day of Week - новая система</span></div>
           <div class="pnl-chart-wrap" style="height:180px"><canvas id="eraDowChart"></canvas></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraHourWrCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraHourWrCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="era.hw">WinRate по часам - новая система</span></div>
           <div class="pnl-chart-wrap" style="height:180px"><canvas id="eraHourWrChart"></canvas></div>
           <p class="pnl-chart-footnote" data-i18n="hw.note">Жёлтая черта - безубыток 55.6%. Серым отмечены часы, где сигналов меньше 10. Время - как в таблице выше.</p>
         </div>
 
-        <div class="pnl-chart-card" id="eraHeatmapCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraHeatmapCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n="era.hm">Час × день недели - новая система</span></div>
           <p class="pnl-chart-footnote" data-i18n="hm.note" style="margin-bottom:10px">Строки - часы, столбцы - дни недели. Серая клетка со счётчиком - сигналов меньше 10, винрейт по ним не показываем: на такой выборке он ничего не значит. Прочерк - сигналов не было вовсе. Справа Σ - итог по часу целиком: именно он решает, прибыльный час или нет, потому что считает сигналы, а не клетки (три зелёных клетки могут весить меньше трёх красных).</p>
           <div id="eraHeatmapBlock"></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraTFCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraTFCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="era.tz">By Time Zone - новая система</span></div>
           <div id="eraTFTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="era5minCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="era5minCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span data-i18n="era.5min">By 5min Zone - новая система</span></div>
           <div id="era5minTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraHourCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraHourCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="era.hour">By Hour Zone - новая система</span></div>
           <div id="eraHourTable"></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraDayStopCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraDayStopCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg><span data-i18n="ds.title">Дневные стопы: TP и SL</span></div>
           <p class="dev-note" style="margin-bottom:12px" data-i18n="ds.note">Что было бы, если останавливать торговлю до конца дня по достижении цели или лимита убытка. Пороги - в ставках: SL ×3 значит «стоп после минус трёх ставок за день». Строка и столбец «нет» - без стопа, их пересечение это обычный результат без правил. Смотрите не на одну лучшую клетку, а на её соседей: если рядом результат рушится, это подгонка под прошлое, а не правило.</p>
           <div id="eraDayStopBlock"></div>
         </div>
 
-        <div class="pnl-chart-card" id="eraCrossCard" style="display:none">
+        <div class="pnl-chart-card pro-only" id="eraCrossCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span data-i18n="era.ind">By Indicator - новая система</span></div>
           <div id="eraCrossTable"></div>
         </div>

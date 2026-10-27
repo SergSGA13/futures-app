@@ -3548,3 +3548,34 @@ html::after {
   font-size: 12px; font-weight: 600; color: var(--text);
   background: rgba(34, 232, 255, 0.05); border: 1px solid rgba(34, 232, 255, 0.18);
 }
+
+/* ===== Режим «Новичок / Про» =====
+   Класс на <html>. !important перебивает inline display, который скрипты
+   ставят карточкам при отрисовке. */
+html.mode-beginner .pro-only { display: none !important; }
+html:not(.mode-beginner) .beginner-only { display: none !important; }
+html.mode-beginner .calc-adv:not(.open) { display: none; }
+
+/* Плашка профиля и переключатель режима - одной строкой; не влезают -
+   переключатель уходит на следующую. */
+.pf-chip-slot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-chip-slot .pf-chip { flex: 0 1 auto; min-width: 0; }
+.mode-seg.fs-seg.compact { flex: 0 0 auto; }
+.mode-seg.fs-seg.compact button { padding: 5px 11px; }
+
+/* Свёрнутые настройки калькулятора: заголовок и сводка того, по чему считаем. */
+.calc-adv-toggle {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  width: 100%; margin-top: 14px; padding: 9px 11px; text-align: left;
+  font-family: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(0,0,0,.06)), var(--card);
+  border: 1px solid rgba(157, 80, 255, 0.30);
+  transition: box-shadow .18s ease, border-color .18s ease;
+}
+.calc-adv-toggle:active { transform: translateY(1px); }
+.calc-adv-head { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: #B38CFF; }
+.calc-adv-head svg { transition: transform .18s ease; }
+.calc-adv-toggle.open .calc-adv-head svg { transform: rotate(180deg); }
+.calc-adv-toggle.open { border-color: rgba(157, 80, 255, 0.60); box-shadow: 0 0 16px rgba(157, 80, 255, 0.25); }
+.calc-adv-sum { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }

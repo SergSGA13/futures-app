@@ -166,6 +166,18 @@ function proPnlOutcome_(pair, res) {
   return res === 'WIN' ? st * WR_PAYOUT : res === 'LOSE' ? -st : 0;
 }
 function proPnlSig(s) { return proPnlOutcome_(s.pair, s.res); }
+
+// Главная профиль не слушает: вопрос и пересчёт касаются только раздела
+// «Статистика». Там остаётся прежняя модель - 125 на обе пары, выплата 0.8,
+// проценты от 5000.
+function homePnlRow_(r) {
+  const v = r[COL_RESULT];
+  return v === 'WIN' ? 100 : v === 'LOSE' ? -125 : 0;
+}
+const HOME_DEPOSIT = 5000;
+function loadHomePnl_() {
+  return loadPnlAllFromSignals('pnlChartHome', 'home', true, null, homePnlRow_, HOME_DEPOSIT);
+}
 function proPnlRow(r) { return proPnlOutcome_(sigPairBase(r[1]), (r[COL_RESULT] || '').trim()); }
 
 function profileFmtNum_(n) {
@@ -243,12 +255,6 @@ function profileApply_() {
   if (document.readyState === 'loading') return;
   profileRenderChips_();
   profileRenderNotes_();
-  if (typeof ZONES_ONLY !== 'undefined' && ZONES_ONLY) return;
-  try {
-    // Главный график кешируется по ключу - иначе он не перестроится.
-    if (pnlChartInstances.home) { pnlChartInstances.home.destroy(); delete pnlChartInstances.home; }
-    loadPnlAllFromSignals('pnlChartHome', 'home', true);
-  } catch (e) {}
   if (currentPage === 'statistics') renderAnalTables();
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
@@ -750,16 +756,15 @@ async function loadPnlChartInto(canvasId, sheetTabName, key, daysFilter = null) 
 // rowsOverride - уже отобранные строки листа (с заголовком). Нужен срезу
 // «Новая система»: там выборка режется и по дате, и по составу листов,
 // повторять этот отбор внутри графика незачем. pnlOfRow - денежная модель.
-async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride = null, pnlOfRow = null) {
+async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride = null, pnlOfRow = null, deposit = null) {
   if (pnlChartInstances[key]) return;
   try {
     const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
     // Денежная модель по умолчанию - профиль пользователя (депозит и ставка,
-    // не выше боевой по паре). Функцию зовут только пользовательские
-    // страницы - главная, ALL Periods, «Новая система»; DEV свои графики
-    // строит сам, на боевых ставках.
+    // не выше боевой по паре): так считают ALL Periods и «Новая система».
+    // Главная передаёт свою, прежнюю модель; DEV свои графики строит сам.
     const pnlOf = pnlOfRow || proPnlRow;
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
@@ -786,7 +791,7 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
       const { label, pnl } = dailyMap[dk];
       cumPnl += pnl;
       labels.push(label);
-      pctData.push(Math.round((cumPnl / profileDeposit()) * 100));
+      pctData.push(Math.round((cumPnl / (deposit || profileDeposit())) * 100));
     }
 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
@@ -5905,7 +5910,7 @@ function refreshHome() {
   devWrDailyChartInstance = null;
   Object.keys(SIG_CANDLE_CACHE).forEach(k => delete SIG_CANDLE_CACHE[k]);
   SIG_CHART.rendered = false;
-  Promise.all([loadStatsPreview(), loadSignalsList(), loadPnlAllFromSignals('pnlChartHome', 'home', true)]).finally(() => {
+  Promise.all([loadStatsPreview(), loadSignalsList(), loadHomePnl_()]).finally(() => {
     btn.classList.remove('spinning');
     if (currentPage === 'futures-prediction') renderSignalChart(true);
   });
@@ -7621,7 +7626,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   updateHeader('home');
   loadStatsPreview();
-  loadPnlAllFromSignals('pnlChartHome', 'home', true);
+  loadHomePnl_();
   loadSignalsList();
   initSignalChartUI();
   initCalculator();

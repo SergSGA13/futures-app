@@ -395,7 +395,8 @@ body { background: transparent; }
 }
 /* Бейджи внутри заголовка остаются своими: свой цвет, регистр и шрифт. */
 .section-title .dev-badge,
-.section-title .era-chip {
+.section-title .era-chip,
+.section-title .mexc-chip {
   -webkit-text-fill-color: currentColor;
   text-transform: none;
   letter-spacing: normal;
@@ -3515,3 +3516,12 @@ html::after {
   color: var(--text-muted); font-size: 12px;
   text-decoration: underline; text-underline-offset: 3px;
 }
+
+/* Риск MEXC: депозит из профиля и вердикт по ставке пользователя */
+.mexc-risk-depval { font-size: 13px; font-weight: 700; color: var(--text); }
+.mexc-risk-verdict {
+  margin: 4px 0 10px; padding: 9px 11px; border-radius: var(--radius-sm);
+  font-size: 12px; line-height: 1.45;
+}
+.mexc-risk-verdict.ok { color: var(--green); background: rgba(78, 255, 160, 0.07); border: 1px solid rgba(78, 255, 160, 0.25); }
+.mexc-risk-verdict.over { color: var(--yellow); background: rgba(255, 209, 102, 0.07); border: 1px solid rgba(255, 209, 102, 0.28); }

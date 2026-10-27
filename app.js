@@ -197,6 +197,13 @@ function profileChipStake_() {
   if (s == null || +s >= PRO_STAKE_MAX.BTC) return t('pf.stake.maxShort');
   return t('pf.stake.word') + ' ' + profileFmtNum_(s) + ' USDT';
 }
+// То же для MEXC: там свои потолки - BTC 250, остальные пары и акции 150.
+function profileStakeLabelMexc_() {
+  const s = profileGet().stake;
+  if (s == null || +s >= 250) return t('pf.stake.maxMexc');
+  if (+s > 150) return t('pf.stake.cappedMexc').replace('{s}', profileFmtNum_(s));
+  return profileFmtNum_(s) + ' USDT';
+}
 function profileDepLabel_() {
   const p = profileGet();
   return profileFmtNum_(p.deposit) + (p.preset === 'pmax' ? '+' : '') + ' USDT';
@@ -258,6 +265,7 @@ function profileApply_() {
   if (currentPage === 'statistics') renderAnalTables();
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
+  if (currentPage === 'stats-mexc') renderMexcStats();
 }
 
 // Плашка «Депозит · ставка ✎» на страницах, которые считают по профилю.
@@ -279,6 +287,7 @@ function profileRenderNotes_() {
   document.querySelectorAll('[data-pf-note]').forEach(el => {
     el.textContent = t(el.getAttribute('data-pf-note'))
       .replace('{dep}', profileFmtNum_(profileDeposit()))
+      .replace('{stakeMexc}', profileStakeLabelMexc_())
       .replace('{stake}', profileStakeLabel_());
   });
 }
@@ -4055,7 +4064,7 @@ function statsRenderSlice_(cfg, rows, sigs, opts) {
 
   try {
     renderDrawdownInto({
-      sigs, key: cfg.ddKey, pnlFn: o.pnlFn || null,
+      sigs, key: cfg.ddKey, pnlFn: o.pnlFn || null, deposit: profileDeposit(),
       canvasId: cfg.ddCanvas, noteId: cfg.ddNote, emptyNote: t('dd.none'),
     });
     const card = document.getElementById(cfg.ddCard);
@@ -4512,8 +4521,11 @@ function devBuildQuarterHeatmapSection(sigs) {
 }
 
 // ===== ПРОСАДКА (DRAWDOWN): насколько глубоко проваливалась кривая PNL от локального пика =====
-function devComputeDrawdown(sigs, pnlFn) {
+// deposit - от чего считать проценты. DEV зовёт без него и остаётся на
+// 5000; пользовательские разделы передают депозит из профиля.
+function devComputeDrawdown(sigs, pnlFn, deposit) {
   const pnlOf = pnlFn || pnlSigFlat;
+  const D = deposit || 5000;
   const dailyMap = {};
   for (const s of sigs) {
     if (s.res !== 'WIN' && s.res !== 'LOSE') continue;
@@ -4531,9 +4543,9 @@ function devComputeDrawdown(sigs, pnlFn) {
     const dd = cum - peak; // <= 0
     if (dd < maxDd) { maxDd = dd; maxDdStart = peakDk; maxDdEnd = dk; }
     labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
-    ddData.push(Math.round((dd / 5000) * 100));
+    ddData.push(Math.round((dd / D) * 100));
   }
-  return { labels, ddData, maxDdUsdt: maxDd, maxDdPct: Math.round((maxDd / 5000) * 100), maxDdStart, maxDdEnd };
+  return { labels, ddData, maxDdUsdt: maxDd, maxDdPct: Math.round((maxDd / D) * 100), maxDdStart, maxDdEnd };
 }
 
 function devRenderDrawdownChart(sigs) {
@@ -4546,9 +4558,9 @@ function devRenderDrawdownChart(sigs) {
 
 // Общий рендер просадки: DEV-раздел за 30 дней и пользовательский
 // ALL Periods считают одним кодом, различаются только холстом и текстом.
-function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote, pnlFn }) {
+function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote, pnlFn, deposit }) {
   if (pnlChartInstances[key]) return;
-  const dd = devComputeDrawdown(sigs, pnlFn);
+  const dd = devComputeDrawdown(sigs, pnlFn, deposit);
   if (!dd) return;
 
   const noteEl = document.getElementById(noteId);
@@ -6686,12 +6698,12 @@ function mexcPairOrder_(sigs) {
   return Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
 }
 
-// ===== СТАВКА ВЕТКИ (редактируемая - пересчитывает весь PNL на странице) =====
-// Значения по умолчанию совпадают с боевым конфигом исполнителя
-// (scripts/mexc-executor/config.example.json: stakes), но здесь их можно
-// поменять - для "а что если ставить больше/меньше" без правки конфига.
-// MEXC_STATS.stakes - те, что реально используются сейчас (стартуют как
-// копия дефолтов и правятся селекторами в initMexcStatsUI).
+// ===== СТАВКА ВЕТКИ =====
+// Ставка - из профиля пользователя (плашка вверху страницы), но не выше
+// боевой ставки пары на бирже. «Максимальная» в профиле - ровно боевой
+// конфиг исполнителя (scripts/mexc-executor/config.example.json: stakes).
+// Свои селекторы ставок у страницы были до профиля; два источника одной
+// ставки только путали бы, какая действует.
 // Ставка зависит от пары, выплата - от экспирации. Состав пар у экспираций
 // разный: на 10 минутах торгуются только ETH и BTC, на 30 минутах к ним
 // добавляются акции MU, NVDA и SPCX. У BTC ставка 250 на ОБЕИХ экспирациях,
@@ -6699,29 +6711,18 @@ function mexcPairOrder_(sigs) {
 // считаются ПО СИГНАЛУ, с учётом его листа, а не по агрегату пары - в режиме
 // «Все» в одной паре лежат сигналы обеих экспираций с разной выплатой.
 const MEXC_PAYOUT = { '10m': 0.8, '30m': 0.85 };
-// Таблица держится по экспирациям, чтобы разный состав пар был виден в коде
-// и чтобы ставку можно было развести, если условия у экспираций разойдутся.
-const MEXC_STAKE_DEFAULTS = {
-  '10m': { ETH: 150, BTC: 250 },
-  '30m': { ETH: 150, BTC: 250 },               // акции (MU/NVDA/SPCX) - по 150
-};
-const MEXC_STAKE_FALLBACK = { '10m': 150, '30m': 150 };
-// Потолок селектора - предел поля ввода на бирже (config.example.json:
-// stakeLimits): у BTC 250 на обеих экспирациях, у остальных пар 150.
+// Потолок - предел поля ввода на бирже (config.example.json: stakeLimits):
+// у BTC 250 на обеих экспирациях, у остальных пар, включая акции, 150.
+// Таблица держится по экспирациям, чтобы потолки можно было развести, если
+// условия у экспираций разойдутся.
 const MEXC_STAKE_MAX = { '10m': { BTC: 250 }, '30m': { BTC: 250 } };
 const MEXC_STAKE_MAX_DEFAULT = 150;
 function mexcStakeMax_(exp, pair) {
   return (MEXC_STAKE_MAX[exp] || {})[pair] ?? MEXC_STAKE_MAX_DEFAULT;
 }
-// Пользовательские правки ставок, отдельно на экспирацию.
-MEXC_STATS.stakes = { '10m': {}, '30m': {} };
-
 function mexcIs30_(s) { return s.src === '30m'; }
-function mexcStakeDefault_(exp, pair) {
-  return (MEXC_STAKE_DEFAULTS[exp] || {})[pair] ?? MEXC_STAKE_FALLBACK[exp];
-}
 function mexcStakeFor_(exp, pair) {
-  return (MEXC_STATS.stakes[exp] || {})[pair] ?? mexcStakeDefault_(exp, pair);
+  return profileStake(mexcStakeMax_(exp, pair));
 }
 function mexcStakeOf_(s) {
   return mexcStakeFor_(mexcIs30_(s) ? '30m' : '10m', s.pair);
@@ -6759,7 +6760,7 @@ function wrClassAt_(wr, be) {
 }
 // Итоговая строка под таблицей по парам - свой вариант devBranchSummaryHtml:
 // та берёт ставку из общего DEV_STAKES.MEXC (не знает про SPCX и про
-// пользовательский выбор ставки на этой странице), эта - из mexcStakeFor_
+// ставку из профиля пользователя), эта - из mexcStakeFor_
 // и перечисляет ставку РЕАЛЬНО присутствующих пар, а не фиксированную пару ETH/BTC.
 function mexcBranchSummaryHtml_(sigs) {
   let w = 0, l = 0, pnl = 0;
@@ -6795,7 +6796,8 @@ function mexcBranchSummaryHtml_(sigs) {
 // Всё считается на ТЕКУЩЕЙ выборке (период, экспирация, тег ALT, лимит слотов
 // уже применены) и по ТЕКУЩИМ ставкам, поэтому масштабируется линейно: удвоил
 // ставки - удвоилась и просадка.
-const MEXC_RISK = { deposit: 5000, k: 2 };
+// Депозит - из профиля пользователя; здесь выбирается только запас прочности.
+const MEXC_RISK = { k: 2 };
 
 // Просадка по сделкам, а не по дням: внутри одного дня серия поражений реально
 // продавливает баланс, а дневная агрегация это сглаживает и занижает требование
@@ -6830,7 +6832,7 @@ function mexcRenderRisk_(sigs) {
   const r = mexcRiskStats_(sigs);
   if (!r.n || !r.maxStake) return false;
 
-  const D = Math.max(100, +MEXC_RISK.deposit || 0);
+  const D = Math.max(1, profileDeposit());
   const k = +MEXC_RISK.k || 2;
   // Требуется на текущем масштабе ставок: просадка с запасом + 5 свободных ставок.
   const need = r.maxDd * k + 5 * r.maxStake;
@@ -6860,7 +6862,14 @@ function mexcRenderRisk_(sigs) {
     ? `<div class="mexc-risk-warn">${t('mexc.risk.negative')} WR ${wr.toFixed(1)}% ${t('mexc.risk.below')} ${be.toFixed(1)}%.</div>`
     : '';
 
-  out.innerHTML = warn + `<div class="mexc-risk-grid">
+  // Вердикт по ставке пользователя: ставки уже взяты из профиля, поэтому f
+  // прямо отвечает, укладывается ли выбранная ставка в депозит с запасом.
+  const fmtStake = v => Math.round(v).toLocaleString('ru-RU');
+  const verdict = edgeBad ? '' : (f >= 1
+    ? `<div class="mexc-risk-verdict ok">${t('mexc.risk.ok').replace('{stake}', fmtStake(r.maxStake)).replace('{k}', k).replace('{rec}', fmtStake(stakeRec))}</div>`
+    : `<div class="mexc-risk-verdict over">${t('mexc.risk.over').replace('{stake}', fmtStake(r.maxStake)).replace('{dep}', fmt(D)).replace('{rec}', fmtStake(stakeRec))}</div>`);
+
+  out.innerHTML = warn + verdict + `<div class="mexc-risk-grid">
     ${row(t('mexc.risk.maxdd'), fmt(r.maxDd) + ' USDT', 'wr-red')}
     ${row(t('mexc.risk.streak'), r.worstStreak + ' ' + t('mexc.risk.inrow'))}
     ${row(t('mexc.risk.need'), fmt(need) + ' USDT')}
@@ -6878,17 +6887,6 @@ function mexcRenderRisk_(sigs) {
 }
 
 function initMexcRiskUI() {
-  const dep = document.getElementById('mexcRiskDep');
-  if (dep && !dep.dataset.wired) {
-    dep.dataset.wired = '1';
-    dep.value = MEXC_RISK.deposit;
-    dep.addEventListener('input', () => {
-      const v = parseFloat(dep.value);
-      if (!Number.isFinite(v) || v < 100) return;
-      MEXC_RISK.deposit = v;
-      renderMexcStats();
-    });
-  }
   const seg = document.getElementById('mexcRiskSeg');
   if (seg && !seg.dataset.wired) {
     seg.dataset.wired = '1';
@@ -6907,13 +6905,13 @@ function initMexcRiskUI() {
 
 function mexcRenderDrawdownChart_(sigs) {
   if (typeof Chart === 'undefined') return false;
-  const dd = devComputeDrawdown(sigs, mexcPnlSig_);
+  const dd = devComputeDrawdown(sigs, mexcPnlSig_, profileDeposit());
   if (!dd) return false;
 
   const noteEl = document.getElementById('mexcDrawdownNote');
   if (noteEl) {
     noteEl.innerHTML = dd.maxDdPct < 0
-      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита, ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
+      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита ${profileFmtNum_(profileDeposit())} USDT, ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
       : 'Просадок не было - кривая PNL ни разу не опускалась ниже локального пика.';
   }
 
@@ -7116,8 +7114,8 @@ function initMexcGroupUI() {
   });
 }
 
-// Накопленный PNL ветки по текущей ставке страницы (mexcPnlSig_ - учитывает
-// и SPCX, и правку ставки через селекторы, в отличие от devPnlSig(s,'MEXC')).
+// Накопленный PNL ветки по ставке профиля (mexcPnlSig_ - учитывает и SPCX, и
+// потолки пар, в отличие от devPnlSig(s,'MEXC')). Проценты - от депозита профиля.
 function mexcRenderPnlChart_(sigs) {
   if (typeof Chart === 'undefined') return false;
   const ctx = document.getElementById('mexcPnlChart')?.getContext('2d');
@@ -7133,7 +7131,7 @@ function mexcRenderPnlChart_(sigs) {
   for (const dk of days) {
     cum += daily[dk];
     labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
-    pct.push(Math.round((cum / 5000) * 100));
+    pct.push(Math.round((cum / profileDeposit()) * 100));
   }
 
   const grad = ctx.createLinearGradient(0, 0, 0, 200);
@@ -7145,7 +7143,7 @@ function mexcRenderPnlChart_(sigs) {
     data: { labels, datasets: [{ data: pct, borderColor: '#F7931A', backgroundColor: grad, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y}% от 5 000 USDT` } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => t('mexc.pnl.tip').replace('{p}', c.parsed.y).replace('{dep}', profileFmtNum_(profileDeposit())) } } },
       scales: {
         x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
         y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
@@ -7194,49 +7192,6 @@ function mexcSummaryHtml_(sigs, src, slotExcluded) {
   };
 }
 
-// Строит селекторы ставок под текущий набор сигналов: отдельная группа на
-// каждую экспирацию и по селектору на КАЖДУЮ реально встреченную пару.
-// Раньше поля были прибиты в разметке (ETH/BTC/SPCX), и новая акция на бирже
-// осталась бы без своей ставки - а MU и NVDA торгуются только тридцатиминутками.
-function mexcRenderStakeRow_(sigs) {
-  const host = document.getElementById('mexcStakeFields');
-  if (!host) return;
-
-  const groups = [];
-  for (const exp of ['10m', '30m']) {
-    const pairs = [...new Set(sigs.filter(s => (mexcIs30_(s) ? '30m' : '10m') === exp).map(s => s.pair))].sort();
-    if (pairs.length) groups.push({ exp, pairs });
-  }
-  // Ключ состава: пересобираем разметку только когда набор пар изменился,
-  // иначе каждый перерасчёт сбрасывал бы уже выбранные значения.
-  const key = groups.map(g => g.exp + ':' + g.pairs.join(',')).join('|');
-  if (host.dataset.key === key) return;
-  host.dataset.key = key;
-
-  host.innerHTML = groups.map(g => {
-    const lbl = g.exp === '30m' ? '30\u043c' : '10\u043c';
-    const fields = g.pairs.map(pair => {
-      const max = mexcStakeMax_(g.exp, pair);
-      const cur = mexcStakeFor_(g.exp, pair);
-      let opts = '';
-      for (let v = 5; v <= max; v += 5) opts += `<option value="${v}"${v === cur ? ' selected' : ''}>${v}</option>`;
-      return `<label class="mexc-stake-field">${pair}<select class="mexc-stake-select" data-exp="${g.exp}" data-pair="${pair}">${opts}</select></label>`;
-    }).join('');
-    return `<span class="mexc-stake-group"><i>${lbl}</i>${fields}</span>`;
-  }).join('');
-
-  host.querySelectorAll('select[data-pair]').forEach(sel => {
-    sel.addEventListener('change', () => {
-      const v = parseInt(sel.value, 10);
-      const { exp, pair } = sel.dataset;
-      if (!v || v === mexcStakeFor_(exp, pair)) return;
-      MEXC_STATS.stakes[exp][pair] = v;
-      if (tg) tg.HapticFeedback?.selectionChanged?.();
-      renderMexcStats();
-    });
-  });
-}
-
 async function renderMexcStats() {
   const days = MEXC_STATS.days;
   const sumEl = document.getElementById('mexcSummary');
@@ -7269,9 +7224,6 @@ async function renderMexcStats() {
       return;
     }
     mexcShow_('mexcEmpty', false);
-
-    // Селекторы ставок строим под реальный состав пар текущего набора.
-    mexcRenderStakeRow_(sigs);
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {

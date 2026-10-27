@@ -1,11 +1,45 @@
 // ===== TELEGRAM WEB APP INIT =====
 const tg = window.Telegram?.WebApp;
+const FP_BG = '#05060E';   // подложка бренда FUTURES PREDICTION
 if (tg) {
   tg.ready();
   tg.expand();
-  tg.setHeaderColor('#0A0B14');
-  tg.setBackgroundColor('#0A0B14');
+  // Цвета Telegram - под подложку бренда. Тему Telegram (themeParams) не
+  // наследуем: приложение всегда тёмное.
+  try { tg.setHeaderColor(FP_BG); } catch (e) {}
+  try { tg.setBackgroundColor(FP_BG); } catch (e) {}
+  // setBottomBarColor - с Bot API 7.10. На старых клиентах метод в библиотеке
+  // есть, но только пишет предупреждение в консоль, поэтому проверяем версию.
+  try { if (tg.isVersionAtLeast && tg.isVersionAtLeast('7.10')) tg.setBottomBarColor(FP_BG); } catch (e) {}
 }
+
+// В полноэкранном режиме сверху лежит панель Telegram, и к безопасному
+// отступу добавляются его переменные - это делает класс tg-fs в styles.css.
+function fpSyncFullscreen_() {
+  document.documentElement.classList.toggle('tg-fs', !!(tg && tg.isFullscreen));
+}
+fpSyncFullscreen_();
+if (tg && tg.onEvent) tg.onEvent('fullscreenChanged', fpSyncFullscreen_);
+
+// ===== ФОН-СЦЕНА: ВЫСОТА НЕ ПРЫГАЕТ =====
+// Фон растянут cover по высоте слоя. Если слой следует за высотой окна,
+// при открытии клавиатуры окно сжимается, картинка перемасштабируется и фон
+// «прыгает» (на Android WebView сжимается целиком, на iOS - видимая часть).
+// Поэтому высоту замораживаем: растёт она, когда окно стало выше (expand
+// Telegram), а сбрасывается только при смене ширины - то есть при повороте.
+(function fpSceneHeight_() {
+  const root = document.documentElement;
+  let lastW = 0, maxH = 0;
+  function apply() {
+    const w = window.innerWidth;
+    const h = Math.max(window.innerHeight, (tg && tg.viewportStableHeight) || 0);
+    if (w !== lastW) { lastW = w; maxH = 0; }
+    if (h > maxH) { maxH = h; root.style.setProperty('--fp-scene-h', maxH + 'px'); }
+  }
+  apply();
+  window.addEventListener('resize', apply, { passive: true });
+  if (tg && tg.onEvent) tg.onEvent('viewportChanged', apply);
+})();
 
 // ===== LANGUAGE =====
 let currentLang = localStorage.getItem('fp_lang') || 'ru';
@@ -28,7 +62,42 @@ function applyTranslations() {
   });
   const headerTitle = document.getElementById('headerTitle');
   if (headerTitle) headerTitle.textContent = t(pageTitleKeys[currentPage] || 'title.fp');
+  fitHeaderTitle_();
   devRenderUpdatedAt();
+}
+
+// Заголовок в шапке - Orbitron 17 px с разрядкой 2 px. Длинные названия
+// («Доступ к каналам», «Last 30 Days · DEV») на 360 px не влезают, а
+// обрезка многоточием прятала бы смысл. Кегль уменьшаем ровно настолько,
+// чтобы строка поместилась, но не мельче 12 px; дальше - многоточие из CSS.
+function fitHeaderTitle_() {
+  const el = document.getElementById('headerTitle');
+  if (!el) return;
+  el.style.fontSize = '';
+  if (!el.offsetParent) return;                 // шапка скрыта - на главной
+  let fs = 17;
+  while (el.scrollWidth > el.clientWidth + 1 && fs > 12) {
+    fs -= 1;
+    el.style.fontSize = fs + 'px';
+  }
+}
+// Пока Orbitron не догрузился, ширина считается по запасному шрифту.
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeaderTitle_);
+window.addEventListener('resize', () => fitHeaderTitle_(), { passive: true });
+
+// SVG-анимации (SMIL) не подчиняются animation-play-state, которым CSS
+// ставит на паузу скрытые страницы. Неактивные страницы не удаляются из DOM,
+// поэтому иллюстрации статей перерисовывали экран 60 раз в секунду, даже
+// когда статьи закрыты. Паузим их вручную при каждом переходе.
+function syncPageAnimations_() {
+  document.querySelectorAll('animate, animateTransform, animateMotion').forEach(a => {
+    let svg = a.ownerSVGElement;
+    while (svg && svg.ownerSVGElement) svg = svg.ownerSVGElement;
+    if (!svg || typeof svg.pauseAnimations !== 'function') return;
+    const pg = svg.closest('.page');
+    if (!pg) return;
+    if (pg.classList.contains('active')) svg.unpauseAnimations(); else svg.pauseAnimations();
+  });
 }
 
 function setLanguage(lang) {
@@ -89,6 +158,7 @@ function navigate(pageId) {
 
   updateHeader(pageId);
   updateNav(pageId);
+  syncPageAnimations_();
 
   if (pageId === 'statistics') { devGateApply(); devGateTapHook(document.getElementById('statsTitleTap')); renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
   if (pageId === 'stats-l30d-dev') {
@@ -122,6 +192,7 @@ function goBack() {
 
   updateHeader(prev);
   updateNav(prev);
+  syncPageAnimations_();
 
   if (tg) tg.HapticFeedback?.impactOccurred('light');
 }
@@ -134,9 +205,12 @@ function updateHeader(pageId) {
 
   const isHome = pageId === 'home';
   header.style.display = isHome ? 'none' : '';
-  appMain.style.top = isHome ? '0' : 'var(--header-height)';
+  // На главной шапки нет, но безопасный отступ сверху (вырез, панель
+  // Telegram в полноэкранном режиме) остаётся.
+  appMain.style.top = isHome ? 'var(--safe-top)' : 'calc(var(--header-height) + var(--safe-top))';
   backBtn.style.display = isHome ? 'none' : 'flex';
   headerTitle.textContent = t(pageTitleKeys[pageId] || 'title.fp');
+  fitHeaderTitle_();
 }
 
 function updateNav(pageId) {
@@ -7274,6 +7348,7 @@ const ZONES_ONLY = (() => {
 document.addEventListener('DOMContentLoaded', () => {
   applyTranslations();
   devGateApply();
+  syncPageAnimations_();
 
   if (ZONES_ONLY) {
     // Тяжёлую загрузку главной пропускаем: партнёру она не нужна, а зоны

@@ -2,9 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#05060E" />
   <title>Futures Prediction</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Шрифт надписи грузим заранее: без этого первые кадры надпись рисуется
+       системным моноширинным и потом перескакивает. -->
+  <link rel="preload" href="brand/orbitron.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -32,7 +37,23 @@
     <div class="page active" id="page-home">
       <div class="home-hero">
         <div class="hero-glow"></div>
-        <h1 class="hero-title">Futures<br/><span class="gradient-text">Prediction</span></h1>
+        <!-- Надпись проекта: линии слева и справа - SVG, растягиваются по
+             ширине; уже 700 px скрываются, надпись остаётся по центру. -->
+        <h1 class="fp-brand" aria-label="Futures Prediction">
+          <svg class="fp-ln-l" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+            <defs><linearGradient id="fpL" x1="0" x2="1"><stop offset="0" stop-color="#22E8FF" stop-opacity="0"/>
+              <stop offset=".35" stop-color="#22E8FF"/><stop offset="1" stop-color="#82A9F5"/></linearGradient></defs>
+            <path d="M0,20 H520 L540,8 H600" fill="none" stroke="url(#fpL)" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+            <path d="M90,28 H470 L486,18 H560" fill="none" stroke="url(#fpL)" stroke-width="1.2" opacity=".7" vector-effect="non-scaling-stroke"/>
+          </svg>
+          <span class="fp-brand-w" aria-hidden="true"><span class="fp-b1">Futures</span><span class="fp-b2">Prediction</span></span>
+          <svg class="fp-ln-r" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true">
+            <defs><linearGradient id="fpR" x1="1" x2="0"><stop offset="0" stop-color="#B26AFF" stop-opacity="0"/>
+              <stop offset=".35" stop-color="#B26AFF"/><stop offset="1" stop-color="#C98BFF"/></linearGradient></defs>
+            <path d="M600,20 H80 L60,8 H0" fill="none" stroke="url(#fpR)" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+            <path d="M510,28 H130 L114,18 H40" fill="none" stroke="url(#fpR)" stroke-width="1.2" opacity=".7" vector-effect="non-scaling-stroke"/>
+          </svg>
+        </h1>
         <p class="hero-sub" data-i18n="home.sub">Торговые сигналы · Стратегии · Обучение</p>
         <div class="lang-switcher">
           <button class="lang-btn active" data-lang="ru" onclick="setLanguage('ru')">РУС</button>

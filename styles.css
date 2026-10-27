@@ -4,40 +4,58 @@
 :root {
   --blue: #66A3FF;
   --purple: #9D50FF;
-  --bg: #0A0B14;
+  --cyan: #22E8FF;
+  --bg: #05060E;                      /* подложка под фоном-сценой */
   --bg2: #0F1120;
   --bg3: #141627;
-  --card: #141930;
-  --card-border: rgba(102, 163, 255, 0.12);
+  --card: rgba(11, 14, 30, 0.86);     /* полупрозрачные: фон должен просвечивать */
+  --card-solid: #0B0E1E;              /* глухой: шапки, панели, выпадашки, модалки */
+  --card-border: rgba(34, 232, 255, 0.18);
   --text: #E8EAFF;
   --text-muted: #7B84B0;
   --green: #4EFFA0;
   --red: #FF5272;
   --yellow: #FFD166;
-  --radius: 16px;
+  --radius: 14px;
   --radius-sm: 10px;
   --nav-height: 64px;
   --header-height: 56px;
   --gradient: linear-gradient(135deg, var(--blue), var(--purple));
+  --fp-futures: #82A9F5;              /* слово FUTURES в надписи */
+  --fp-prediction: #B26AFF;           /* слово PREDICTION */
+  --fp-title-grad: linear-gradient(100deg, #22E8FF, #66A3FF 45%, #9D50FF);
+
+  /* Безопасные отступы. В обычном режиме Telegram хватает env(); в
+     полноэкранном к ним добавляется собственная панель Telegram сверху -
+     класс tg-fs ставит app.js. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+html.tg-fs {
+  --safe-top: calc(max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
 }
 
 html, body {
   height: 100%;
-  background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
   font-size: 15px;
   line-height: 1.5;
   overflow: hidden;
 }
+html { background: var(--bg); color-scheme: dark; }
+body { background: transparent; }
 
 /* ===== HEADER ===== */
 .app-header {
   position: fixed;
   top: 0; left: 0; right: 0;
-  height: var(--header-height);
-  background: rgba(10, 11, 20, 0.92);
-  backdrop-filter: blur(20px);
+  height: calc(var(--header-height) + var(--safe-top));
+  padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+  background: var(--card-solid);
   border-bottom: 1px solid var(--card-border);
   z-index: 100;
 }
@@ -53,6 +71,7 @@ html, body {
   align-items: center;
   gap: 10px;
   flex: 1;
+  min-width: 0;
 }
 .logo-img {
   width: 32px;
@@ -63,13 +82,24 @@ html, body {
 .logo-text {
   font-size: 24px;
 }
+/* Малый заголовок бренда. Orbitron без кириллицы: латиница идёт им,
+   русские буквы браузер сам берёт из следующего, системного шрифта. */
 .header-title {
+  font-family: 'Orbitron FP', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
   font-size: 17px;
-  font-weight: 700;
-  background: var(--gradient);
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  line-height: 1.2;
+  background: var(--fp-title-grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  filter: drop-shadow(0 0 14px rgba(34, 232, 255, 0.35));
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .back-btn {
   background: var(--bg3);
@@ -88,10 +118,13 @@ html, body {
 /* ===== MAIN / PAGES ===== */
 .app-main {
   position: fixed;
-  top: var(--header-height);
-  bottom: var(--nav-height);
-  left: 0; right: 0;
+  top: calc(var(--header-height) + var(--safe-top));
+  bottom: calc(var(--nav-height) + var(--safe-bottom));
+  left: var(--safe-left); right: var(--safe-right);
   overflow: hidden;
+  /* Без z-index строки развёртки (html::after) рисовались бы поверх
+     содержимого: в порядке отрисовки они идут после body. */
+  z-index: 1;
 }
 .page {
   position: absolute;
@@ -116,7 +149,7 @@ html, body {
 /* ===== HOME PAGE ===== */
 .home-hero {
   position: relative;
-  padding: 14px 20px 10px;
+  padding: 14px 16px 10px;
   text-align: center;
   overflow: hidden;
 }
@@ -126,13 +159,6 @@ html, body {
   width: 300px; height: 200px;
   background: radial-gradient(ellipse, rgba(102,163,255,0.15) 0%, transparent 70%);
   pointer-events: none;
-}
-.hero-title {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -1px;
-  line-height: 1.1;
-  margin-bottom: 0;
 }
 .gradient-text {
   background: var(--gradient);
@@ -196,6 +222,12 @@ html, body {
 .menu-card.compact {
   padding: 10px;
   gap: 8px;
+}
+/* На 360 px пара плиток шире экрана ровно на 1 px: 1fr не даёт колонке
+   стать уже содержимого. Равные колонки обрезали бы подпись «Статей»
+   многоточием, поэтому деление не трогаем, а пиксель забираем у промежутка. */
+@media (max-width: 369px) {
+  .menu-grid-compact { column-gap: 6px; }
 }
 .menu-card.compact .card-icon {
   width: 28px; height: 28px;
@@ -347,10 +379,27 @@ html, body {
   margin-bottom: 12px;
 }
 .section-title {
-  font-size: 16px;
-  font-weight: 700;
+  font-family: 'Orbitron FP', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  line-height: 1.3;
   margin-bottom: 14px;
   color: var(--text);
+  background: var(--fp-title-grad);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 14px rgba(34, 232, 255, 0.35));
+}
+/* Бейджи внутри заголовка остаются своими: свой цвет, регистр и шрифт. */
+.section-title .dev-badge,
+.section-title .era-chip {
+  -webkit-text-fill-color: currentColor;
+  text-transform: none;
+  letter-spacing: normal;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
 }
 
 /* Warning block */
@@ -753,9 +802,9 @@ html, body {
 .bottom-nav {
   position: fixed;
   bottom: 0; left: 0; right: 0;
-  height: var(--nav-height);
-  background: rgba(10, 11, 20, 0.95);
-  backdrop-filter: blur(20px);
+  height: calc(var(--nav-height) + var(--safe-bottom));
+  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  background: var(--card-solid);
   border-top: 1px solid var(--card-border);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1160,10 +1209,9 @@ html, body {
   position: relative;
   border: 1px solid transparent;
   background:
-    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(var(--card-solid), var(--card-solid)) padding-box,
     linear-gradient(135deg, #66A3FF, #9D50FF, #4EFFA0) border-box;
-  box-shadow: 0 0 18px rgba(102, 163, 255, 0.22), 0 0 32px rgba(157, 80, 255, 0.14);
-  animation: stats-highlight-pulse 2.8s ease-in-out infinite;
+  box-shadow: 0 0 22px rgba(102, 163, 255, 0.30), 0 0 40px rgba(157, 80, 255, 0.20);
 }
 .stats-sub-icon {
   width: 38px; height: 38px;
@@ -1178,10 +1226,6 @@ html, body {
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .stats-sub-btn.highlight .stats-sub-arrow { color: #9D50FF; text-shadow: 0 0 10px rgba(157, 80, 255, 0.7); }
-@keyframes stats-highlight-pulse {
-  0%, 100% { box-shadow: 0 0 18px rgba(102, 163, 255, 0.22), 0 0 32px rgba(157, 80, 255, 0.14); }
-  50%      { box-shadow: 0 0 26px rgba(102, 163, 255, 0.38), 0 0 46px rgba(157, 80, 255, 0.26); }
-}
 
 /* ===== BOTTOM NAV — GLOWING "СТАТИСТИКА" LABEL ===== */
 .nav-btn { position: relative; }
@@ -1197,11 +1241,9 @@ html, body {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: nav-label-pulse 2.4s ease-in-out infinite;
-}
-@keyframes nav-label-pulse {
-  0%, 100% { box-shadow: 0 0 5px rgba(157, 80, 255, 0.3); border-color: rgba(157, 80, 255, 0.55); }
-  50%      { box-shadow: 0 0 12px rgba(78, 255, 160, 0.45); border-color: rgba(78, 255, 160, 0.6); }
+  /* Был пульс 2.4 с - единственное, что перерисовывало экран в простое на
+     каждом кадре. Свечение оставлено, но неподвижное, по середине пульса. */
+  box-shadow: 0 0 9px rgba(157, 80, 255, 0.42);
 }
 
 /* ===== DEV STATS (Last 30 Days · для разработчика) ===== */
@@ -2355,7 +2397,7 @@ html, body {
 /* выпадающий список активов */
 .fd-pick-backdrop { position: fixed; inset: 0; z-index: 40; }
 .fd-picker { position: absolute; top: calc(100% - 2px); left: 11px; right: 11px; max-height: 320px; overflow-y: auto; z-index: 50;
-  background: #11142a; border: 1px solid var(--card-border); border-radius: var(--radius-sm); box-shadow: 0 14px 44px rgba(0,0,0,.55); padding: 6px; -webkit-overflow-scrolling: touch; }
+  background: var(--card-solid); border: 1px solid var(--card-border); border-radius: var(--radius-sm); box-shadow: 0 14px 44px rgba(0,0,0,.55); padding: 6px; -webkit-overflow-scrolling: touch; }
 .fd-pick-item { display: flex; justify-content: space-between; align-items: center; width: 100%; background: none; border: none;
   color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
 .fd-pick-item:active { background: rgba(102,163,255,.12); }
@@ -2523,7 +2565,7 @@ html, body {
 @keyframes fsPosPulse { 0%, 100% { opacity: .5; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
 
 .fs-tfhint {
-  position: fixed; left: 50%; bottom: 86px; transform: translate(-50%, 12px);
+  position: fixed; left: 50%; bottom: calc(86px + var(--safe-bottom)); transform: translate(-50%, 12px);
   max-width: 320px; width: max-content; padding: 10px 14px; border-radius: 12px;
   background: rgba(20,25,48,.96); border: 1px solid rgba(255,209,102,.35);
   color: var(--text); font-size: 12px; line-height: 1.4; text-align: center;
@@ -2768,7 +2810,7 @@ html, body {
    updateHeader выставляет display кнопке инлайном, поэтому !important. */
 body.zones-only .bottom-nav { display: none; }
 body.zones-only #backBtn { display: none !important; }
-body.zones-only .app-main { bottom: 0; }
+body.zones-only .app-main { bottom: var(--safe-bottom); }
 /* Точка безубытка в итоге ветки MEXC - зависит от выплаты экспирации */
 .mexc-be { opacity: .8; }
 /* Ставки: группы по экспирации, внутри - по паре */
@@ -3043,7 +3085,7 @@ body.zones-only .app-main { bottom: 0; }
 .dev-gate-box {
   width: 100%; max-width: 320px;
   padding: 18px 16px;
-  background: var(--card);
+  background: var(--card-solid);
   border: 1px solid rgba(255, 209, 102, 0.35);
   border-radius: var(--radius);
   box-shadow: 0 0 26px rgba(255, 209, 102, 0.14), 0 20px 50px rgba(0, 0, 0, 0.55);
@@ -3273,4 +3315,108 @@ body.zones-only .app-main { bottom: 0; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-muted);
   word-break: break-word;
+}
+
+/* =====================================================================
+   ФИРМЕННЫЙ СТИЛЬ FUTURES PREDICTION
+   Эталон - brand-kit/brand.css (пульт исполнителя). Значения перенесены
+   один в один, классы те же (fp-*). Ассеты - в папке brand/.
+   ===================================================================== */
+
+@font-face {
+  font-family: 'Orbitron FP';
+  src: url('brand/orbitron.woff2') format('woff2');
+  font-weight: 500 900;
+  font-display: swap;
+}
+
+/* ---- Фон-сцена ----
+   Отдельный слой на псевдоэлементах html, position: fixed, z-index 0;
+   всё содержимое выше. НЕ background-attachment: fixed - на телефонах он
+   дёргается или игнорируется.
+
+   Высота задаётся не inset: 0, а замороженной переменной --fp-scene-h
+   (app.js): при открытии клавиатуры окно становится ниже, и фон с cover
+   перемасштабировался бы - «прыгал». Замороженная высота меняется только
+   при смене ширины (поворот экрана) или росте окна (expand). */
+html::before, html::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  /* Запасное значение в var() - обычное 100vh: при неизвестной браузеру
+     единице (lvh в старых WebView) вся декларация стала бы недействительной
+     и высота схлопнулась бы в auto, а не откатилась к строке выше. */
+  height: var(--fp-scene-h, 100vh);
+  min-height: var(--tg-viewport-stable-height, 100vh);
+  pointer-events: none;
+  z-index: 0;
+}
+html::before {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 55% 40% at 12% 0%, rgba(34,232,255,.10), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 92% 8%, rgba(157,80,255,.10), transparent 62%),
+    radial-gradient(ellipse 70% 45% at 50% 105%, rgba(157,80,255,.10), transparent 65%),
+    linear-gradient(180deg, rgba(5,6,14,.10) 0, rgba(5,6,14,.22) 260px, rgba(5,6,14,.30) 100%),
+    url('brand/bg-wide-3440x1440.jpg');
+  background-size: auto, auto, auto, auto, cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+/* Телефон и вертикальные окна - вертикальная подложка: широкая при cover
+   обрезалась бы до середины, и неоновые линии с краёв пропали бы. */
+@media (max-aspect-ratio: 1/1) {
+  html::before {
+    background-image:
+      radial-gradient(ellipse 55% 40% at 12% 0%, rgba(34,232,255,.10), transparent 60%),
+      radial-gradient(ellipse 50% 40% at 92% 8%, rgba(157,80,255,.10), transparent 62%),
+      radial-gradient(ellipse 70% 45% at 50% 105%, rgba(157,80,255,.10), transparent 65%),
+      linear-gradient(180deg, rgba(5,6,14,.10) 0, rgba(5,6,14,.22) 260px, rgba(5,6,14,.30) 100%),
+      url('brand/bg-portrait-1170x2532.jpg');
+  }
+}
+/* Едва заметные строки развёртки, гаснут к краям. Неподвижные: анимация
+   фона перерисовывает весь экран каждый кадр. */
+html::after {
+  background-image: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
+  background-size: 100% 3px;
+  opacity: .45;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 55%, #000 25%, transparent 100%);
+          mask-image: radial-gradient(ellipse 80% 70% at 50% 55%, #000 25%, transparent 100%);
+}
+
+/* ---- Надпись проекта ----
+   Свечение - text-shadow / drop-shadow без анимации. */
+.fp-brand {
+  display: flex; align-items: center; gap: clamp(10px, 1.6vw, 34px);
+  margin: 4px 0 14px;
+  font-family: 'Orbitron FP', 'Orbitron', ui-monospace, monospace;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .07em; line-height: 1.1;
+  white-space: nowrap; user-select: none; -webkit-user-select: none; min-width: 0;
+  /* Ширина надписи ~14.2 кегля: на узком экране кегль по ширине, чтобы
+     строка влезла с полями 16 px. */
+  font-size: min(clamp(26px, 2.5vw, 68px), calc((100vw - 32px) / 14.5));
+}
+.fp-brand-w { display: flex; gap: .45em; flex: 0 0 auto; }
+.fp-brand .fp-b1 { color: var(--fp-futures);
+  text-shadow: 0 0 3px rgba(150,190,255,.9), 0 0 12px rgba(79,123,255,.8), 0 0 30px rgba(79,123,255,.5); }
+.fp-brand .fp-b2 { color: var(--fp-prediction);
+  text-shadow: 0 0 3px rgba(205,160,255,.9), 0 0 12px rgba(157,80,255,.8), 0 0 30px rgba(157,80,255,.5); }
+/* width: 0 - линии не задают ширину надписи (иначе SVG тянет её до своей
+   родной ширины 600 px и страница едет вбок), а только заполняют остаток. */
+.fp-brand svg { flex: 1 1 0; width: 0; min-width: 0; height: 34px; overflow: visible; }
+.fp-brand .fp-ln-l { filter: drop-shadow(0 0 4px rgba(34,232,255,.9)) drop-shadow(0 0 10px rgba(79,123,255,.6)); }
+.fp-brand .fp-ln-r { filter: drop-shadow(0 0 4px rgba(178,106,255,.9)) drop-shadow(0 0 10px rgba(157,80,255,.6)); }
+@media (max-width: 700px) { .fp-brand svg { display: none; } .fp-brand { justify-content: center; } }
+
+/* ---- Скорость ----
+   Неактивные страницы не убираются из DOM, а только становятся прозрачными,
+   поэтому их анимации крутились всегда и перерисовывали экран в простое.
+   Ставим их на паузу; вернулся на страницу - анимация продолжается.
+   SVG-анимации (SMIL) так не останавливаются - их паузит app.js. */
+.page:not(.active),
+.page:not(.active) *,
+.page:not(.active) *::before,
+.page:not(.active) *::after {
+  animation-play-state: paused !important;
 }

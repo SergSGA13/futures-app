@@ -3525,3 +3525,18 @@ html::after {
 }
 .mexc-risk-verdict.ok { color: var(--green); background: rgba(78, 255, 160, 0.07); border: 1px solid rgba(78, 255, 160, 0.25); }
 .mexc-risk-verdict.over { color: var(--yellow); background: rgba(255, 209, 102, 0.07); border: 1px solid rgba(255, 209, 102, 0.28); }
+
+/* Ставка выше 4% депозита: предупреждение в шторке и жёлтая плашка */
+.pf-risk {
+  margin: 0 0 10px; padding: 9px 11px; border-radius: var(--radius-sm);
+  font-size: 12px; line-height: 1.45;
+  color: var(--yellow);
+  background: rgba(255, 209, 102, 0.08);
+  border: 1px solid rgba(255, 209, 102, 0.32);
+}
+.pf-chip.risky {
+  background: rgba(255, 209, 102, 0.07);
+  border-color: rgba(255, 209, 102, 0.5);
+  box-shadow: 0 0 12px rgba(255, 209, 102, 0.14);
+}
+.pf-chip.risky svg:first-child { color: var(--yellow); }

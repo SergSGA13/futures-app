@@ -271,9 +271,13 @@ function profileApply_() {
 // Плашка «Депозит · ставка ✎» на страницах, которые считают по профилю.
 function profileRenderChips_() {
   const txt = t('pf.chip').replace('{dep}', profileDepLabel_()).replace('{stake}', profileChipStake_());
+  // Ставка выше 4% депозита - плашка жёлтая, чтобы предупреждение не
+  // исчезало после сохранения. Подробности - в шторке по нажатию.
+  const risky = profileIsRisky_();
+  const label = risky ? t('pf.risk.chip') : t('pf.edit');
   document.querySelectorAll('.pf-chip-slot').forEach(slot => {
     slot.innerHTML =
-      '<button class="pf-chip" type="button" onclick="profileOpen()" aria-label="' + chanEsc_(t('pf.edit')) + '">' +
+      '<button class="pf-chip' + (risky ? ' risky' : '') + '" type="button" onclick="profileOpen()" title="' + chanEsc_(label) + '" aria-label="' + chanEsc_(label) + '">' +
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2.5"/><path d="M16 13h2"/><path d="M2 10h20"/></svg>' +
       '<span class="pf-chip-txt">' + chanEsc_(txt) + '</span>' +
       '<svg class="pf-chip-pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>' +
@@ -319,6 +323,8 @@ function profileOpen() {
   if (dep) dep.value = isCustom ? p.deposit : '';
   if (st) st.value = isCustom ? p.stake : '';
   profileValidateCustom_();
+  // История для предупреждения о риске - догружаем и обновляем подсказку.
+  profileHistLoad_().then(() => profileValidateCustom_());
   ov.hidden = false;
   requestAnimationFrame(() => ov.classList.add('open'));
   if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -362,13 +368,64 @@ function profileReadCustom_() {
   return { dep, st };
 }
 
-// Подсказка под полями: доля депозита на сделку и потолок по парам.
+// ---- Риск ставки ----
+// Больше 4% депозита на сделку - предупреждаем и советуем 1-3%: в неудачные
+// периоды такая ставка может обнулить депозит. Чтобы это было не просто
+// словами, рядом показываем худшую просадку из истории сигналов PRO,
+// пересчитанную на введённую ставку.
+const PROFILE_RISK_PCT = 4;
+const PROFILE_SAFE_PCT = [1, 3];
+
+function profileIsRisky_(p) {
+  p = p || profileGet();
+  return p.stake != null && p.stake / p.deposit * 100 > PROFILE_RISK_PCT;
+}
+
+// История PRO-сигналов по порядку сделок - грузится один раз, при открытии
+// шторки. Лист тот же, что у статистики, и обычно уже лежит в кеше.
+function profileHistLoad_() {
+  if (PROFILE.histP) return PROFILE.histP;
+  PROFILE.histP = (async () => {
+    try {
+      const rows = await fetchAllSignals();
+      const sigs = (rows || []).slice(1).map(devParseSignal)
+        .filter(s => s && (s.res === 'WIN' || s.res === 'LOSE'));
+      const m = s => (s.hour ?? 0) * 60 + (s.minute ?? 0);
+      sigs.sort((a, b) => a.dk < b.dk ? -1 : a.dk > b.dk ? 1 : m(a) - m(b));
+      PROFILE.hist = sigs.map(s => ({ pair: s.pair, win: s.res === 'WIN' }));
+    } catch (e) {
+      PROFILE.hist = [];
+    }
+    return PROFILE.hist;
+  })();
+  return PROFILE.histP;
+}
+
+// Худшая просадка по сделкам при ставке s - с теми же потолками пар, что и в
+// расчётах статистики. null - история ещё не загружена или пуста.
+function profileHistDd_(s) {
+  const h = PROFILE.hist;
+  if (!h || !h.length) return null;
+  let cum = 0, peak = 0, dd = 0;
+  for (const x of h) {
+    const st = Math.min(s, PRO_STAKE_MAX[x.pair] || PRO_STAKE_MAX.ETH);
+    cum += x.win ? st * WR_PAYOUT : -st;
+    if (cum > peak) peak = cum;
+    if (peak - cum > dd) dd = peak - cum;
+  }
+  return dd;
+}
+
+// Подсказка под полями: доля депозита на сделку, потолок по парам и, если
+// ставка выше 4%, предупреждение о риске.
 function profileValidateCustom_() {
   const { dep, st } = profileReadCustom_();
   const hint = document.getElementById('pfHint');
+  const risk = document.getElementById('pfRisk');
   const btn = document.getElementById('pfSave');
   const ok = isFinite(dep) && dep >= 10 && isFinite(st) && st >= 1 && st <= dep;
   if (btn) btn.disabled = !ok;
+  if (risk) risk.hidden = true;
   if (!hint) return;
   hint.className = 'pf-hint';
   if (!ok) { hint.textContent = (isFinite(dep) && isFinite(st) && st > dep) ? t('pf.err.big') : ''; return; }
@@ -376,7 +433,21 @@ function profileValidateCustom_() {
   let txt = t('pf.pct').replace('{p}', pct < 10 ? pct.toFixed(1) : Math.round(pct));
   if (st > PRO_STAKE_MAX.ETH) txt += ' ' + t('pf.cap');
   hint.textContent = txt;
-  if (pct > 5) hint.classList.add('warn');
+  if (pct <= PROFILE_RISK_PCT || !risk) return;
+
+  hint.classList.add('warn');
+  let msg = t('pf.risk.high')
+    .replace('{lo}', profileFmtNum_(dep * PROFILE_SAFE_PCT[0] / 100))
+    .replace('{hi}', profileFmtNum_(dep * PROFILE_SAFE_PCT[1] / 100));
+  const dd = profileHistDd_(st);
+  if (dd != null && dd > 0) {
+    const x = dd / dep * 100;
+    msg += ' ' + (x >= 100 ? t('pf.risk.histAll') : t('pf.risk.hist'))
+      .replace('{dd}', profileFmtNum_(dd))
+      .replace('{x}', Math.round(x));
+  }
+  risk.textContent = msg;
+  risk.hidden = false;
 }
 
 function profileSaveCustom() {

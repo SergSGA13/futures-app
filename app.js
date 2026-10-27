@@ -262,6 +262,8 @@ function profileApply_() {
   if (document.readyState === 'loading') return;
   profileRenderChips_();
   profileRenderNotes_();
+  calcSyncProfile_();
+  if (document.getElementById('calcResults')?.innerHTML.trim()) runCalculator();
   if (currentPage === 'statistics') renderAnalTables();
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
@@ -6005,18 +6007,17 @@ function initCalculator() {
   const btcSel = document.getElementById('calcBtcBet');
   if (!ethSel || !btcSel) return;
 
-  for (let v = 5; v <= 125; v += 5) {
+  for (let v = 5; v <= PRO_STAKE_MAX.ETH; v += 5) {
     const o = document.createElement('option');
     o.value = o.textContent = v;
-    if (v === 125) o.selected = true;
     ethSel.appendChild(o);
   }
-  for (let v = 5; v <= 250; v += 5) {
+  for (let v = 5; v <= PRO_STAKE_MAX.BTC; v += 5) {
     const o = document.createElement('option');
     o.value = o.textContent = v;
-    if (v === 250) o.selected = true;
     btcSel.appendChild(o);
   }
+  calcSyncProfile_();
 
   const hoursGrid = document.getElementById('calcHoursGrid');
   let hoursHtml = '';
@@ -6335,8 +6336,8 @@ async function runCalculator() {
   results.innerHTML = '';
 
   try {
-    const ethBet = parseInt(document.getElementById('calcEthBet').value) || 125;
-    const btcBet = parseInt(document.getElementById('calcBtcBet').value) || 250;
+    const ethBet = parseInt(document.getElementById('calcEthBet').value) || proStake('ETH');
+    const btcBet = parseInt(document.getElementById('calcBtcBet').value) || proStake('BTC');
 
     const activeH = {};
     for (let h = 0; h < 24; h++) {
@@ -6435,8 +6436,44 @@ async function runCalculator() {
     console.error('Calculator error:', e);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg> ${t('calc.run')}`;
+    // Возвращаем и метку перевода: без неё после первого расчёта кнопка
+    // переставала переводиться при смене языка.
+    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><polygon points="5 3 19 12 5 21 5 3"/></svg> <span data-i18n="calc.run">${t('calc.run')}</span>`;
   }
+}
+
+// ===== Калькулятор и профиль =====
+// Ставки по умолчанию - из профиля, с теми же потолками пар, что и в
+// статистике. Поля остаются редактируемыми: калькулятор - для «а что если»,
+// профиль от этого не меняется. Сменили профиль - поля возвращаются к его
+// ставкам, а уже показанный результат пересчитывается.
+function calcSetBet_(sel, v) {
+  if (!sel) return;
+  v = Math.round(v);
+  // Ставки профиля не обязаны быть кратны 5 (свой вариант - например, 17):
+  // такую добавляем отдельным пунктом на её место в списке.
+  if (![...sel.options].some(o => +o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = opt.textContent = v;
+    opt.dataset.profile = '1';
+    sel.insertBefore(opt, [...sel.options].find(o => +o.value > v) || null);
+  }
+  sel.value = String(v);
+}
+
+function calcSyncProfile_() {
+  for (const [id, pair] of [['calcEthBet', 'ETH'], ['calcBtcBet', 'BTC']]) {
+    const sel = document.getElementById(id);
+    if (!sel || !sel.options.length) continue;
+    sel.querySelectorAll('option[data-profile]').forEach(o => o.remove());
+    calcSetBet_(sel, proStake(pair));
+  }
+}
+
+function calcDepLine_(ppm, ppy) {
+  const dep = profileDeposit();
+  const f = v => { const p = v / dep * 100; return (p >= 0 ? '+' : '') + (Math.abs(p) < 10 ? p.toFixed(1) : Math.round(p)) + '%'; };
+  return t('calc.res.dep').replace('{dep}', profileFmtNum_(dep)).replace('{m}', f(ppm)).replace('{y}', f(ppy));
 }
 
 function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats, hourlyStats) {
@@ -6485,6 +6522,7 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       <div class="calc-res-item"><span>${t('calc.res.hours')}</span><b>${activeHCount}</b></div>
       <div class="calc-res-item"><span>Break-even WR</span><b style="color:#FFD166">55.6%</b></div>
     </div>
+    <div class="calc-dep-line">${calcDepLine_(ppm, ppy)}</div>
     <div class="calc-pair-row">
       <div class="calc-pair-card">
         <div class="calc-pair-hdr">ETH <span class="calc-pair-bet">${ethBet} USDT</span></div>

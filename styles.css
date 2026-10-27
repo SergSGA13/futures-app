@@ -3540,3 +3540,11 @@ html::after {
   box-shadow: 0 0 12px rgba(255, 209, 102, 0.14);
 }
 .pf-chip.risky svg:first-child { color: var(--yellow); }
+
+/* Калькулятор: откуда ставки и результат в процентах от депозита профиля */
+.calc-bet-note { margin: 8px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.calc-dep-line {
+  margin: 10px 0 0; padding: 8px 11px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; color: var(--text);
+  background: rgba(34, 232, 255, 0.05); border: 1px solid rgba(34, 232, 255, 0.18);
+}

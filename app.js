@@ -293,7 +293,9 @@ function profileRenderChips_() {
 // перевода {dep} и {stake}. Зовётся из applyTranslations и при смене профиля.
 function profileRenderNotes_() {
   document.querySelectorAll('[data-pf-note]').forEach(el => {
-    el.textContent = t(el.getAttribute('data-pf-note'))
+    const key = STATS_CMP.on && el.dataset.pfNoteCmp ? el.dataset.pfNoteCmp : el.getAttribute('data-pf-note');
+    el.textContent = t(key)
+      .replace('{p}', calcFmtPct_(calcProfilePct_()))
       .replace('{dep}', profileFmtNum_(profileDeposit()))
       .replace('{stakeMexc}', profileStakeLabelMexc_())
       .replace('{stake}', profileStakeLabel_());
@@ -4224,7 +4226,7 @@ function statsRenderSlice_(cfg, rows, sigs, opts) {
 
   try {
     renderDrawdownInto({
-      sigs, key: cfg.ddKey, pnlFn: o.pnlFn || null, deposit: profileDeposit(),
+      sigs, key: cfg.ddKey, pnlFn: o.pnlFn || null, deposit: profileDeposit(), relPeak: !!o.relPeak,
       canvasId: cfg.ddCanvas, noteId: cfg.ddNote, emptyNote: t('dd.none'),
     });
     const card = document.getElementById(cfg.ddCard);
@@ -4326,7 +4328,7 @@ function allpRowsFor_(rows, code) {
   return out;
 }
 
-function allpRenderSummary_(sigs, code) {
+function allpRenderSummary_(sigs, code, pnlFn) {
   const el = document.getElementById('allSummary');
   if (!el) return;
   let w = 0, l = 0, draw = 0, first = null, last = null;
@@ -4338,7 +4340,8 @@ function allpRenderSummary_(sigs, code) {
   const dec = w + l;
   const wr = dec ? (w / dec * 100).toFixed(1) : '-';
   // Деньги - по профилю: ставка своя на каждую пару, выплата 0.8, ничья - ноль.
-  const pnl = Math.round(sigs.reduce((a, x) => a + proPnlSig(x), 0));
+  // При сложном проценте pnlFn - суммы из его расчёта.
+  const pnl = Math.round(sigs.reduce((a, x) => a + (pnlFn || proPnlSig)(x), 0));
   const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
   const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
   el.innerHTML =
@@ -4360,7 +4363,9 @@ async function renderAllPeriods() {
     const rows = await allpFetchRows_();
     if (!rows) return;
     const slice = allpRowsFor_(rows, ALLP_STATE.code);
-    const sigs = slice.slice(1).map(devParseSignal).filter(Boolean);
+    const parsed = slice.slice(1).map(r => [r, devParseSignal(r)]).filter(x => x[1]);
+    const sigs = parsed.map(x => x[1]);
+    const money = statsMoneyPro_(parsed, proPnlSig, proPnlRow);
 
     statsDestroySlice_(ALLP_SLICE);
     allpShowEmpty_(!sigs.length);
@@ -4369,9 +4374,9 @@ async function renderAllPeriods() {
       if (el) el.innerHTML = '';
       return;
     }
-    allpRenderSummary_(sigs, ALLP_STATE.code);
+    allpRenderSummary_(sigs, ALLP_STATE.code, money.pnlFn);
     // Просадку передаём явно: её умолчание (плоские 125) делит DEV.
-    statsRenderSlice_(ALLP_SLICE, slice, sigs, { pnlFn: proPnlSig });
+    statsRenderSlice_(ALLP_SLICE, slice, sigs, money);
   } catch (e) {
     console.log('ALL Periods error:', e);
   }
@@ -4475,7 +4480,7 @@ function eraPnl_(sigs) {
   return pnl;
 }
 
-function eraRenderSummary_(sigs, cache) {
+function eraRenderSummary_(sigs, cache, pnlFn) {
   const el = document.getElementById('eraSummary');
   if (!el) return;
   let w = 0, l = 0, draw = 0, first = null, last = null;
@@ -4486,7 +4491,7 @@ function eraRenderSummary_(sigs, cache) {
   }
   const dec = w + l;
   const wr = dec ? (w / dec * 100).toFixed(1) : '-';
-  const pnl = eraPnl_(sigs);
+  const pnl = pnlFn ? sigs.reduce((a, x) => a + pnlFn(x), 0) : eraPnl_(sigs);
   const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
   // Срез идёт месяцами, поэтому в диапазоне нужен год - devFmtDk даёт только дд.мм.
   const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
@@ -4495,7 +4500,9 @@ function eraRenderSummary_(sigs, cache) {
   const comp = `10m <b>${cache.pro.length}</b> + ALT10 <b class="era-alt-num">${cache.alt.length}</b>`;
   // PNL без указания ставок читается как факт, хотя это расчёт по выбранной
   // модели - показываем её рядом с числом.
-  const st = `${t('era.stake')} ETH <b>${eraStakeOf_('ETH')}</b> / BTC <b>${eraStakeOf_('BTC')}</b>`;
+  const st = STATS_CMP.on
+    ? `${t('era.stake')} <b>${calcFmtPct_(calcProfilePct_())}</b> ${t('stats.cmp.ofdep')}`
+    : `${t('era.stake')} ETH <b>${eraStakeOf_('ETH')}</b> / BTC <b>${eraStakeOf_('BTC')}</b>`;
   // Новичку - диапазон, число сигналов, WR и PNL; остальное в «Про».
   el.innerHTML =
     `${t('era.range')}: <b>${fmt(first)} — ${fmt(last)}</b><span class="pro-only"> · ${t('era.src')}: ${comp}</span><br>` +
@@ -4532,7 +4539,9 @@ async function renderEraStats() {
     const cache = await eraFetchRows_();
     if (!cache) return;
     const eraRows = eraRowsFor_(cache, eraSrc_());
-    const sigs = eraRows.slice(1).map(devParseSignal).filter(Boolean);
+    const parsed = eraRows.slice(1).map(r => [r, devParseSignal(r)]).filter(x => x[1]);
+    const sigs = parsed.map(x => x[1]);
+    const money = statsMoneyPro_(parsed, eraPnlSig_, eraPnlRow_);
 
     // Смена источника или ставки обязана пересобрать графики, а они защищены
     // guard-ами «уже построен» - поэтому старые экземпляры сносим явно.
@@ -4544,8 +4553,8 @@ async function renderEraStats() {
       return;
     }
 
-    eraRenderSummary_(sigs, cache);
-    statsRenderSlice_(ERA_SLICE, eraRows, sigs, { pnlOfRow: eraPnlRow_, pnlFn: eraPnlSig_ });
+    eraRenderSummary_(sigs, cache, money.pnlFn);
+    statsRenderSlice_(ERA_SLICE, eraRows, sigs, money);
     // Дневные стопы считаются по выбранной на странице ставке ETH - она же
     // задаёт шаг порогов, поэтому таблица меняется вместе с селекторами.
     try {
@@ -4687,7 +4696,10 @@ function devBuildQuarterHeatmapSection(sigs) {
 // ===== ПРОСАДКА (DRAWDOWN): насколько глубоко проваливалась кривая PNL от локального пика =====
 // deposit - от чего считать проценты. DEV зовёт без него и остаётся на
 // 5000; пользовательские разделы передают депозит из профиля.
-function devComputeDrawdown(sigs, pnlFn, deposit) {
+// relPeak: процент от депозита на пике (D + peak), а не от стартового D. Так
+// считается просадка при сложном проценте: депозит вырос, и тот же минус в
+// USDT - уже меньшая доля.
+function devComputeDrawdown(sigs, pnlFn, deposit, relPeak) {
   const pnlOf = pnlFn || pnlSigFlat;
   const D = deposit || 5000;
   const dailyMap = {};
@@ -4699,17 +4711,18 @@ function devComputeDrawdown(sigs, pnlFn, deposit) {
   const sortedDays = Object.keys(dailyMap).sort();
   if (!sortedDays.length) return null;
 
-  let cum = 0, peak = 0, peakDk = null, maxDd = 0, maxDdStart = null, maxDdEnd = null;
+  let cum = 0, peak = 0, peakDk = null, maxDd = 0, maxDdPct = 0, maxDdStart = null, maxDdEnd = null;
   const labels = [], ddData = [];
   for (const dk of sortedDays) {
     cum += dailyMap[dk].pnl;
     if (cum > peak) { peak = cum; peakDk = dk; }
     const dd = cum - peak; // <= 0
-    if (dd < maxDd) { maxDd = dd; maxDdStart = peakDk; maxDdEnd = dk; }
+    const pct = dd / (relPeak ? D + peak : D) * 100;
+    if (pct < maxDdPct) { maxDdPct = pct; maxDd = dd; maxDdStart = peakDk; maxDdEnd = dk; }
     labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
-    ddData.push(Math.round((dd / D) * 100));
+    ddData.push(Math.round(pct));
   }
-  return { labels, ddData, maxDdUsdt: maxDd, maxDdPct: Math.round((maxDd / D) * 100), maxDdStart, maxDdEnd };
+  return { labels, ddData, maxDdUsdt: maxDd, maxDdPct: Math.round(maxDdPct), maxDdStart, maxDdEnd };
 }
 
 function devRenderDrawdownChart(sigs) {
@@ -4722,15 +4735,15 @@ function devRenderDrawdownChart(sigs) {
 
 // Общий рендер просадки: DEV-раздел за 30 дней и пользовательский
 // ALL Periods считают одним кодом, различаются только холстом и текстом.
-function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote, pnlFn, deposit }) {
+function renderDrawdownInto({ sigs, key, canvasId, noteId, emptyNote, pnlFn, deposit, relPeak }) {
   if (pnlChartInstances[key]) return;
-  const dd = devComputeDrawdown(sigs, pnlFn, deposit);
+  const dd = devComputeDrawdown(sigs, pnlFn, deposit, relPeak);
   if (!dd) return;
 
   const noteEl = document.getElementById(noteId);
   if (noteEl) {
     noteEl.innerHTML = dd.maxDdPct < 0
-      ? `${t('dd.max')}: <b style="color:#FF5272">${dd.maxDdPct}%</b> ${t('dd.ofdep')} ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
+      ? `${t('dd.max')}: <b style="color:#FF5272">${dd.maxDdPct}%</b> ${t(relPeak ? 'dd.ofpeak' : 'dd.ofdep')} ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
       : emptyNote;
   }
 
@@ -6700,11 +6713,15 @@ function calcCmpInit_() {
   calcCmpRender_();
 }
 
+// Ставка при сложном проценте: процент от баланса, целыми USDT, не выше
+// лимита пары. Одно правило на калькулятор и ветки.
+function cmpStake_(bal, pct, cap) { return Math.min(Math.floor(bal * pct / 100), cap); }
+
 // trades: [{ts, day, isETH, win}] - уже отфильтрованные калькулятором.
 function calcCompound_(trades, dep0, pct) {
   const list = trades.slice().sort((a, b) => a.ts - b.ts);
   const cap = isETH => isETH ? PRO_STAKE_MAX.ETH : PRO_STAKE_MAX.BTC;
-  const stakeAt = (bal, isETH) => Math.min(Math.floor(bal * pct / 100), cap(isETH));
+  const stakeAt = (bal, isETH) => cmpStake_(bal, pct, cap(isETH));
   const pnl = (st, win) => win ? st * 0.8 : -st;
   // Без реинвестирования - стартовая ставка на весь период.
   const fixE = stakeAt(dep0, true), fixB = stakeAt(dep0, false);
@@ -6830,6 +6847,58 @@ function calcCmpHtml_(c, totSig, totalRaw, totWR) {
       <div class="pnl-chart-wrap" style="height:180px"><canvas id="calcEquityChart"></canvas></div>
     </div>` : ''}
   `;
+}
+
+// ===== СЛОЖНЫЙ ПРОЦЕНТ В ВЕТКАХ =====
+// MEXC, «Новая система» и ALL Periods - та же модель, что в калькуляторе:
+// ставка - процент от депозита на начало дня, не выше лимита пары. Процент
+// своего выбора не имеет - он из профиля (плашка вверху): 30 от 1 000 - 3%.
+// Меняются кривая PNL, итог и просадка. Таблицы по парам, часам, дням и
+// остальные разрезы остаются на фиксированной ставке: сложный процент живёт
+// во времени, по корзинам он не делится. Переключатель один на три ветки.
+const STATS_CMP = { on: false };
+
+// Деньги каждого сигнала при сложном проценте. items: [{s, keys}] - по
+// любому из keys (строка листа, разобранный сигнал) потом берём сумму.
+function statsCmpMap_(items, capOf, payoutOf) {
+  const pct = calcProfilePct_();
+  const sorted = items.slice().sort((a, b) => mexcSignalTs_(a.s) - mexcSignalTs_(b.s));
+  const map = new Map();
+  let bal = profileDeposit(), day = null, dayBal = bal;
+  for (const { s, keys } of sorted) {
+    if (s.dk !== day) { day = s.dk; dayBal = bal; }
+    const st = cmpStake_(dayBal, pct, capOf(s));
+    const v = st < 1 ? 0 : s.res === 'WIN' ? st * payoutOf(s) : s.res === 'LOSE' ? -st : 0;
+    bal += v;
+    for (const k of keys) map.set(k, v);
+  }
+  return map;
+}
+
+// Деньги для разрезов PRO-ветки (ALL Periods, «Новая система»): свои
+// фиксированные функции или сложный процент. parsed - [строка листа, сигнал].
+function statsMoneyPro_(parsed, fixedSig, fixedRow) {
+  if (!STATS_CMP.on) return { pnlFn: fixedSig, pnlOfRow: fixedRow, relPeak: false };
+  const map = statsCmpMap_(parsed.map(([r, s]) => ({ s, keys: [r, s] })),
+    s => PRO_STAKE_MAX[s.pair] || PRO_STAKE_MAX.ETH, () => 0.8);
+  const get = x => map.get(x) || 0;
+  return { pnlFn: get, pnlOfRow: get, relPeak: true };
+}
+
+function statsCmpSync_() {
+  document.querySelectorAll('.stats-cmp-seg button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.scmp === 'on') === STATS_CMP.on));
+  profileRenderNotes_();
+}
+
+function statsCmpSet(on) {
+  if (on === STATS_CMP.on) return;
+  STATS_CMP.on = on;
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  statsCmpSync_();
+  if (currentPage === 'stats-all') renderAllPeriods();
+  if (currentPage === 'stats-era') renderEraStats();
+  if (currentPage === 'stats-mexc') renderMexcStats();
 }
 
 function calcDepLine_(ppm, ppy) {
@@ -7389,15 +7458,15 @@ function initMexcRiskUI() {
   }
 }
 
-function mexcRenderDrawdownChart_(sigs) {
+function mexcRenderDrawdownChart_(sigs, pnlFn, relPeak) {
   if (typeof Chart === 'undefined') return false;
-  const dd = devComputeDrawdown(sigs, mexcPnlSig_, profileDeposit());
+  const dd = devComputeDrawdown(sigs, pnlFn || mexcPnlSig_, profileDeposit(), relPeak);
   if (!dd) return false;
 
   const noteEl = document.getElementById('mexcDrawdownNote');
   if (noteEl) {
     noteEl.innerHTML = dd.maxDdPct < 0
-      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> от депозита ${profileFmtNum_(profileDeposit())} USDT, ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
+      ? `Макс. просадка: <b style="color:#FF5272">${dd.maxDdPct}%</b> ${relPeak ? 'от пика депозита' : 'от депозита ' + profileFmtNum_(profileDeposit()) + ' USDT'}, ${devFmtDk(dd.maxDdStart)} — ${devFmtDk(dd.maxDdEnd)}.`
       : 'Просадок не было - кривая PNL ни разу не опускалась ниже локального пика.';
   }
 
@@ -7602,13 +7671,14 @@ function initMexcGroupUI() {
 
 // Накопленный PNL ветки по ставке профиля (mexcPnlSig_ - учитывает и SPCX, и
 // потолки пар, в отличие от devPnlSig(s,'MEXC')). Проценты - от депозита профиля.
-function mexcRenderPnlChart_(sigs) {
+function mexcRenderPnlChart_(sigs, pnlFn) {
   if (typeof Chart === 'undefined') return false;
   const ctx = document.getElementById('mexcPnlChart')?.getContext('2d');
   if (!ctx) return false;
 
+  const pnlOf = pnlFn || mexcPnlSig_;
   const daily = {};
-  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + mexcPnlSig_(s);
+  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + pnlOf(s);
   const days = Object.keys(daily).sort();
   if (days.length < 2) return false;
 
@@ -7639,11 +7709,12 @@ function mexcRenderPnlChart_(sigs) {
   return true;
 }
 
-function mexcSummaryHtml_(sigs, src, slotExcluded) {
+function mexcSummaryHtml_(sigs, src, slotExcluded, pnlFn) {
+  const pnlOf = pnlFn || mexcPnlSig_;
   let w = 0, l = 0, pnl = 0;
   for (const s of sigs) {
     if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
-    pnl += mexcPnlSig_(s);
+    pnl += pnlOf(s);
   }
   const dec = w + l;
   const wr = dec ? (w / dec * 100) : null;
@@ -7705,6 +7776,14 @@ async function renderMexcStats() {
       slotExcluded = before - sigs.length;
     }
     if (flt.src && flt.src !== 'ALL') sigs = sigs.filter(s => s.src === flt.src);
+    // Сложный процент - по уже отобранным сделкам. Групповой график и карта
+    // риска остаются на фиксированной ставке: они про размер ставки.
+    let cmpFn = null;
+    if (STATS_CMP.on) {
+      const map = statsCmpMap_(sigs.map(s => ({ s, keys: [s] })),
+        s => mexcStakeMax_(mexcIs30_(s) ? '30m' : '10m', s.pair), mexcPayoutOf_);
+      cmpFn = s => map.get(s) || 0;
+    }
 
     if (!sigs.length) {
       for (const c of ['mexcPnlCard', 'mexcGroupCard', 'mexcDrawdownCard', 'mexcWrDailyCard', 'mexcPairsCard', 'mexcDowCard', 'mexcHourCard', 'mexcTFCard']) mexcShow_(c, false);
@@ -7716,7 +7795,7 @@ async function renderMexcStats() {
 
     // Итоговая строка ветки + подсветка по WR (как в «Ленте сигналов»)
     if (sumEl) {
-      const s = mexcSummaryHtml_(sigs, flt.src, slotExcluded);
+      const s = mexcSummaryHtml_(sigs, flt.src, slotExcluded, cmpFn);
       sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= s.be + 6 ? ' sig-wr-good' : s.wr < s.be ? ' sig-wr-bad' : '');
       sumEl.innerHTML = s.html;
     }
@@ -7725,7 +7804,7 @@ async function renderMexcStats() {
     // недоступен) или упал на конкретных данных, остальная страница обязана
     // отрисоваться - таблицы считаются из тех же сигналов и от Chart.js не зависят.
     try {
-      mexcShow_('mexcPnlCard', mexcRenderPnlChart_(sigs));
+      mexcShow_('mexcPnlCard', mexcRenderPnlChart_(sigs, cmpFn));
       mexcShow_('mexcGroupCard', mexcRenderGroupChart_(sigs));
     } catch (e) {
       console.log('MEXC pnl chart error:', e);
@@ -7733,7 +7812,7 @@ async function renderMexcStats() {
       mexcShow_('mexcGroupCard', false);
     }
     try {
-      mexcShow_('mexcDrawdownCard', mexcRenderDrawdownChart_(sigs));
+      mexcShow_('mexcDrawdownCard', mexcRenderDrawdownChart_(sigs, cmpFn, !!cmpFn));
       mexcShow_('mexcRiskCard', mexcRenderRisk_(sigs));
     } catch (e) {
       console.log('MEXC drawdown chart error:', e);

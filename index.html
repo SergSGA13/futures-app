@@ -840,13 +840,23 @@
             </div>
           </div>
           <p class="mexc-slot-note pro-only" data-i18n="mexc.slot.note">Учитывает лимит биржи - не больше 5 ставок одновременно (10м и 30м делят один пул). Сигналы, которые не получили бы слот, исключаются из статистики.</p>
+          <!-- Фиксированная ставка или сложный процент (процент - из профиля).
+               Меняет кривую PNL, итог и просадку; таблицы - на фиксированной. -->
+          <div class="sig-head2 stats-cmp-row">
+            <span class="mexc-src-lbl" data-i18n="stats.cmp.label">Ставка</span>
+            <span class="sig-div"></span>
+            <div class="fs-seg compact stats-cmp-seg">
+              <button type="button" class="active" data-scmp="off" onclick="statsCmpSet(false)" data-i18n="stats.cmp.off">Фиксированная</button>
+              <button type="button" data-scmp="on" onclick="statsCmpSet(true)" data-i18n="stats.cmp.on">Сложный %</button>
+            </div>
+          </div>
           <div class="sig-chart-stat" id="mexcSummary"></div>
         </div>
 
         <div class="pnl-chart-card" id="mexcPnlCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F7931A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="mexc.pnl">Накопленный PNL - MEXC</span></div>
           <div class="pnl-chart-wrap"><canvas id="mexcPnlChart"></canvas></div>
-          <p class="pnl-chart-footnote" data-pf-note="mexc.pnl.note"></p>
+          <p class="pnl-chart-footnote" data-pf-note="mexc.pnl.note" data-pf-note-cmp="mexc.pnl.cmp"></p>
         </div>
 
         <!-- Скользящий PNL по группам: крипта против акций. Накопленная кривая
@@ -1234,6 +1244,17 @@
           </div>
         </div>
 
+        <!-- Фиксированная ставка или сложный процент (процент - из профиля).
+             Меняет кривую PNL, итог и просадку; таблицы - на фиксированной. -->
+        <div class="sig-head2 stats-cmp-row">
+          <span class="mexc-src-lbl" data-i18n="stats.cmp.label">Ставка</span>
+          <span class="sig-div"></span>
+          <div class="fs-seg compact stats-cmp-seg">
+            <button type="button" class="active" data-scmp="off" onclick="statsCmpSet(false)" data-i18n="stats.cmp.off">Фиксированная</button>
+            <button type="button" data-scmp="on" onclick="statsCmpSet(true)" data-i18n="stats.cmp.on">Сложный %</button>
+          </div>
+        </div>
+
         <div class="dev-src-summary allp-summary" id="allSummary"></div>
         <div class="dev-urgent-empty" id="allEmpty" style="display:none" data-i18n="allp.empty">За выбранный период сигналов нет.</div>
 
@@ -1242,7 +1263,7 @@
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Total PNL</div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartAll"></canvas></div>
-          <p class="pnl-chart-footnote" data-pf-note="allp.pnl.note">Расчёт на депозите 5 000 USDT, ставка максимальная.</p>
+          <p class="pnl-chart-footnote" data-pf-note="allp.pnl.note" data-pf-note-cmp="allp.pnl.cmp">Расчёт на депозите 5 000 USDT, ставка максимальная.</p>
         </div>
 
         <div class="pnl-chart-card pro-only" id="allMonthCard">
@@ -1328,6 +1349,17 @@
         <!-- Ставка - из профиля пользователя (плашка под заголовком). -->
         <p class="mexc-slot-note pro-only" data-i18n="era.stake.note">Ставка берётся из вашего профиля - плашка вверху страницы. Выплата 0.8, ничья считается нулём. Ставка меняет PNL и просадку, но не винрейт: безубыток остаётся 55.6% при любой сумме.</p>
 
+        <!-- Фиксированная ставка или сложный процент (процент - из профиля).
+             Меняет кривую PNL, итог и просадку; таблицы - на фиксированной. -->
+        <div class="sig-head2 stats-cmp-row">
+          <span class="mexc-src-lbl" data-i18n="stats.cmp.label">Ставка</span>
+          <span class="sig-div"></span>
+          <div class="fs-seg compact stats-cmp-seg">
+            <button type="button" class="active" data-scmp="off" onclick="statsCmpSet(false)" data-i18n="stats.cmp.off">Фиксированная</button>
+            <button type="button" data-scmp="on" onclick="statsCmpSet(true)" data-i18n="stats.cmp.on">Сложный %</button>
+          </div>
+        </div>
+
         <div class="dev-src-summary era-summary" id="eraSummary"></div>
         <div class="dev-urgent-empty" id="eraEmpty" style="display:none" data-i18n="era.empty">В этом источнике нет сигналов за выбранный период.</div>
 
@@ -1336,7 +1368,7 @@
         <div class="pnl-chart-card">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="era.pnl">Total PNL - новая система</span></div>
           <div class="pnl-chart-wrap"><canvas id="pnlChartEra"></canvas></div>
-          <p class="pnl-chart-footnote" data-pf-note="era.pnl.note"></p>
+          <p class="pnl-chart-footnote" data-pf-note="era.pnl.note" data-pf-note-cmp="era.pnl.cmp"></p>
         </div>
 
         <div class="pnl-chart-card pro-only" id="eraMonthCard">

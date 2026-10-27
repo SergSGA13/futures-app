@@ -63,6 +63,8 @@ function applyTranslations() {
   const headerTitle = document.getElementById('headerTitle');
   if (headerTitle) headerTitle.textContent = t(pageTitleKeys[currentPage] || 'title.fp');
   fitHeaderTitle_();
+  profileRenderChips_();
+  profileRenderNotes_();
   devRenderUpdatedAt();
 }
 
@@ -108,6 +110,289 @@ function setLanguage(lang) {
   // applyTranslations экран доступа не переведёт - нужен повторный запрос.
   if (currentPage === 'channels') renderChannels(true);
 }
+
+// ===== ПРОФИЛЬ: ДЕПОЗИТ И СТАВКА =====
+// Перед первым входом в «Статистику» спрашиваем депозит и ставку, и денежные
+// разделы считаются под них: PNL, проценты, просадка, итоги.
+//
+// Ставка одна на все пары, но не выше боевой ставки пары - больше на бирже не
+// поставить. «Максимальная» (stake: null) - это ровно боевые ставки.
+// DEV-раздел профиль не слушает: там анализ системы на реальных ставках.
+//
+// Хранение - облако Telegram (CloudStorage): привязано к аккаунту и видно с
+// любого устройства. Копия в localStorage - чтобы не ждать сети при запуске;
+// в её ключе id пользователя, потому что на одном телефоне бывает два аккаунта.
+const PROFILE_KEY = 'fp_profile_v1';
+const PROFILE_PRESETS = {
+  p500:  { deposit: 500,  stake: 15 },
+  p1000: { deposit: 1000, stake: 30 },
+  pmax:  { deposit: 5000, stake: null },
+};
+const PROFILE_DEFAULT = { preset: 'pmax', deposit: 5000, stake: null };
+// Боевые ставки PRO-ветки - потолок для ставки из профиля.
+const PRO_STAKE_MAX = { ETH: 125, BTC: 250 };
+const PROFILE = { data: null, ready: null, asked: false };
+
+function profileLocalKey_() {
+  const uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+  return PROFILE_KEY + (uid ? ':' + uid : '');
+}
+function profileValid_(p) {
+  if (!p || typeof p !== 'object') return false;
+  const d = +p.deposit;
+  if (!isFinite(d) || d <= 0) return false;
+  if (p.stake !== null && !(isFinite(+p.stake) && +p.stake > 0)) return false;
+  return true;
+}
+function profileCloud_() {
+  return (tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9')) ? tg.CloudStorage : null;
+}
+
+function profileGet() { return PROFILE.data || PROFILE_DEFAULT; }
+function profileDeposit() { return +profileGet().deposit; }
+// Ставка на пару: своя, но не выше боевой для этой пары.
+function profileStake(maxForPair) {
+  const s = profileGet().stake;
+  return s == null ? maxForPair : Math.min(+s, maxForPair);
+}
+// Для итогов без разбивки по парам (все пары одной строкой). Точно такие
+// итоги не посчитать - берём ставку ETH, как прежняя плоская модель.
+function profileFlatStake() { return profileStake(PRO_STAKE_MAX.ETH); }
+
+// Деньги сигнала PRO-ветки по профилю. Пары вне ETH/BTC считаем по ETH.
+function proStake(pair) { return profileStake(PRO_STAKE_MAX[pair] || PRO_STAKE_MAX.ETH); }
+function proPnlOutcome_(pair, res) {
+  const st = proStake(pair);
+  return res === 'WIN' ? st * WR_PAYOUT : res === 'LOSE' ? -st : 0;
+}
+function proPnlSig(s) { return proPnlOutcome_(s.pair, s.res); }
+function proPnlRow(r) { return proPnlOutcome_(sigPairBase(r[1]), (r[COL_RESULT] || '').trim()); }
+
+function profileFmtNum_(n) {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+// Как назвать ставку словами: «15 USDT», «максимальная (ETH 125 / BTC 250)»,
+// «200 USDT (ETH до 125)» - если ставка упирается в потолок одной из пар.
+function profileStakeLabel_() {
+  const s = profileGet().stake;
+  if (s == null || +s >= PRO_STAKE_MAX.BTC) return t('pf.stake.max');
+  if (+s > PRO_STAKE_MAX.ETH) return t('pf.stake.capped').replace('{s}', profileFmtNum_(s));
+  return profileFmtNum_(s) + ' USDT';
+}
+// Короткая форма для плашки: «ставка 30 USDT» или «макс. ставка».
+function profileChipStake_() {
+  const s = profileGet().stake;
+  if (s == null || +s >= PRO_STAKE_MAX.BTC) return t('pf.stake.maxShort');
+  return t('pf.stake.word') + ' ' + profileFmtNum_(s) + ' USDT';
+}
+function profileDepLabel_() {
+  const p = profileGet();
+  return profileFmtNum_(p.deposit) + (p.preset === 'pmax' ? '+' : '') + ' USDT';
+}
+
+// Чтение: локальная копия сразу, облако - следом. Облако выигрывает, если там
+// запись свежее: выбор, сделанный на другом устройстве, должен доехать сюда.
+function profileLoad_() {
+  try {
+    const raw = localStorage.getItem(profileLocalKey_());
+    if (raw) { const p = JSON.parse(raw); if (profileValid_(p)) PROFILE.data = p; }
+  } catch (e) {}
+  PROFILE.ready = new Promise(resolve => {
+    const cs = profileCloud_();
+    if (!cs) { resolve(); return; }
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    setTimeout(finish, 1500);     // облако молчит - не держим пользователя
+    try {
+      cs.getItem(PROFILE_KEY, (err, val) => {
+        try {
+          if (!err && val) {
+            const p = JSON.parse(val);
+            const cur = PROFILE.data;
+            if (profileValid_(p) && (!cur || (+p.at || 0) > (+cur.at || 0))) {
+              PROFILE.data = p;
+              try { localStorage.setItem(profileLocalKey_(), val); } catch (e) {}
+              profileApply_();
+            }
+          }
+        } catch (e) {}
+        finish();
+      });
+    } catch (e) { finish(); }
+  });
+}
+
+function profileSet(p) {
+  const rec = {
+    preset: p.preset,
+    deposit: Math.round(+p.deposit),
+    stake: p.stake == null ? null : Math.round(+p.stake),
+    at: Date.now(),
+  };
+  if (!profileValid_(rec)) return;
+  PROFILE.data = rec;
+  const raw = JSON.stringify(rec);
+  try { localStorage.setItem(profileLocalKey_(), raw); } catch (e) {}
+  try { const cs = profileCloud_(); if (cs) cs.setItem(PROFILE_KEY, raw, () => {}); } catch (e) {}
+  profileApply_();
+}
+
+// После смены профиля пересчитываем то, что уже на экране. Остальные
+// страницы пересчитаются сами при входе - они строятся заново каждый раз.
+function profileApply_() {
+  if (document.readyState === 'loading') return;
+  profileRenderChips_();
+  profileRenderNotes_();
+  if (typeof ZONES_ONLY !== 'undefined' && ZONES_ONLY) return;
+  try {
+    // Главный график кешируется по ключу - иначе он не перестроится.
+    if (pnlChartInstances.home) { pnlChartInstances.home.destroy(); delete pnlChartInstances.home; }
+    loadPnlAllFromSignals('pnlChartHome', 'home', true);
+  } catch (e) {}
+  if (currentPage === 'statistics') renderAnalTables();
+  if (currentPage === 'stats-all') renderAllPeriods();
+  if (currentPage === 'stats-era') renderEraStats();
+}
+
+// Плашка «Депозит · ставка ✎» на страницах, которые считают по профилю.
+function profileRenderChips_() {
+  const txt = t('pf.chip').replace('{dep}', profileDepLabel_()).replace('{stake}', profileChipStake_());
+  document.querySelectorAll('.pf-chip-slot').forEach(slot => {
+    slot.innerHTML =
+      '<button class="pf-chip" type="button" onclick="profileOpen()" aria-label="' + chanEsc_(t('pf.edit')) + '">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2.5"/><path d="M16 13h2"/><path d="M2 10h20"/></svg>' +
+      '<span class="pf-chip-txt">' + chanEsc_(txt) + '</span>' +
+      '<svg class="pf-chip-pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>' +
+      '</button>';
+  });
+}
+
+// Подписи «расчёт на депозите…»: элемент с data-pf-note="ключ", в тексте
+// перевода {dep} и {stake}. Зовётся из applyTranslations и при смене профиля.
+function profileRenderNotes_() {
+  document.querySelectorAll('[data-pf-note]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-pf-note'))
+      .replace('{dep}', profileFmtNum_(profileDeposit()))
+      .replace('{stake}', profileStakeLabel_());
+  });
+}
+
+// ---- Шторка с вопросом ----
+// Не блокирует: страница статистики уже открыта и строится под шторкой.
+// Любой ответ запоминается, включая «пропустить», - второй раз не спросим.
+async function profileMaybeAsk_() {
+  if (PROFILE.data || PROFILE.asked) return;
+  if (PROFILE.ready) await PROFILE.ready;          // облако могло помнить выбор
+  if (PROFILE.data || PROFILE.asked) return;
+  if (!/^stat/.test(currentPage)) return;          // пока ждали, ушёл со статистики
+  PROFILE.asked = true;
+  profileOpen();
+}
+
+function profileOpen() {
+  const ov = document.getElementById('pfSheet');
+  if (!ov) return;
+  const p = profileGet();
+  ov.querySelectorAll('.pf-preset').forEach(b => {
+    b.classList.toggle('active', !!PROFILE.data && b.dataset.preset === p.preset);
+  });
+  const custom = document.getElementById('pfCustom');
+  const isCustom = !!PROFILE.data && p.preset === 'custom';
+  if (custom) custom.hidden = !isCustom;
+  document.getElementById('pfCustomToggle')?.classList.toggle('open', isCustom);
+  const dep = document.getElementById('pfDep'), st = document.getElementById('pfStake');
+  if (dep) dep.value = isCustom ? p.deposit : '';
+  if (st) st.value = isCustom ? p.stake : '';
+  profileValidateCustom_();
+  ov.hidden = false;
+  requestAnimationFrame(() => ov.classList.add('open'));
+  if (tg) tg.HapticFeedback?.impactOccurred('light');
+}
+
+function profileClose_() {
+  const ov = document.getElementById('pfSheet');
+  if (!ov || ov.hidden) return;
+  ov.classList.remove('open');
+  ov.style.removeProperty('--pf-kb');
+  if (document.activeElement && ov.contains(document.activeElement)) document.activeElement.blur();
+  setTimeout(() => { ov.hidden = true; }, 220);
+}
+
+function profilePick(preset) {
+  const pr = PROFILE_PRESETS[preset];
+  if (!pr) return;
+  profileSet({ preset, deposit: pr.deposit, stake: pr.stake });
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  profileClose_();
+}
+
+// Закрыли, не выбрав (кнопка или тап мимо шторки) - считаем на максимальной
+// ставке и запоминаем: спрашивать при каждом входе было бы навязчиво.
+function profileSkip() {
+  if (!PROFILE.data) profileSet(Object.assign({ preset: 'pmax' }, PROFILE_PRESETS.pmax));
+  profileClose_();
+}
+
+function profileToggleCustom() {
+  const box = document.getElementById('pfCustom');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  document.getElementById('pfCustomToggle')?.classList.toggle('open', !box.hidden);
+  if (!box.hidden) setTimeout(() => document.getElementById('pfDep')?.focus(), 60);
+}
+
+function profileReadCustom_() {
+  const dep = parseFloat(String(document.getElementById('pfDep')?.value || '').replace(',', '.'));
+  const st = parseFloat(String(document.getElementById('pfStake')?.value || '').replace(',', '.'));
+  return { dep, st };
+}
+
+// Подсказка под полями: доля депозита на сделку и потолок по парам.
+function profileValidateCustom_() {
+  const { dep, st } = profileReadCustom_();
+  const hint = document.getElementById('pfHint');
+  const btn = document.getElementById('pfSave');
+  const ok = isFinite(dep) && dep >= 10 && isFinite(st) && st >= 1 && st <= dep;
+  if (btn) btn.disabled = !ok;
+  if (!hint) return;
+  hint.className = 'pf-hint';
+  if (!ok) { hint.textContent = (isFinite(dep) && isFinite(st) && st > dep) ? t('pf.err.big') : ''; return; }
+  const pct = st / dep * 100;
+  let txt = t('pf.pct').replace('{p}', pct < 10 ? pct.toFixed(1) : Math.round(pct));
+  if (st > PRO_STAKE_MAX.ETH) txt += ' ' + t('pf.cap');
+  hint.textContent = txt;
+  if (pct > 5) hint.classList.add('warn');
+}
+
+function profileSaveCustom() {
+  const { dep, st } = profileReadCustom_();
+  if (!(isFinite(dep) && dep >= 10 && isFinite(st) && st >= 1 && st <= dep)) return;
+  // Совпало с готовым вариантом - помечаем им, чтобы плашка и шторка
+  // показывали понятное «500 / 15», а не «свой вариант».
+  let preset = 'custom';
+  for (const [id, pr] of Object.entries(PROFILE_PRESETS)) {
+    if (pr.stake != null && pr.deposit === Math.round(dep) && pr.stake === Math.round(st)) preset = id;
+  }
+  profileSet({ preset, deposit: dep, stake: st });
+  profileClose_();
+}
+
+// Клавиатура на iOS не сжимает окно, а наезжает поверх: поднимаем шторку на
+// её высоту, чтобы поля ввода оставались видны.
+function profileKbFix_() {
+  const vv = window.visualViewport;
+  const ov = document.getElementById('pfSheet');
+  if (!vv || !ov || ov.hidden) return;
+  const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  ov.style.setProperty('--pf-kb', kb + 'px');
+}
+if (window.visualViewport) window.visualViewport.addEventListener('resize', profileKbFix_);
+document.addEventListener('keydown', e => {
+  const ov = document.getElementById('pfSheet');
+  if (e.key === 'Escape' && ov && !ov.hidden) profileSkip();
+});
+
+profileLoad_();
 
 // ===== NAVIGATION =====
 const history = [];
@@ -159,6 +444,7 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
   syncPageAnimations_();
+  if (/^stat/.test(pageId) && pageId !== 'stats-l30d-dev') profileMaybeAsk_();
 
   if (pageId === 'statistics') { devGateApply(); devGateTapHook(document.getElementById('statsTitleTap')); renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
   if (pageId === 'stats-l30d-dev') {
@@ -470,14 +756,11 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
     const rows = rowsOverride || await fetchAllSignals();
     if (!rows || rows.length < 2) return;
 
-    // Денежная модель по умолчанию - прежняя плоская: ставка 125, выплата 0.8.
-    // Срез «Новая система» передаёт свою: там ставка задаётся отдельно на ETH и
-    // BTC, поэтому «побед x 100 - поражений x 125» уже не работает - цена
-    // сигнала зависит от пары.
-    const pnlOf = pnlOfRow || (r => {
-      const v = r[COL_RESULT];
-      return v === 'WIN' ? 100 : v === 'LOSE' ? -125 : 0;
-    });
+    // Денежная модель по умолчанию - профиль пользователя (депозит и ставка,
+    // не выше боевой по паре). Функцию зовут только пользовательские
+    // страницы - главная, ALL Periods, «Новая система»; DEV свои графики
+    // строит сам, на боевых ставках.
+    const pnlOf = pnlOfRow || proPnlRow;
     const dailyMap = {};
     for (let i = 1; i < rows.length; i++) {
       const dateStr = (rows[i][COL_DATE] || '').trim();
@@ -503,7 +786,7 @@ async function loadPnlAllFromSignals(canvasId, key, mini = false, rowsOverride =
       const { label, pnl } = dailyMap[dk];
       cumPnl += pnl;
       labels.push(label);
-      pctData.push(Math.round((cumPnl / 5000) * 100));
+      pctData.push(Math.round((cumPnl / profileDeposit()) * 100));
     }
 
     const ctx = document.getElementById(canvasId)?.getContext('2d');
@@ -939,12 +1222,11 @@ function buildIndicatorTable(combos, minSample) {
 // Минимальная выборка на сторону: ниже неё вывод не делаем - на 5 сигналах
 // разница направлений неотличима от случайности.
 const DIR_INSIGHT_MIN = 15;
-// Ставка модели PNL - та же, что в кривой доходности (125 USDT, выплата 0.8):
-// WIN = +100, LOSE = -125.
-const DIR_STAKE = 125;
-
+// Ставка - из профиля. Строка листа сводная по всем парам, разбивки нет,
+// поэтому берётся ставка ETH (при максимальной - 125, как раньше).
 function dirPnl(wins, total) {
-  return wins * DIR_STAKE * WR_PAYOUT - (total - wins) * DIR_STAKE;
+  const st = profileFlatStake();
+  return wins * st * WR_PAYOUT - (total - wins) * st;
 }
 
 function fillTpl(tpl, vars) {
@@ -977,7 +1259,7 @@ function buildDirectionInsight(row, dataColStart) {
     upPnl: devFmtUsdt(dirPnl(upW, upT)),
     dnPnl: devFmtUsdt(dirPnl(dnW, dnT)),
     be: WR_BREAKEVEN + '%',
-    stake: DIR_STAKE,
+    stake: profileFlatStake(),
   });
   return `<div class="dir-insight ${cls}">${devEscapeHtml(text)}</div>`;
 }
@@ -3881,9 +4163,8 @@ function allpRenderSummary_(sigs, code) {
   }
   const dec = w + l;
   const wr = dec ? (w / dec * 100).toFixed(1) : '-';
-  // Модель та же, что была на обеих страницах до слияния: ставка 125,
-  // выплата 0.8, ничья - ноль.
-  const pnl = w * 100 - l * 125;
+  // Деньги - по профилю: ставка своя на каждую пару, выплата 0.8, ничья - ноль.
+  const pnl = Math.round(sigs.reduce((a, x) => a + proPnlSig(x), 0));
   const fmt = dk => dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : '?';
   const drawPart = draw ? ` · ${t('era.draws')} ${draw}` : '';
   el.innerHTML =
@@ -3915,7 +4196,8 @@ async function renderAllPeriods() {
       return;
     }
     allpRenderSummary_(sigs, ALLP_STATE.code);
-    statsRenderSlice_(ALLP_SLICE, slice, sigs);
+    // Просадку передаём явно: её умолчание (плоские 125) делит DEV.
+    statsRenderSlice_(ALLP_SLICE, slice, sigs, { pnlFn: proPnlSig });
   } catch (e) {
     console.log('ALL Periods error:', e);
   }
@@ -3955,12 +4237,14 @@ const ERA_SINCE_DK = '2026-06-01';
 // зависит, а PNL и просадка - зависят, и разница между вариантами как раз
 // показывает, сколько даёт удвоенная ставка на BTC.
 const ERA_PAYOUT = 0.8;
-const ERA_STAKE_MAX = { ETH: 125, BTC: 250 };
-const ERA_STATE = { src: 'ALL', stakes: { ETH: 125, BTC: 125 } };
+const ERA_STATE = { src: 'ALL' };
 let eraRowsCache = null;
 
+// Ставка - из профиля (плашка вверху страницы), не выше боевой по паре.
+// Свои селекторы ETH/BTC были здесь до профиля; два источника одной ставки
+// только путали бы, какая из них действует.
 function eraStakeOf_(pair) {
-  return ERA_STATE.stakes[pair] ?? 125;
+  return proStake(pair);
 }
 // Деньги по одному сигналу. Пара приходит либо из разобранного сигнала
 // (просадка, сводка), либо из сырой строки листа (график PNL).
@@ -4095,30 +4379,7 @@ async function renderEraStats() {
   }
 }
 
-// Селекторы ставок строим кодом: шаг 5 и потолки те же, что в калькуляторе
-// на странице статистики (ETH до 125, BTC до 250), чтобы два места в
-// приложении не предлагали разные наборы сумм за одно и то же.
-function eraBuildStakeSelects_() {
-  for (const pair of ['ETH', 'BTC']) {
-    const sel = document.getElementById('eraStake' + pair);
-    if (!sel || sel.options.length) continue;
-    let html = '';
-    for (let v = 5; v <= ERA_STAKE_MAX[pair]; v += 5) {
-      html += `<option value="${v}"${v === ERA_STATE.stakes[pair] ? ' selected' : ''}>${v}</option>`;
-    }
-    sel.innerHTML = html;
-    sel.addEventListener('change', () => {
-      const v = parseInt(sel.value, 10);
-      if (!v || v === ERA_STATE.stakes[pair]) return;
-      ERA_STATE.stakes[pair] = v;
-      if (tg) tg.HapticFeedback?.selectionChanged();
-      renderEraStats();
-    });
-  }
-}
-
 function initEraUI() {
-  eraBuildStakeSelects_();
   const seg = document.getElementById('eraSrcSeg');
   if (!seg || seg.dataset.wired) return;
   seg.dataset.wired = '1';

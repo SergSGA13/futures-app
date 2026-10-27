@@ -668,7 +668,14 @@
             <span data-i18n="calc.title">Калькулятор доходности</span>
           </div>
 
-          <div class="calc-params">
+          <!-- Фиксированная ставка или сложный процент: ставка - процент от
+               депозита, пересчитывается каждый день, но не выше лимита пары. -->
+          <div class="fs-seg calc-mode-seg" id="calcModeSeg" role="group">
+            <button type="button" class="active" data-cmode="fixed" data-i18n="calc.mode.fixed">Фиксированная ставка</button>
+            <button type="button" data-cmode="compound" data-i18n="calc.mode.compound">Сложный процент</button>
+          </div>
+
+          <div class="calc-params calc-fixed-only">
             <div class="calc-param">
               <div class="calc-param-label" data-i18n="calc.eth.bet">ETH ставка (USDT)</div>
               <select id="calcEthBet" class="calc-select"></select>
@@ -678,7 +685,14 @@
               <select id="calcBtcBet" class="calc-select"></select>
             </div>
           </div>
-          <p class="calc-bet-note" data-i18n="calc.bet.note">По умолчанию - ставки из вашего профиля. Здесь их можно поменять для расчёта «а что если» - профиль от этого не изменится.</p>
+          <p class="calc-bet-note calc-fixed-only" data-i18n="calc.bet.note">По умолчанию - ставки из вашего профиля. Здесь их можно поменять для расчёта «а что если» - профиль от этого не изменится.</p>
+
+          <div class="calc-cmp calc-cmp-only">
+            <div class="calc-param-label" data-i18n="calc.cmp.pct">Ставка - процент от депозита</div>
+            <div class="fs-seg calc-pct-seg" id="calcPctSeg" role="group"></div>
+            <div class="pf-risk calc-cmp-risk" id="calcCmpRisk" role="alert" hidden></div>
+            <p class="calc-bet-note" id="calcCmpNote"></p>
+          </div>
 
           <!-- Period selector -->
           <div class="calc-section-hdr" style="margin-top:14px">

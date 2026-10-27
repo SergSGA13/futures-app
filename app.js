@@ -66,6 +66,7 @@ function applyTranslations() {
   profileRenderChips_();
   profileRenderNotes_();
   calcAdvSummary_();
+  calcCmpRender_();
   devRenderUpdatedAt();
 }
 
@@ -6149,6 +6150,7 @@ function initCalculator() {
     card.addEventListener('click', calcAdvSummary_);
   }
   calcAdvSummary_();
+  calcCmpInit_();
 }
 
 // Сброс периода: «С» - начало новой системы (та же константа, что у среза
@@ -6514,6 +6516,8 @@ async function runCalculator() {
     const monthlyStats = {};
     // Hourly stats: key = hour (0-23), value = {w, l}
     const hourlyStats  = {};
+    // Сделки по порядку - для сложного процента: там важна очерёдность.
+    const trades = [];
     let totalRaw = 0;
 
     for (let i = 1; i < rows.length; i++) {
@@ -6556,6 +6560,12 @@ async function runCalculator() {
       st[key].l += win ? 0 : 1;
       st[key].p += win ? wP : lP;
       tradeDays[row[COL_DATE]] = true;
+      const tm = String(row[COL_TIME] || '').match(/^\s*\d{1,2}:(\d{2})/);
+      trades.push({
+        ts: dt.getTime() + hour * 36e5 + (tm ? +tm[1] : 0) * 6e4,
+        day: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
+        isETH, win,
+      });
 
       // === NEW: Monthly accumulation ===
       const monthKey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
@@ -6569,7 +6579,8 @@ async function runCalculator() {
       else     hourlyStats[hour].l++;
     }
 
-    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw, monthlyStats, hourlyStats);
+    const cmp = CALC_CMP.on ? calcCompound_(trades, profileDeposit(), calcCmpPct_()) : null;
+    renderCalcResults(st, tradeDays, ethBet, btcBet, Object.keys(activeH).length, totalRaw, monthlyStats, hourlyStats, cmp);
 
   } catch(e) {
     results.innerHTML = `<div class="calc-error">${t('calc.error')}</div>`;
@@ -6608,6 +6619,217 @@ function calcSyncProfile_() {
     sel.querySelectorAll('option[data-profile]').forEach(o => o.remove());
     calcSetBet_(sel, proStake(pair));
   }
+  // Процент для сложного процента тоже возвращается к профилю.
+  CALC_CMP.pct = null;
+  calcCmpRender_();
+}
+
+// ===== КАЛЬКУЛЯТОР: СЛОЖНЫЙ ПРОЦЕНТ =====
+// Ставка - процент от депозита, а не фиксированная сумма: депозит растёт -
+// растёт и ставка. Пересчёт раз в день, по балансу на начало дня: сигналы
+// идут пачками и перекрываются по времени, так что пересчитывать после каждой
+// сделки на деле не выйдет. Ставка не выше лимита пары (ETH 125, BTC 250) -
+// упёрлась в лимит, и дальше депозит растёт уже линейно.
+// Стартовый депозит и процент по умолчанию - из профиля. Рядом для сравнения
+// та же стартовая ставка без реинвестирования.
+const CALC_CMP = { on: false, pct: null, chart: null };
+const CALC_CMP_PCTS = [1, 2, 3];
+
+// Процент из профиля - по ставке, которую человек ввёл, а не по урезанной
+// лимитом ETH: 200 от 3 000 - это 6,7%, и о риске надо предупредить.
+// «Макс. ставка» (stake: null) - боевые 125 на ETH.
+function calcProfilePct_() {
+  const s = profileGet().stake;
+  return Math.round((s == null ? PRO_STAKE_MAX.ETH : +s) / profileDeposit() * 1000) / 10;
+}
+function calcCmpPct_() { return CALC_CMP.pct != null ? CALC_CMP.pct : calcProfilePct_(); }
+function calcFmtPct_(p) { return String(p).replace('.', currentLang === 'en' ? '.' : ',') + '%'; }
+
+// Кнопки 1/2/3% и процент из профиля, если он другой (например, 2,5% у
+// «5 000+ / макс. ставка»). Под ними - откуда процент и как считаем.
+function calcCmpRender_() {
+  const card = document.getElementById('calcCard');
+  if (card) card.classList.toggle('cmp', CALC_CMP.on);
+  document.querySelectorAll('#calcModeSeg button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.cmode === 'compound') === CALC_CMP.on));
+  const seg = document.getElementById('calcPctSeg');
+  if (!seg) return;
+  const prof = calcProfilePct_(), cur = calcCmpPct_();
+  const list = CALC_CMP_PCTS.includes(prof) ? CALC_CMP_PCTS.slice() : CALC_CMP_PCTS.concat(prof).sort((a, b) => a - b);
+  seg.innerHTML = list.map(p =>
+    `<button type="button" data-pct="${p}" class="${p === cur ? 'active' : ''}${p === prof ? ' pf' : ''}"` +
+    `${p === prof ? ` title="${chanEsc_(t('calc.cmp.fromProfile'))}"` : ''}>${calcFmtPct_(p)}</button>`).join('');
+  const note = document.getElementById('calcCmpNote');
+  if (note) note.textContent = t('calc.cmp.note')
+    .replace('{p}', calcFmtPct_(cur))
+    .replace('{dep}', profileFmtNum_(profileDeposit()))
+    .replace('{prof}', calcFmtPct_(prof));
+  const risk = document.getElementById('calcCmpRisk');
+  if (risk) {
+    risk.hidden = cur <= PROFILE_RISK_PCT;
+    risk.textContent = risk.hidden ? '' : t('calc.cmp.risk').replace('{p}', calcFmtPct_(cur));
+  }
+}
+
+function calcCmpRerun_() {
+  calcCmpRender_();
+  if (document.getElementById('calcResults')?.innerHTML.trim()) runCalculator();
+}
+
+function calcCmpInit_() {
+  const modeSeg = document.getElementById('calcModeSeg');
+  if (modeSeg) modeSeg.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const on = b.dataset.cmode === 'compound';
+    if (on === CALC_CMP.on) return;
+    CALC_CMP.on = on;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    calcCmpRerun_();
+  });
+  const pctSeg = document.getElementById('calcPctSeg');
+  if (pctSeg) pctSeg.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const p = parseFloat(b.dataset.pct);
+    if (!p || p === calcCmpPct_()) return;
+    CALC_CMP.pct = p;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    calcCmpRerun_();
+  });
+  calcCmpRender_();
+}
+
+// trades: [{ts, day, isETH, win}] - уже отфильтрованные калькулятором.
+function calcCompound_(trades, dep0, pct) {
+  const list = trades.slice().sort((a, b) => a.ts - b.ts);
+  const cap = isETH => isETH ? PRO_STAKE_MAX.ETH : PRO_STAKE_MAX.BTC;
+  const stakeAt = (bal, isETH) => Math.min(Math.floor(bal * pct / 100), cap(isETH));
+  const pnl = (st, win) => win ? st * 0.8 : -st;
+  // Без реинвестирования - стартовая ставка на весь период.
+  const fixE = stakeAt(dep0, true), fixB = stakeAt(dep0, false);
+  let bal = dep0, flat = dep0, day = null, stE = 0, stB = 0;
+  let peak = dep0, maxDd = 0, bust = null;
+  const capDay = { ETH: null, BTC: null };
+  const days = [], cmpCurve = [], flatCurve = [];
+  const close = () => { days.push(day); cmpCurve.push(Math.round(bal)); flatCurve.push(Math.round(flat)); };
+  for (const x of list) {
+    if (x.day !== day) {
+      if (day) close();
+      day = x.day;
+      stE = stakeAt(bal, true);
+      stB = stakeAt(bal, false);
+      if (!capDay.ETH && bal * pct / 100 >= PRO_STAKE_MAX.ETH) capDay.ETH = day;
+      if (!capDay.BTC && bal * pct / 100 >= PRO_STAKE_MAX.BTC) capDay.BTC = day;
+      // Ставка меньше 1 USDT - депозита не осталось, торговать нечем.
+      if (!bust && Math.min(stE, stB) < 1) bust = day;
+    }
+    flat += pnl(x.isETH ? fixE : fixB, x.win);
+    if (bust) continue;
+    bal += pnl(x.isETH ? stE : stB, x.win);
+    if (bal > peak) peak = bal;
+    const dd = (peak - bal) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+  if (day) close();
+  // Средний рост в месяц - геометрический, по календарным дням периода.
+  // На отрезке меньше четырёх недель такая цифра - шум, её не показываем.
+  let monthly = null;
+  if (days.length > 1) {
+    const span = (Date.parse(days[days.length - 1]) - Date.parse(days[0])) / 864e5 + 1;
+    if (span >= 28 && bal > 0) monthly = (Math.pow(bal / dep0, 30.44 / span) - 1) * 100;
+  }
+  return {
+    dep0, pct, bal, flat, fixE, fixB, maxDd, bust, capDay, monthly,
+    endE: stakeAt(bal, true), endB: stakeAt(bal, false),
+    days, cmpCurve, flatCurve, n: list.length,
+  };
+}
+
+function calcFmtDay_(dk) { return dk ? `${dk.slice(8, 10)}.${dk.slice(5, 7)}.${dk.slice(0, 4)}` : ''; }
+function calcStakePair_(e, b) { return e === b ? `${profileFmtNum_(e)} USDT` : `ETH ${profileFmtNum_(e)} / BTC ${profileFmtNum_(b)} USDT`; }
+
+// Строки под сеткой: сравнение с фиксированной ставкой и где упёрлись в лимит.
+function calcCmpLines_(c) {
+  const diff = c.bal - c.flat;
+  const vs = t(diff >= 0 ? 'calc.cmp.more' : 'calc.cmp.less')
+    .replace('{stake}', calcStakePair_(c.fixE, c.fixB))
+    .replace('{flat}', profileFmtNum_(c.flat))
+    .replace('{diff}', profileFmtNum_(Math.abs(diff)));
+  let cap;
+  if (c.bust) cap = t('calc.cmp.bust').replace('{date}', calcFmtDay_(c.bust));
+  else if (!c.capDay.ETH && !c.capDay.BTC) cap = t('calc.cmp.nocap').replace('{eth}', PRO_STAKE_MAX.ETH).replace('{btc}', PRO_STAKE_MAX.BTC);
+  else {
+    const item = (pair, max) => c.capDay[pair]
+      ? t('calc.cmp.capItem').replace('{pair}', pair).replace('{max}', max).replace('{date}', calcFmtDay_(c.capDay[pair]))
+      : t('calc.cmp.capNot').replace('{pair}', pair).replace('{max}', max);
+    cap = t('calc.cmp.cap').replace('{list}', item('ETH', PRO_STAKE_MAX.ETH) + '; ' + item('BTC', PRO_STAKE_MAX.BTC));
+  }
+  return { vs, cap };
+}
+
+function calcCmpChart_(c) {
+  try { CALC_CMP.chart?.destroy(); } catch (e) {}
+  CALC_CMP.chart = null;
+  const ctx = document.getElementById('calcEquityChart')?.getContext('2d');
+  if (!ctx || typeof Chart === 'undefined' || c.days.length < 2) return;
+  const fmt = v => profileFmtNum_(v) + ' USDT';
+  CALC_CMP.chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: c.days.map(d => `${d.slice(8, 10)}.${d.slice(5, 7)}`),
+      datasets: [
+        { label: t('calc.cmp.lineCmp'), data: c.cmpCurve, borderColor: '#22E8FF', backgroundColor: 'rgba(34,232,255,0.10)',
+          fill: true, borderWidth: 2, pointRadius: 0, tension: 0.25 },
+        { label: t('calc.cmp.lineFlat'), data: c.flatCurve, borderColor: '#7B84B0', borderDash: [5, 4],
+          fill: false, borderWidth: 1.5, pointRadius: 0, tension: 0.25 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: '#B8BEDD', boxWidth: 14, boxHeight: 2, font: { size: 10 } } },
+        tooltip: { callbacks: { label: x => `${x.dataset.label}: ${fmt(x.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 9 }, callback: v => profileFmtNum_(v) }, grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+// Результат в режиме сложного процента. Новичку - сигналы, WR, депозит
+// «было → стало» и рост; остальное - в «Про». Кривая депозита - всем.
+function calcCmpHtml_(c, totSig, totalRaw, totWR) {
+  const pc = v => v >= 0 ? '#4EFFA0' : '#FF5272';
+  const growth = (c.bal / c.dep0 - 1) * 100;
+  const sgn = v => (v >= 0 ? '+' : '') + (Math.abs(v) < 10 ? v.toFixed(1) : Math.round(v)) + '%';
+  const { vs, cap } = calcCmpLines_(c);
+  const item = (lbl, val, cls) => `<div class="calc-res-item${cls ? ' ' + cls : ''}"><span>${lbl}</span><b${val.c ? ` style="color:${val.c}"` : ''}>${val.v}</b></div>`;
+  return `
+    <div class="calc-res-grid">
+      ${item(t('calc.res.signals'), { v: `${totSig} <span style="color:#7B84B0;font-size:11px;font-weight:400">/ ${totalRaw}</span>` })}
+      ${item('Win Rate', { v: totWR.toFixed(1) + '%', c: wrHex(totWR) })}
+      ${item(t('calc.cmp.dep'), { v: `${profileFmtNum_(c.dep0)} → ${profileFmtNum_(c.bal)}`, c: pc(c.bal - c.dep0) })}
+      ${item(t('calc.cmp.growth'), { v: sgn(growth), c: pc(growth) })}
+      ${item(t('calc.cmp.month'), { v: c.monthly == null ? '-' : sgn(c.monthly), c: c.monthly == null ? null : pc(c.monthly) }, 'pro-only')}
+      ${item(t('calc.cmp.dd'), { v: c.maxDd ? '-' + c.maxDd.toFixed(1) + '%' : '0%', c: '#FF5272' }, 'pro-only')}
+      ${item(t('calc.cmp.stakeEnd'), { v: calcStakePair_(c.endE, c.endB) }, 'pro-only')}
+      ${item(t('calc.cmp.flat'), { v: profileFmtNum_(c.flat) + ' USDT', c: pc(c.flat - c.dep0) }, 'pro-only')}
+    </div>
+    <div class="calc-dep-line">${chanEsc_(vs)}</div>
+    <p class="calc-cmp-cap">${chanEsc_(cap)}</p>
+    ${c.days.length > 1 ? `
+    <div class="calc-monthly-chart-block" style="margin-top:12px">
+      <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22E8FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        ${t('calc.cmp.chart')}
+      </div>
+      <div class="pnl-chart-wrap" style="height:180px"><canvas id="calcEquityChart"></canvas></div>
+    </div>` : ''}
+  `;
 }
 
 function calcDepLine_(ppm, ppy) {
@@ -6616,7 +6838,7 @@ function calcDepLine_(ppm, ppy) {
   return t('calc.res.dep').replace('{dep}', profileFmtNum_(dep)).replace('{m}', f(ppm)).replace('{y}', f(ppy));
 }
 
-function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats, hourlyStats) {
+function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw, monthlyStats, hourlyStats, cmp) {
   let totW = 0, totL = 0, totP = 0;
   ['EU','ED','BU','BD'].forEach(k => { totW += st[k].w; totL += st[k].l; totP += st[k].p; });
   const totSig = totW + totL;
@@ -6650,8 +6872,8 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
   }) : [];
   const hasHourly = hourKeys.length > 0;
 
-  document.getElementById('calcResults').innerHTML = `
-    <div class="calc-divider"></div>
+  // Фиксированная ставка: PnL в месяц и в год, разбивка по парам.
+  const fixedHtml = `
     <div class="calc-res-grid">
       <div class="calc-res-item"><span>${t('calc.res.signals')}</span><b>${totSig} <span style="color:#7B84B0;font-size:11px;font-weight:400">/ ${totalRaw}</span></b></div>
       <div class="calc-res-item"><span>Win Rate</span><b style="color:${wc(totWR)}">${totWR.toFixed(1)}%</b></div>
@@ -6677,6 +6899,11 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
         <div class="calc-pair-stat"><span>PnL</span><b style="color:${pc(btcPnl)}">${fmt(btcPnl)}</b></div>
       </div>
     </div>
+  `;
+
+  document.getElementById('calcResults').innerHTML = `
+    <div class="calc-divider"></div>
+    ${cmp ? calcCmpHtml_(cmp, totSig, totalRaw, totWR) : fixedHtml}
     ${hasMonthly ? `
     <div class="calc-monthly-chart-block pro-only" style="margin-top:12px">
       <div class="pnl-chart-title" style="font-size:12px;padding:10px 12px 6px">
@@ -6694,6 +6921,8 @@ function renderCalcResults(st, tradeDays, ethBet, btcBet, activeHCount, totalRaw
       <div class="pnl-chart-wrap" style="height:160px"><canvas id="calcHourlyWrChart"></canvas></div>
     </div>` : ''}
   `;
+
+  if (cmp) calcCmpChart_(cmp); else { try { CALC_CMP.chart?.destroy(); } catch (e) {} CALC_CMP.chart = null; }
 
   // ── Monthly WinRate chart (bars = winrate, data label = signal count) ──
   if (hasMonthly) {

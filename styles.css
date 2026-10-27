@@ -3579,3 +3579,20 @@ html.mode-beginner .calc-adv:not(.open) { display: none; }
 .calc-adv-toggle.open .calc-adv-head svg { transform: rotate(180deg); }
 .calc-adv-toggle.open { border-color: rgba(157, 80, 255, 0.60); box-shadow: 0 0 16px rgba(157, 80, 255, 0.25); }
 .calc-adv-sum { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+
+/* Калькулятор: фиксированная ставка или сложный процент */
+.calc-mode-seg { margin: 2px 0 14px; }
+.calc-mode-seg button { padding: 8px 6px; font-size: 12px; }
+#calcCard:not(.cmp) .calc-cmp-only,
+#calcCard.cmp .calc-fixed-only { display: none; }
+.calc-pct-seg button { padding: 8px 4px; font-size: 13px; }
+/* Процент из профиля - с точкой; пояснение в подписи ниже. */
+.calc-pct-seg button.pf::after {
+  content: ''; display: inline-block; width: 5px; height: 5px; margin-left: 5px;
+  border-radius: 50%; background: var(--cyan); vertical-align: 2px;
+}
+.calc-pct-seg button.pf.active::after { background: #fff; }
+.calc-cmp-risk { margin: 10px 0 0; }
+.calc-cmp-cap { margin: 8px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+/* На 320 px две подписи в строку не влезают - пусть переносятся. */
+.calc-mode-seg button { white-space: normal; }

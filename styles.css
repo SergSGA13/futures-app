@@ -1744,6 +1744,10 @@ body { background: transparent; }
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s;
+  /* Над кнопкой - ряд «Рекомендации / Включить лучшие часы» без нижнего
+     отступа, и кнопка прилипала к нему вплотную. 14 px - тот же шаг, что
+     у блока рекомендаций сверху. */
+  margin-top: 14px;
   margin-bottom: 2px;
 }
 .calc-run-btn:disabled { opacity: 0.55; cursor: default; }

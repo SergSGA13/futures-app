@@ -67,6 +67,8 @@ function applyTranslations() {
   profileRenderNotes_();
   calcAdvSummary_();
   calcCmpRender_();
+  tzRenderLabels_();
+  tzRenderSelect_();
   devRenderUpdatedAt();
 }
 
@@ -275,6 +277,12 @@ function profileApply_() {
 // Плашка «Депозит · ставка ✎» на страницах, которые считают по профилю.
 function profileRenderChips_() {
   const txt = t('pf.chip').replace('{dep}', profileDepLabel_()).replace('{stake}', profileChipStake_());
+  // Пояс - отдельной кнопкой рядом с режимом: в конце плашки на узком
+  // экране он уходил под многоточие.
+  const tzTitle = chanEsc_(t('pf.tz') + ': ' + tzLabel_(tzUser()));
+  const tzBtn = '<button class="pf-tz-chip" type="button" onclick="profileOpen()" title="' + tzTitle + '" aria-label="' + tzTitle + '">' +
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><polyline points="12 7 12 12 15.5 14"/></svg>' +
+    '<span>' + chanEsc_(tzName_(tzUser())) + '</span></button>';
   // Ставка выше 4% депозита - плашка жёлтая, чтобы предупреждение не
   // исчезало после сохранения. Подробности - в шторке по нажатию.
   const risky = profileIsRisky_();
@@ -285,7 +293,7 @@ function profileRenderChips_() {
       '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="14" rx="2.5"/><path d="M16 13h2"/><path d="M2 10h20"/></svg>' +
       '<span class="pf-chip-txt">' + chanEsc_(txt) + '</span>' +
       '<svg class="pf-chip-pen" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>' +
-      '</button>' + modeSegHtml_();
+      '</button>' + modeSegHtml_() + tzBtn;
   });
 }
 
@@ -305,10 +313,13 @@ function profileRenderNotes_() {
 // ---- Шторка с вопросом ----
 // Не блокирует: страница статистики уже открыта и строится под шторкой.
 // Любой ответ запоминается, включая «пропустить», - второй раз не спросим.
+// Спрашиваем, пока не выбраны депозит или часовой пояс: у тех, кто
+// заполнил профиль до появления пояса, шторка откроется один раз.
 async function profileMaybeAsk_() {
-  if (PROFILE.data || PROFILE.asked) return;
-  if (PROFILE.ready) await PROFILE.ready;          // облако могло помнить выбор
-  if (PROFILE.data || PROFILE.asked) return;
+  const known = () => PROFILE.data && TZ_PREF.v;
+  if (known() || PROFILE.asked) return;
+  await Promise.all([PROFILE.ready, TZ_PREF.ready]);   // облако могло помнить выбор
+  if (known() || PROFILE.asked) return;
   if (!/^stat/.test(currentPage)) return;          // пока ждали, ушёл со статистики
   PROFILE.asked = true;
   profileOpen();
@@ -329,6 +340,10 @@ function profileOpen() {
   if (dep) dep.value = isCustom ? p.deposit : '';
   if (st) st.value = isCustom ? p.stake : '';
   profileValidateCustom_();
+  tzRenderSelect_();
+  // Профиль уже есть - «пропустить» его не меняет, это просто «готово».
+  const skip = document.getElementById('pfSkip');
+  if (skip) { const k = PROFILE.data ? 'pf.done' : 'pf.skip'; skip.setAttribute('data-i18n', k); skip.textContent = t(k); }
   // История для предупреждения о риске - догружаем и обновляем подсказку.
   profileHistLoad_().then(() => profileValidateCustom_());
   ov.hidden = false;
@@ -348,6 +363,7 @@ function profileClose_() {
 function profilePick(preset) {
   const pr = PROFILE_PRESETS[preset];
   if (!pr) return;
+  tzCommit_();
   profileSet({ preset, deposit: pr.deposit, stake: pr.stake });
   if (tg) tg.HapticFeedback?.selectionChanged();
   profileClose_();
@@ -355,7 +371,9 @@ function profilePick(preset) {
 
 // Закрыли, не выбрав (кнопка или тап мимо шторки) - считаем на максимальной
 // ставке и запоминаем: спрашивать при каждом входе было бы навязчиво.
+// Профиль уже был (спросили только про пояс) - его не трогаем.
 function profileSkip() {
+  tzCommit_();
   if (!PROFILE.data) profileSet(Object.assign({ preset: 'pmax' }, PROFILE_PRESETS.pmax));
   profileClose_();
 }
@@ -465,6 +483,7 @@ function profileSaveCustom() {
   for (const [id, pr] of Object.entries(PROFILE_PRESETS)) {
     if (pr.stake != null && pr.deposit === Math.round(dep) && pr.stake === Math.round(st)) preset = id;
   }
+  tzCommit_();
   profileSet({ preset, deposit: dep, stake: st });
   profileClose_();
 }
@@ -570,6 +589,188 @@ function modeSegHtml_() {
 }
 
 modeLoad_();
+
+// ===== ЧАСОВОЙ ПОЯС ПОЛЬЗОВАТЕЛЯ =====
+// Часы и дни в разделе «Статистика» показываем по времени пользователя:
+// трейдер из Киева видит свои 16:00, а не варшавские 15:00. Пояс выбирают
+// в той же шторке, что депозит и ставку; пока не выбран - пояс телефона.
+// Хранение - как у профиля: облако Telegram и локальная копия с id в ключе.
+const TZ_KEY = 'fp_tz_v1';
+const TZ_PREF = { v: null, ready: null };
+// Город и его имя на ru / uk / en. Порядок в списке - по текущему смещению.
+const TZ_LIST = [
+  ['America/Los_Angeles', 'Лос-Анджелес', 'Лос-Анджелес', 'Los Angeles'],
+  ['America/Chicago', 'Чикаго', 'Чикаго', 'Chicago'],
+  ['America/New_York', 'Нью-Йорк', 'Нью-Йорк', 'New York'],
+  ['America/Sao_Paulo', 'Сан-Паулу', 'Сан-Паулу', 'São Paulo'],
+  ['UTC', 'UTC', 'UTC', 'UTC'],
+  ['Europe/London', 'Лондон', 'Лондон', 'London'],
+  ['Europe/Lisbon', 'Лиссабон', 'Лісабон', 'Lisbon'],
+  ['Europe/Warsaw', 'Варшава', 'Варшава', 'Warsaw'],
+  ['Europe/Berlin', 'Берлин', 'Берлін', 'Berlin'],
+  ['Europe/Paris', 'Париж', 'Париж', 'Paris'],
+  ['Europe/Prague', 'Прага', 'Прага', 'Prague'],
+  ['Europe/Kyiv', 'Киев', 'Київ', 'Kyiv'],
+  ['Europe/Vilnius', 'Вильнюс', 'Вільнюс', 'Vilnius'],
+  ['Europe/Riga', 'Рига', 'Рига', 'Riga'],
+  ['Europe/Chisinau', 'Кишинёв', 'Кишинів', 'Chisinau'],
+  ['Europe/Bucharest', 'Бухарест', 'Бухарест', 'Bucharest'],
+  ['Europe/Istanbul', 'Стамбул', 'Стамбул', 'Istanbul'],
+  ['Europe/Minsk', 'Минск', 'Мінськ', 'Minsk'],
+  ['Europe/Moscow', 'Москва', 'Москва', 'Moscow'],
+  ['Asia/Tbilisi', 'Тбилиси', 'Тбілісі', 'Tbilisi'],
+  ['Asia/Yerevan', 'Ереван', 'Єреван', 'Yerevan'],
+  ['Asia/Baku', 'Баку', 'Баку', 'Baku'],
+  ['Asia/Dubai', 'Дубай', 'Дубай', 'Dubai'],
+  ['Asia/Tashkent', 'Ташкент', 'Ташкент', 'Tashkent'],
+  ['Asia/Almaty', 'Алматы', 'Алмати', 'Almaty'],
+  ['Asia/Yekaterinburg', 'Екатеринбург', 'Єкатеринбург', 'Yekaterinburg'],
+  ['Asia/Kolkata', 'Индия', 'Індія', 'India'],
+  ['Asia/Bangkok', 'Бангкок', 'Бангкок', 'Bangkok'],
+  ['Asia/Novosibirsk', 'Новосибирск', 'Новосибірськ', 'Novosibirsk'],
+  ['Asia/Singapore', 'Сингапур', 'Сінгапур', 'Singapore'],
+  ['Asia/Shanghai', 'Китай', 'Китай', 'China'],
+  ['Asia/Tokyo', 'Токио', 'Токіо', 'Tokyo'],
+  ['Asia/Vladivostok', 'Владивосток', 'Владивосток', 'Vladivostok'],
+  ['Australia/Sydney', 'Сидней', 'Сідней', 'Sydney'],
+];
+// Старые имена поясов, которые ещё отдают некоторые телефоны.
+const TZ_ALIAS = { 'Europe/Kiev': 'Europe/Kyiv', 'Asia/Calcutta': 'Asia/Kolkata', 'Etc/UTC': 'UTC', 'GMT': 'UTC', 'Etc/GMT': 'UTC' };
+
+function tzCanon_(tz) {
+  tz = TZ_ALIAS[tz] || tz;
+  // Если движок не знает «Kyiv» (старые iOS), берём прежнее имя.
+  if (tz === 'Europe/Kyiv' && !tzValid_(tz)) return 'Europe/Kiev';
+  return tz;
+}
+function tzDevice_() {
+  try { const z = Intl.DateTimeFormat().resolvedOptions().timeZone; return z && tzValid_(z) ? tzCanon_(z) : null; } catch (e) { return null; }
+}
+function tzUser() {
+  const v = TZ_PREF.v && TZ_PREF.v.tz;
+  if (v && tzValid_(v)) return v;
+  return tzDevice_() || TZ_HOME;
+}
+function tzName_(tz) {
+  const li = currentLang === 'uk' ? 2 : currentLang === 'en' ? 3 : 1;
+  const row = TZ_LIST.find(x => tzCanon_(x[0]) === tz);
+  if (row) return row[li];
+  return String(tz).split('/').pop().replace(/_/g, ' ');
+}
+// «UTC+1», «UTC−5», «UTC+5:30», «UTC» - на текущий момент.
+function tzOffsetLabel_(tz, ms) {
+  const off = tzOffsetMin_(tz, ms == null ? Date.now() : ms);
+  if (!off) return 'UTC';
+  const a = Math.abs(off);
+  return 'UTC' + (off > 0 ? '+' : '−') + Math.floor(a / 60) + (a % 60 ? ':' + tzPad_(a % 60) : '');
+}
+function tzLabel_(tz) { return tzName_(tz) + ', ' + tzOffsetLabel_(tz); }
+
+function tzLocalKey_() {
+  const uid = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+  return TZ_KEY + (uid ? ':' + uid : '');
+}
+function tzRecValid_(r) { return !!r && typeof r.tz === 'string' && tzValid_(r.tz); }
+
+function tzLoad_() {
+  try {
+    const raw = localStorage.getItem(tzLocalKey_());
+    if (raw) { const r = JSON.parse(raw); if (tzRecValid_(r)) TZ_PREF.v = r; }
+  } catch (e) {}
+  TZ_PREF.ready = new Promise(resolve => {
+    const cs = profileCloud_();
+    if (!cs) { resolve(); return; }
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    setTimeout(finish, 1500);
+    try {
+      cs.getItem(TZ_KEY, (err, val) => {
+        try {
+          if (!err && val) {
+            const r = JSON.parse(val);
+            if (tzRecValid_(r) && (!TZ_PREF.v || (+r.at || 0) > (+TZ_PREF.v.at || 0))) {
+              const was = tzUser();
+              TZ_PREF.v = r;
+              try { localStorage.setItem(tzLocalKey_(), val); } catch (e) {}
+              if (tzUser() !== was) tzApply_();
+            }
+          }
+        } catch (e) {}
+        finish();
+      });
+    } catch (e) { finish(); }
+  });
+}
+
+function tzSet(tz) {
+  tz = tzCanon_(tz);
+  if (!tzValid_(tz)) return;
+  const was = tzUser();
+  const rec = { tz, at: Date.now() };
+  TZ_PREF.v = rec;
+  const raw = JSON.stringify(rec);
+  try { localStorage.setItem(tzLocalKey_(), raw); } catch (e) {}
+  try { const cs = profileCloud_(); if (cs) cs.setItem(TZ_KEY, raw, () => {}); } catch (e) {}
+  if (tzUser() !== was) tzApply_(); else profileRenderChips_();
+}
+// Выбор в шторке сохраняется сразу, без кнопки.
+function tzPick(tz) {
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  tzSet(tz);
+}
+// Закрыли шторку, не трогая список: запоминаем показанный пояс, чтобы
+// больше о нём не спрашивать.
+function tzCommit_() {
+  if (TZ_PREF.v) return;
+  const sel = document.getElementById('pfTz');
+  tzSet(sel && sel.value ? sel.value : tzUser());
+}
+
+// Пересчёт после смены пояса: подписи, калькулятор и открытая страница.
+function tzApply_() {
+  if (document.readyState === 'loading') return;
+  profileRenderChips_();
+  tzRenderLabels_();
+  tzRenderSelect_();
+  CALC_REC.key = null;
+  if (document.getElementById('calcResults')?.innerHTML.trim()) runCalculator();
+  if (currentPage === 'statistics') {
+    wrDailyChartInstance?.destroy();
+    wrDailyChartInstance = null;
+    renderWrDailyChart('wrDailyChart', 30);
+  }
+  if (currentPage === 'stats-all') renderAllPeriods();
+  if (currentPage === 'stats-era') renderEraStats();
+  if (currentPage === 'stats-mexc') renderMexcStats();
+}
+
+// Подписи пояса: data-tz="user" - пояс пользователя (статистика),
+// data-tz="home" - варшавский (DEV и фильтры вебхука).
+function tzRenderLabels_() {
+  document.querySelectorAll('[data-tz]').forEach(el => {
+    const tz = el.dataset.tz === 'home' ? TZ_HOME : tzUser();
+    el.textContent = el.dataset.tzWrap === '0' ? tzLabel_(tz) : '(' + tzLabel_(tz) + ')';
+  });
+}
+
+// Выпадающий список в шторке: города по текущему смещению, пояс телефона
+// добавляем, если его нет в списке.
+function tzRenderSelect_() {
+  const sel = document.getElementById('pfTz');
+  if (!sel) return;
+  const cur = tzUser();
+  const ids = TZ_LIST.map(x => tzCanon_(x[0])).filter(tzValid_);
+  const dev = tzDevice_();
+  if (dev && !ids.includes(dev)) ids.push(dev);
+  if (!ids.includes(cur)) ids.push(cur);
+  const now = Date.now();
+  const opts = ids.map(id => ({ id, off: tzOffsetMin_(id, now), name: tzName_(id) }))
+    .sort((a, b) => a.off - b.off || a.name.localeCompare(b.name));
+  sel.innerHTML = opts.map(o =>
+    `<option value="${chanEsc_(o.id)}"${o.id === cur ? ' selected' : ''}>${chanEsc_(tzOffsetLabel_(o.id, now) + ' · ' + o.name)}</option>`).join('');
+}
+
+tzLoad_();
 
 // ===== NAVIGATION =====
 const history = [];
@@ -750,20 +951,173 @@ const COL_TIME = 12;
 const COL_DATE = 13;
 const COL_INDICATOR = 22;
 
+// ===== ВРЕМЯ СИГНАЛА: UTC → ВАРШАВА → ПОЯС ПОЛЬЗОВАТЕЛЯ =====
+// Источник правды - колонка A (timestamp): момент прихода сигнала. Колонки
+// «Время/Дата (Варшава)» - производные, и их формула в таблице могла не
+// знать о переходе на зимнее время. Поэтому время каждой строки считаем
+// сами: из A в UTC, из UTC - в нужный пояс по правилу его даты (летом
+// Варшава UTC+2, зимой UTC+1).
+// Колонку A gviz отдаёт либо ISO с «Z» (UTC), либо «dd.mm.yyyy HH:mm:ss» в
+// поясе самой таблицы. Какой у таблицы пояс, узнаём по летним строкам: если
+// A совпадает с «Время (Варшава)» - таблица в Варшаве, если отстаёт на 1-2
+// часа - в UTC (см. sheetDetectTz_).
+const TZ_HOME = 'Europe/Warsaw';
+const SHEET_TZ = { mode: null };          // 'warsaw' | 'utc' | 'cols' (только колонки M/N)
+const TZ_FMT = {};
+const TZ_OFF = {};
+
+function tzValid_(tz) {
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch (e) { return false; }
+}
+// Смещение пояса от UTC в минутах в момент ms. Внутри часа оно постоянно,
+// поэтому кэшируем по часу: тысячи строк - сотни обращений к Intl.
+function tzOffsetMin_(tz, ms) {
+  const h = Math.floor(ms / 36e5);
+  const key = tz + '|' + h;
+  if (TZ_OFF[key] != null) return TZ_OFF[key];
+  const f = TZ_FMT[tz] || (TZ_FMT[tz] = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }));
+  const p = {};
+  for (const x of f.formatToParts(new Date(h * 36e5))) p[x.type] = x.value;
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  return (TZ_OFF[key] = Math.round((asUtc - h * 36e5) / 6e4));
+}
+function tzParts_(ms, tz) {
+  const d = new Date(ms + tzOffsetMin_(tz, ms) * 6e4);
+  return { y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() };
+}
+const tzPad_ = n => String(n).padStart(2, '0');
+function tzDk_(p) { return `${p.y}-${tzPad_(p.mo)}-${tzPad_(p.d)}`; }
+// Варшавское «стенное» время → UTC. В ночь перехода на зимнее час 02:00-03:00
+// бывает дважды - берём первый, летний.
+function warsawToUtc_(y, mo, d, h, mi, s) {
+  const wall = Date.UTC(y, mo - 1, d, h, mi, s || 0);
+  for (const off of [120, 60]) {
+    const ms = wall - off * 6e4;
+    if (tzOffsetMin_(TZ_HOME, ms) === off) return ms;
+  }
+  return wall - 60 * 6e4;                 // весенний скачок: такого времени не было
+}
+// «dd.mm.yyyy HH:mm[:ss]» или «yyyy-mm-dd[ T]HH:mm[:ss]» без пояса.
+function sheetLocalParts_(s) {
+  s = String(s || '').trim();
+  let m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return { y: +m[3], mo: +m[2], d: +m[1], h: +m[4], mi: +m[5], s: +(m[6] || 0) };
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/);
+  if (m) return { y: +m[1], mo: +m[2], d: +m[3], h: +m[4], mi: +m[5], s: +(m[6] || 0) };
+  return null;
+}
+function sheetColsParts_(r) {
+  const dm = String(r[COL_DATE] || '').trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  const tm = String(r[COL_TIME] || '').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!dm || !tm) return null;
+  return { y: +dm[3], mo: +dm[2], d: +dm[1], h: +tm[1], mi: +tm[2], s: +(tm[3] || 0) };
+}
+const sheetIsoUtc_ = a => /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:?\d{2})$/.test(a);
+
+// Пояс таблицы: сравниваем A и «Время (Варшава)» на строках, где у обеих
+// есть время. Совпадают - 'warsaw'; M/N впереди на 1-2 часа - A в UTC.
+// Ни то ни другое - A не трогаем, верим колонкам M/N ('cols').
+function sheetDetectTz_(rows) {
+  if (SHEET_TZ.mode) return;
+  const cnt = { warsaw: 0, utc: 0, other: 0 };
+  for (let i = rows.length - 1; i >= 1 && cnt.warsaw + cnt.utc + cnt.other < 400; i--) {
+    const r = rows[i];
+    const a = String(r[0] || '').trim();
+    if (sheetIsoUtc_(a)) { SHEET_TZ.mode = 'warsaw'; return; }   // A уже в UTC - пояс таблицы не важен
+    const pa = sheetLocalParts_(a), pc = sheetColsParts_(r);
+    if (!pa || !pc) continue;
+    const diff = Math.round((Date.UTC(pc.y, pc.mo - 1, pc.d, pc.h, pc.mi) - Date.UTC(pa.y, pa.mo - 1, pa.d, pa.h, pa.mi)) / 6e4);
+    // ±1 минута: секунды в колонках отбрасываются, и на стыке минут бывает разница.
+    if (Math.abs(diff) <= 1) cnt.warsaw++;
+    else if (Math.abs(diff - 60) <= 1 || Math.abs(diff - 120) <= 1) cnt.utc++;
+    else cnt.other++;
+  }
+  const n = cnt.warsaw + cnt.utc + cnt.other;
+  SHEET_TZ.mode = !n ? 'cols' : cnt.warsaw >= n * 0.8 ? 'warsaw' : cnt.utc >= n * 0.8 ? 'utc' : 'cols';
+}
+
+// Момент сигнала в UTC (мс); null - время не разобрать. Кэш - в самой строке.
+function rowUtcMs_(r) {
+  if (!r) return null;
+  if (r._ts !== undefined) return r._ts;
+  let ts = null;
+  const a = String(r[0] || '').trim();
+  if (sheetIsoUtc_(a)) ts = Date.parse(a);
+  else {
+    const pa = SHEET_TZ.mode === 'warsaw' || SHEET_TZ.mode === 'utc' ? sheetLocalParts_(a) : null;
+    if (pa) ts = SHEET_TZ.mode === 'utc' ? Date.UTC(pa.y, pa.mo - 1, pa.d, pa.h, pa.mi, pa.s) : warsawToUtc_(pa.y, pa.mo, pa.d, pa.h, pa.mi, pa.s);
+    else {
+      // Пояс таблицы не определён - верим «Время/Дата (Варшава)», а у листов
+      // без этих колонок (MEXC) считаем варшавским само A.
+      const pc = sheetColsParts_(r) || sheetLocalParts_(a);
+      if (pc) ts = warsawToUtc_(pc.y, pc.mo, pc.d, pc.h, pc.mi, pc.s);
+    }
+  }
+  r._ts = ts != null && isFinite(ts) ? ts : null;
+  return r._ts;
+}
+// Переписывает «Время/Дату» строки в поясе tz (формат листа: HH:mm:ss и
+// dd.mm.yyyy). Строки без времени не трогаем.
+function rowSetTz_(r, tz) {
+  const ts = rowUtcMs_(r);
+  if (ts == null) return r;
+  const p = tzParts_(ts, tz);
+  r[COL_TIME] = `${tzPad_(p.h)}:${tzPad_(p.mi)}:${tzPad_(p.s)}`;
+  r[COL_DATE] = `${tzPad_(p.d)}.${tzPad_(p.mo)}.${p.y}`;
+  return r;
+}
+
+// Строки листа в поясе пользователя - для страниц статистики. DEV, «Зоны»,
+// лента сигналов и главная остаются на варшавском времени: по нему работают
+// фильтры вебхука и исполнитель. Копии кэшируем на набор строк и пояс.
+const TZ_VIEW = new WeakMap();
+function rowsInUserTz_(rows) {
+  const tz = tzUser();
+  if (!rows || tz === TZ_HOME) return rows;
+  const memo = TZ_VIEW.get(rows);
+  if (memo && memo.tz === tz) return memo.out;
+  const out = rows.map((r, i) => {
+    if (i === 0 || rowUtcMs_(r) == null) return r;
+    const c = r.slice();
+    c._ts = r._ts;
+    return rowSetTz_(c, tz);
+  });
+  TZ_VIEW.set(rows, { tz, out });
+  return out;
+}
+// То же для разобранных сигналов MEXC (у них время - в полях, а не в колонках).
+function sigToUserTz_(s) {
+  const tz = tzUser();
+  if (!s || s.ts == null || tz === TZ_HOME) return s;
+  const p = tzParts_(s.ts, tz);
+  return Object.assign({}, s, { dk: tzDk_(p), hour: p.h, minute: p.mi, second: p.s });
+}
+
 async function fetchAllSignals() {
   if (allSignalRows) return allSignalRows;
   const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=ALLsignal`;
   const res = await fetch(url);
   const text = await res.text();
-  allSignalRows = parseCSV(text);
+  const rows = parseCSV(text);
+  // Пояс таблицы - по этому листу; затем «Время/Дата (Варшава)» каждой
+  // строки пересчитываем из момента сигнала с учётом перехода на зимнее.
+  sheetDetectTz_(rows);
+  for (let i = 1; i < rows.length; i++) rowSetTz_(rows[i], TZ_HOME);
+  allSignalRows = rows;
   return allSignalRows;
 }
+// Остальные листы той же таблицы ждут определения её пояса.
+function sheetTzReady_() { return SHEET_TZ.mode ? Promise.resolve() : fetchAllSignals().catch(() => null); }
 
 // Заблокированные сигналы (не попали в отработку из-за лимита 5 окон и других фильтров).
 // Структура колонок идентична ALLsignal.
 async function fetchBlockedSignals() {
   if (blockedSignalRows) return blockedSignalRows;
+  await sheetTzReady_();
   const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=BLOCKEDsignal`;
   const res = await fetch(url);
@@ -778,6 +1132,7 @@ async function fetchBlockedSignals() {
 // в исходном наборе колонок хука её нет.
 async function fetchMexcSignals() {
   if (mexcSignalRows) return mexcSignalRows;
+  await sheetTzReady_();
   const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=MEXCsignal`;
   const res = await fetch(url);
@@ -795,6 +1150,7 @@ async function fetchMexcSignals() {
 // набор и показываем только то, что реально удалось прочитать.
 async function fetchMexc30Signals() {
   if (mexc30SignalRows) return mexc30SignalRows;
+  await sheetTzReady_();
   const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=MEXC30signal`;
   try {
@@ -1195,7 +1551,7 @@ function drawDailyWrChart(canvasId, sigs, days) {
 async function renderWrDailyChart(canvasId, days = 30) {
   if (wrDailyChartInstance) return;
   try {
-    const rows = await fetchAllSignals();
+    const rows = rowsInUserTz_(await fetchAllSignals());
     if (!rows || rows.length < 2) return;
     const sigs = rows.slice(1).map(devParseSignal).filter(Boolean);
     wrDailyChartInstance = drawDailyWrChart(canvasId, sigs, days);
@@ -1536,6 +1892,7 @@ function devParseSignal(r) {
     conf: devExtractConfidence(r),
     hour: (hour >= 0 && hour <= 23) ? hour : null,
     minute: (minute >= 0 && minute <= 59) ? minute : null,
+    ts: rowUtcMs_(r),
   };
 }
 
@@ -1576,12 +1933,19 @@ function mexcParseSignal(r) {
   const hour = tp ? parseInt(tp[1], 10) : NaN;
   const minute = tp ? parseInt(tp[2], 10) : NaN;
   const second = tp ? parseInt(tp[3], 10) : 0;
-  return {
+  const s = {
     res, dk, dir: dir === 'UP' ? 'UP' : 'DOWN', pair: sigPairBase(r[1]),
     hour: (hour >= 0 && hour <= 23) ? hour : null,
     minute: (minute >= 0 && minute <= 59) ? minute : null,
     second: (second >= 0 && second <= 59) ? second : 0,
+    ts: tp ? rowUtcMs_(r) : null,
   };
+  // A показана в поясе таблицы; дату и часы берём варшавские - из момента.
+  if (s.ts != null) {
+    const p = tzParts_(s.ts, TZ_HOME);
+    Object.assign(s, { dk: tzDk_(p), hour: p.h, minute: p.mi, second: p.s });
+  }
+  return s;
 }
 
 // BLOCKEDsignal отличается от ALLsignal раскладкой: блок [результат,
@@ -1603,7 +1967,8 @@ function devNormalizeBlockedRow(r) {
   c[COL_TIME]      = r[ri + 1];
   c[COL_DATE]      = r[ri + 2];
   c[COL_INDICATOR] = r[ri + 3];
-  return c;
+  // Время - из момента сигнала (колонка A), как и у ALLsignal.
+  return rowSetTz_(c, TZ_HOME);
 }
 
 // Сигналы за 30 дней из обоих листов + объединённые сырые строки (для DOW и Indicator)
@@ -4362,7 +4727,8 @@ async function renderAllPeriods() {
   try {
     const rows = await allpFetchRows_();
     if (!rows) return;
-    const slice = allpRowsFor_(rows, ALLP_STATE.code);
+    // Окно периода - по варшавским датам, часы и дни - в поясе пользователя.
+    const slice = rowsInUserTz_(allpRowsFor_(rows, ALLP_STATE.code));
     const parsed = slice.slice(1).map(r => [r, devParseSignal(r)]).filter(x => x[1]);
     const sigs = parsed.map(x => x[1]);
     const money = statsMoneyPro_(parsed, proPnlSig, proPnlRow);
@@ -4538,7 +4904,9 @@ async function renderEraStats() {
   try {
     const cache = await eraFetchRows_();
     if (!cache) return;
-    const eraRows = eraRowsFor_(cache, eraSrc_());
+    // Граница «с 1 июня» - по Варшаве (там считается сама система), часы и
+    // дни - в поясе пользователя.
+    const eraRows = rowsInUserTz_(eraRowsFor_(cache, eraSrc_()));
     const parsed = eraRows.slice(1).map(r => [r, devParseSignal(r)]).filter(x => x[1]);
     const sigs = parsed.map(x => x[1]);
     const money = statsMoneyPro_(parsed, eraPnlSig_, eraPnlRow_);
@@ -4978,7 +5346,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
 }
 
 // ===== ЧЕК-ЛИСТ "КОНФИГУРАЦИИ НА УДАЛЕНИЕ" (вкладка DEV_BADLIST) =====
-// Вкладку строит GitHub Actions ежедневно ~05:00 по Варшаве (scripts/dev_badlist.py):
+// Вкладку строит GitHub Actions ежедневно в 02:37 UTC (scripts/dev_badlist.py):
 // активные конфигурации, у которых WR за последние 4 дня ниже безубытка 55.6%.
 function devEscapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -4988,6 +5356,15 @@ function devEscapeHtml(s) {
 // отметки (+12ч слака на часовые пояса) конфигурация продолжает слать сигналы -
 // значит, реально не удалена, и пункт возвращается с предупреждением.
 const DEV_BADLIST_DEL_KEY = 'fp_dev_badlist_deleted';
+// Расписание задачи - в UTC (.github/workflows/dev-badlist.yml: 37 2 * * *),
+// поэтому по Варшаве это 04:37 летом и 03:37 зимой.
+const DEV_BADLIST_CRON_UTC = [2, 37];
+function devBadlistRunAt_() {
+  const now = new Date();
+  const ms = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), DEV_BADLIST_CRON_UTC[0], DEV_BADLIST_CRON_UTC[1]);
+  const p = tzParts_(ms, TZ_HOME);
+  return `${tzPad_(p.h)}:${tzPad_(p.mi)}`;
+}
 function devGetBadlistDeleted() { try { return JSON.parse(localStorage.getItem(DEV_BADLIST_DEL_KEY) || '{}'); } catch (e) { return {}; } }
 function devSetBadlistDeleted(map) { try { localStorage.setItem(DEV_BADLIST_DEL_KEY, JSON.stringify(map)); } catch (e) {} }
 
@@ -5080,7 +5457,7 @@ async function devRenderToplist() {
     const data = rows.slice(1).filter(r => (r[0] || '').trim());
     if (!data.length) return;
     const updated = (data[0][9] || '').trim();
-    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~05:00`;
+    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~${devBadlistRunAt_()}`;
 
     if (data.length === 1 && data[0][0].trim() === 'OK') {
       listEl.innerHTML = '<div class="dev-urgent-empty">Пока нет конфигураций, проходящих порог: 20+ сигналов за 30 дней с WR выше безубытка.</div>';
@@ -5126,7 +5503,7 @@ async function devRenderBadlist() {
     const data = rows.slice(1).filter(r => (r[0] || '').trim());
     if (!data.length) return;
     const updated = (data[0][7] || '').trim();
-    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~05:00`;
+    if (updEl && updated) updEl.textContent = `Обновлено: ${updated} (Варшава) · пересчёт каждое утро ~${devBadlistRunAt_()}`;
     devBadlistData = data;
     devRenderBadlistList();
     card.style.display = 'block';
@@ -5592,7 +5969,13 @@ async function fetchBranchSignals_(branch) {
         const dk = devDateKey(datePart);
         if (!dk) return null;
         const dir = String(r[2] || '').trim().toUpperCase();
-        return { dk, time: sigPadTime_(timePart), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: String(r[resIdx]).trim() };
+        // Лента - по варшавскому времени; момент (UTC) - для маркеров графика.
+        const ts = rowUtcMs_(r);
+        const p = ts != null ? tzParts_(ts, TZ_HOME) : null;
+        return {
+          dk: p ? tzDk_(p) : dk, time: p ? `${tzPad_(p.h)}:${tzPad_(p.mi)}:${tzPad_(p.s)}` : sigPadTime_(timePart),
+          pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res: String(r[resIdx]).trim(), ts,
+        };
       }).filter(Boolean);
     });
   }
@@ -5612,7 +5995,7 @@ async function fetchBranchSignals_(branch) {
     const dk = devDateKey(r[COL_DATE]);
     if (!dk) return null;
     const dir = String(r[2] || '').trim().toUpperCase();
-    return { dk, time: sigPadTime_(r[COL_TIME]), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res };
+    return { dk, time: sigPadTime_(r[COL_TIME]), pair: sigPairBase(r[1]), dir: dir === 'UP' ? 'UP' : 'DOWN', price: r[3] || '', res, ts: rowUtcMs_(r) };
   }).filter(Boolean);
 }
 
@@ -5776,8 +6159,11 @@ function buildSignalMarkers(allSigs, coin, startKey, endKey, candles, tfSec) {
     const price = parseFloat(String(s.price).replace(',', '.')) || 0;
     const tp = (s.time || '0:0:0').split(':');
     const hh = parseInt(tp[0]) || 0, mm = parseInt(tp[1]) || 0, ss = parseInt(tp[2]) || 0;
-    const baseUnix = Math.floor(Date.UTC(yy, mo - 1, dd, hh, mm, ss) / 1000);
-    sigs.push({ baseUnix, dir: s.dir, res: s.res, price });
+    // Момент сигнала известен в UTC - ставим маркер прямо по нему. Иначе
+    // время листа читается как UTC и сдвиг подбирается ниже.
+    const utc = s.ts != null;
+    const baseUnix = utc ? Math.floor(s.ts / 1000) : Math.floor(Date.UTC(yy, mo - 1, dd, hh, mm, ss) / 1000);
+    sigs.push({ baseUnix, dir: s.dir, res: s.res, price, utc });
   }
   if (!sigs.length || !candles.length) return [];
 
@@ -5788,8 +6174,12 @@ function buildSignalMarkers(allSigs, coin, startKey, endKey, candles, tfSec) {
     return c && s.price >= c.low && s.price <= c.high;
   };
 
+  // Один сдвиг на весь период ломался на переходе на зимнее время: половина
+  // маркеров вставала на час мимо. С моментом в UTC сдвиг не нужен.
   let off;
-  if (SIG_TZ_OVERRIDE_MIN != null) {
+  if (sigs.every(s => s.utc)) {
+    off = 0;
+  } else if (SIG_TZ_OVERRIDE_MIN != null) {
     off = SIG_TZ_OVERRIDE_MIN;
   } else {
     // авто-подбор: только целочасовые сдвиги (реальные таймзоны), оценка по попаданию цены в свечу
@@ -6323,10 +6713,10 @@ async function calcComputeRecommendations_() {
   // никогда не смог бы вернуться в рекомендацию.
   const days = calcActiveDays_();
   const hours = calcActiveHours_();
-  const key = [...days].sort().join(',') + '|' + [...hours].sort((x, y) => x - y).join(',');
+  const key = [...days].sort().join(',') + '|' + [...hours].sort((x, y) => x - y).join(',') + '|' + tzUser();
   if (CALC_REC.key === key) return CALC_REC;
 
-  const rows = await fetchAllSignals();
+  const rows = rowsInUserTz_(await fetchAllSignals());
   if (!rows || rows.length < 2) return CALC_REC;
   const since = new Date(+ERA_SINCE_DK.slice(0, 4), +ERA_SINCE_DK.slice(5, 7) - 1, +ERA_SINCE_DK.slice(8, 10));
 
@@ -6557,7 +6947,8 @@ async function runCalculator() {
     // === NEW: Direction filter ===
     const activeDir = document.querySelector('.calc-dir-btn.active')?.dataset?.dir || 'ALL';
 
-    const rows = await fetchAllSignals();
+    // Часы и дни - в поясе пользователя (выбран в шторке профиля).
+    const rows = rowsInUserTz_(await fetchAllSignals());
     if (!rows || rows.length < 2) { results.innerHTML = `<div class="calc-error">${t('calc.no.data')}</div>`; return; }
     // Час берём из COL_TIME - той же колонки, что и все остальные отчёты.
     // Раньше первой пробовалась колонка 19: она осталась от старой раскладки
@@ -6619,8 +7010,9 @@ async function runCalculator() {
       st[key].p += win ? wP : lP;
       tradeDays[row[COL_DATE]] = true;
       const tm = String(row[COL_TIME] || '').match(/^\s*\d{1,2}:(\d{2})/);
+      const rts = rowUtcMs_(row);
       trades.push({
-        ts: dt.getTime() + hour * 36e5 + (tm ? +tm[1] : 0) * 6e4,
+        ts: rts != null ? rts : dt.getTime() + hour * 36e5 + (tm ? +tm[1] : 0) * 6e4,
         day: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`,
         isETH, win,
       });
@@ -7240,10 +7632,11 @@ async function mexcStatsSignals(days) {
     if (!rows || rows.length < 2) return [];
     const altIdx = mexcAltIdx_(rows);
     return rows.slice(1).map(r => {
-      const s = mexcParseSignal(r);
+      let s = mexcParseSignal(r);
       if (s) {
         s.src = k;
         s.alt = altIdx >= 0 && /^alt/i.test(String(r[altIdx] || '').trim());
+        s = sigToUserTz_(s);
       }
       return s;
     }).filter(s => s && s.dk >= cutoff);
@@ -7267,6 +7660,7 @@ const MEXC_SLOT_MARGIN_MIN = 1;
 const MEXC_SLOTS_MAX = 5;
 
 function mexcSignalTs_(s) {
+  if (s.ts != null) return s.ts;
   const [y, m, d] = s.dk.split('-').map(Number);
   return new Date(y, m - 1, d, s.hour || 0, s.minute || 0, s.second || 0).getTime();
 }

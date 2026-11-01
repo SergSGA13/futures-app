@@ -11,7 +11,8 @@ import pathlib
 
 HERE = pathlib.Path(__file__).parent
 PARTS = ['01_config.gs', '02_initdata.gs', '03_miniapp_api.gs',
-         '04_join_request.gs', '05_setup.gs', '06_install.gs']
+         '04_join_request.gs', '05_setup.gs', '06_install.gs',
+         '08_weekly_report.gs']
 STANDALONE = '07_standalone_doPost.gs'
 
 COMMON = """ * ЭТО СОБРАННЫЙ ФАЙЛ, РУКАМИ ЕГО НЕ ПРАВЯТ. Исходники лежат рядом,

@@ -779,6 +779,7 @@ const navMap = {
   'futures-prediction': 'nav-futures-prediction',
   'statistics': 'nav-statistics',
   'stats-l30d-dev': 'nav-statistics',
+  'stats-weekly': 'nav-statistics',
   'stats-all': 'nav-statistics',
   'stats-era': 'nav-statistics',
   'stats-mexc': 'nav-statistics',
@@ -793,6 +794,7 @@ const pageTitleKeys = {
   'articles': 'title.art',
   'statistics': 'title.stats',
   'stats-l30d-dev': 'title.stats.l30d.dev',
+  'stats-weekly': 'title.weekly',
   'stats-all': 'title.stats.all',
   'stats-era': 'title.stats.era',
   'stats-mexc': 'title.stats.mexc',
@@ -822,7 +824,8 @@ function navigate(pageId) {
   updateHeader(pageId);
   updateNav(pageId);
   syncPageAnimations_();
-  if (/^stat/.test(pageId) && pageId !== 'stats-l30d-dev') profileMaybeAsk_();
+  // DEV и недельный отчёт профиль не слушают - там боевые ставки.
+  if (/^stat/.test(pageId) && pageId !== 'stats-l30d-dev' && pageId !== 'stats-weekly') profileMaybeAsk_();
 
   if (pageId === 'statistics') { devGateApply(); devGateTapHook(document.getElementById('statsTitleTap')); renderWrDailyChart('wrDailyChart', 30); renderPeriodComparison(); renderAnalTables(); }
   if (pageId === 'stats-l30d-dev') {
@@ -830,6 +833,11 @@ function navigate(pageId) {
     if (!devGateUnlocked()) { goBack(); devGateOpen(); return; }
     devBuildTabs_();
     renderDevL30d(); devRenderUpdatedAt();
+  }
+  if (pageId === 'stats-weekly') {
+    // Как и DEV - только за замком.
+    if (!devGateUnlocked()) { goBack(); devGateOpen(); return; }
+    wkOpen_();
   }
   if (pageId === 'stats-all')  { initAllPeriodsUI(); renderAllPeriods(); }
   if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
@@ -3186,8 +3194,10 @@ async function devGateHash_(text) {
 
 // Кнопка раздела видна только разблокировавшим: прятать её - и есть смысл замка.
 function devGateApply() {
-  const btn = document.getElementById('devEntryBtn');
-  if (btn) btn.style.display = devGateUnlocked() ? '' : 'none';
+  for (const id of ['devEntryBtn', 'weeklyEntryBtn']) {
+    const btn = document.getElementById(id);
+    if (btn) btn.style.display = devGateUnlocked() ? '' : 'none';
+  }
 }
 
 function devGateClose() {
@@ -8377,6 +8387,499 @@ function initMexcStatsUI() {
     });
   }
 
+}
+
+// ===== НЕДЕЛЬНЫЙ ОТЧЁТ: СЛАЙД 4:5 ДЛЯ TELEGRAM =====
+// Раньше итоги недели собирались скриншотами с трёх вкладок и склейкой в
+// редакторе. Здесь тот же набор - цифры недели, PNL новой системы и MEXC на
+// одной шкале, пары за неделю, WR по месяцам - рисуется одним слайдом
+// 1080×1350 (в файле - вдвое крупнее) и уходит PNG, PDF или ботом в личку.
+//
+// Неделя - понедельник..воскресенье по Варшаве, считается из самих
+// сигналов, а не из листа «Last 7 Days»: тот скользящий, и цифры зависели
+// бы от момента скриншота. В статистику идут только WIN и LOSE.
+// Деньги - на депозит 5 000 USDT с боевыми ставками, независимо от профиля:
+// так недели сравнимы между собой.
+const WK = { mon: null, data: null, canvas: null, busy: false };
+const WK_DEP = 5000;
+const WK_W = 1080, WK_H = 1350, WK_S = 2;
+const WK_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A' };
+
+function wkAddDays_(dk, n) {
+  const [y, m, d] = dk.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return `${t.getUTCFullYear()}-${tzPad_(t.getUTCMonth() + 1)}-${tzPad_(t.getUTCDate())}`;
+}
+// Понедельник недели, в которую попадает дата.
+function wkMonday_(dk) {
+  const [y, m, d] = dk.split('-').map(Number);
+  const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+  return wkAddDays_(dk, -dow);
+}
+function wkFmt_(dk) { return `${dk.slice(8, 10)}.${dk.slice(5, 7)}`; }
+// По умолчанию - последняя закрытая неделя.
+function wkDefaultMonday_() { return wkAddDays_(wkMonday_(warsawNow_().dk), -7); }
+
+function wkStat_(sigs) {
+  let w = 0, l = 0;
+  for (const s of sigs) { if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++; }
+  return { w, l, n: w + l, wr: w + l ? w / (w + l) * 100 : null };
+}
+
+async function wkCompute_(mon) {
+  const sun = wkAddDays_(mon, 6);
+  const prevMon = wkAddDays_(mon, -7), prevSun = wkAddDays_(mon, -1);
+  const rows = await fetchAllSignals();
+  const all = rows.slice(1).map(devParseSignal).filter(s => s && (s.res === 'WIN' || s.res === 'LOSE') && s.dk <= sun);
+  const inWeek = (s, a, b) => s.dk >= a && s.dk <= b;
+  const week = all.filter(s => inWeek(s, mon, sun));
+  const prev = all.filter(s => inWeek(s, prevMon, prevSun));
+
+  // Пары за неделю: ETH/BTC × UP/DOWN.
+  const pairs = ['ETH', 'BTC'].map(p => {
+    const up = wkStat_(week.filter(s => s.pair === p && s.dir === 'UP'));
+    const dn = wkStat_(week.filter(s => s.pair === p && s.dir === 'DOWN'));
+    return { pair: p, up, dn, tot: wkStat_(week.filter(s => s.pair === p)) };
+  });
+  const tot = { up: wkStat_(week.filter(s => s.dir === 'UP')), dn: wkStat_(week.filter(s => s.dir === 'DOWN')), tot: wkStat_(week) };
+
+  // Новая система: с 1 июня по конец недели, боевые ставки PRO.
+  const era = all.filter(s => s.dk >= ERA_SINCE_DK);
+  const proPnl = s => { const st = PRO_STAKE_MAX[s.pair] || PRO_STAKE_MAX.ETH; return s.res === 'WIN' ? st * WR_PAYOUT : -st; };
+
+  // MEXC: оба листа, лимит 5 ставок (как в ветке по умолчанию), боевые ставки.
+  let mexc = [];
+  try {
+    const sheets = await Promise.all(Object.keys(MEXC_SOURCES).map(async k => {
+      const r = await MEXC_SOURCES[k].fetch();
+      if (!r || r.length < 2) return [];
+      return r.slice(1).map(x => { const s = mexcParseSignal(x); if (s) s.src = k; return s; }).filter(Boolean);
+    }));
+    mexc = mexcApplySlotLimit_(sheets.flat().filter(s => s.res === 'WIN' || s.res === 'LOSE'))
+      .filter(s => s.dk >= ERA_SINCE_DK && s.dk <= sun);
+  } catch (e) { console.log('weekly MEXC error:', e); }
+  const mexcPnl = s => {
+    const exp = s.src === '30m' ? '30m' : '10m';
+    const st = mexcStakeMax_(exp, s.pair);
+    return s.res === 'WIN' ? st * MEXC_PAYOUT[exp] : -st;
+  };
+
+  // Общая ось дат с 1 июня по воскресенье; дни без сделок держат уровень.
+  const days = [];
+  for (let dk = ERA_SINCE_DK; dk <= sun; dk = wkAddDays_(dk, 1)) days.push(dk);
+  const curve = (sigs, fn) => {
+    const daily = {};
+    for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + fn(s);
+    const first = sigs.reduce((m, s) => (!m || s.dk < m ? s.dk : m), null);
+    let cum = 0;
+    return days.map(dk => {
+      cum += daily[dk] || 0;
+      return first && dk >= first ? Math.round(cum / WK_DEP * 1000) / 10 : null;
+    });
+  };
+  const weekPct = (sigs, fn) => sigs.filter(s => inWeek(s, mon, sun)).reduce((a, s) => a + fn(s), 0) / WK_DEP * 100;
+
+  // WR по месяцам новой системы - до конца недели.
+  const months = {};
+  for (const s of era) {
+    const k = s.dk.slice(0, 7);
+    const m = (months[k] = months[k] || { w: 0, l: 0 });
+    if (s.res === 'WIN') m.w++; else m.l++;
+  }
+
+  return {
+    mon, sun,
+    week: wkStat_(week), prev: wkStat_(prev), total: wkStat_(all),
+    pairs, tot,
+    days,
+    pro: { curve: curve(era, proPnl), weekPct: weekPct(era, proPnl), stat: wkStat_(week) },
+    mexc: { curve: curve(mexc, mexcPnl), weekPct: weekPct(mexc, mexcPnl), stat: wkStat_(mexc.filter(s => inWeek(s, mon, sun))), has: mexc.length > 0 },
+    months: Object.keys(months).sort().map(k => ({ k, n: months[k].w + months[k].l, wr: months[k].w / (months[k].w + months[k].l) * 100 })),
+  };
+}
+
+// ---- Рисование ----
+function wkLoadImg_(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
+function wkRound_(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function wkCard_(c, x, y, w, h, r) {
+  c.save();
+  wkRound_(c, x, y, w, h, r || 22);
+  c.fillStyle = 'rgba(11, 14, 30, 0.86)'; c.fill();
+  c.strokeStyle = 'rgba(34, 232, 255, 0.20)'; c.lineWidth = 1.5; c.stroke();
+  c.restore();
+}
+function wkText_(c, txt, x, y, font, color, align) {
+  c.font = font; c.fillStyle = color; c.textAlign = align || 'left'; c.textBaseline = 'alphabetic';
+  c.fillText(txt, x, y);
+}
+// Разбивка текста на строки по ширине (шрифт - уже выставленный в c).
+function wkLines_(c, txt, maxW) {
+  const out = [];
+  let line = '';
+  for (const w of txt.split(' ')) {
+    const t = line ? line + ' ' + w : w;
+    if (c.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t;
+  }
+  if (line) out.push(line);
+  return out;
+}
+const WK_FONT = '-apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+const wkF_ = (w, px) => `${w} ${px}px ${WK_FONT}`;
+const wkO_ = (w, px) => `${w} ${px}px "Orbitron FP", ${WK_FONT}`;
+
+// Chart.js рисуем на отдельном холсте нужного размера и переносим картинкой.
+function wkChartImg_(w, h, cfg) {
+  const host = document.createElement('div');
+  host.style.cssText = `position:fixed;left:-20000px;top:0;width:${w}px;height:${h}px`;
+  const cv = document.createElement('canvas');
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = w; cv.height = h;
+  host.appendChild(cv);
+  document.body.appendChild(host);
+  cfg.options = Object.assign({ responsive: false, animation: false, devicePixelRatio: WK_S }, cfg.options);
+  const ch = new Chart(cv, cfg);
+  return { cv, done: () => { ch.destroy(); host.remove(); } };
+}
+
+async function wkDraw_(d) {
+  const cv = document.createElement('canvas');
+  cv.width = WK_W * WK_S; cv.height = WK_H * WK_S;
+  const c = cv.getContext('2d');
+  c.scale(WK_S, WK_S);
+  try { await document.fonts.load('900 40px "Orbitron FP"'); } catch (e) {}
+  const [bg, logo] = await Promise.all([wkLoadImg_('brand/bg-portrait-1170x2532.jpg').catch(() => null), wkLoadImg_('logo.png').catch(() => null)]);
+
+  // Фон: сцена «по ширине», сверху затемнение - чтобы карточки читались.
+  c.fillStyle = '#05060E'; c.fillRect(0, 0, WK_W, WK_H);
+  if (bg) {
+    const k = Math.max(WK_W / bg.width, WK_H / bg.height);
+    c.drawImage(bg, (WK_W - bg.width * k) / 2, (WK_H - bg.height * k) / 2, bg.width * k, bg.height * k);
+  }
+  const ov = c.createLinearGradient(0, 0, 0, WK_H);
+  ov.addColorStop(0, 'rgba(5,6,14,0.30)'); ov.addColorStop(1, 'rgba(5,6,14,0.62)');
+  c.fillStyle = ov; c.fillRect(0, 0, WK_W, WK_H);
+
+  // Шапка
+  const P = 44;
+  if (logo) {
+    c.save(); c.shadowColor = 'rgba(157,80,255,0.55)'; c.shadowBlur = 30;
+    wkRound_(c, P, 52, 100, 100, 24); c.clip(); c.drawImage(logo, P, 52, 100, 100); c.restore();
+  }
+  c.save();
+  if ('letterSpacing' in c) c.letterSpacing = '3px';
+  wkText_(c, 'FUTURES', P + 122, 92, wkO_(900, 46), '#82A9F5');
+  wkText_(c, 'PREDICTION', P + 122, 144, wkO_(900, 46), '#B26AFF');
+  c.shadowColor = 'rgba(34,232,255,0.5)'; c.shadowBlur = 16;
+  wkText_(c, 'WEEKLY RESULTS', P + 124, 180, wkO_(700, 19), '#22E8FF');
+  c.restore();
+  c.save();
+  if ('letterSpacing' in c) c.letterSpacing = '2px';
+  wkText_(c, `${wkFmt_(d.mon)} – ${wkFmt_(d.sun)}`, WK_W - P, 106, wkO_(800, 36), '#FFFFFF', 'right');
+  c.restore();
+  wkText_(c, `${d.sun.slice(0, 4)} · неделя Пн–Вс · время Варшавы`, WK_W - P, 140, wkF_(600, 16), '#8A93BF', 'right');
+
+  // Четыре цифры
+  const gw = (WK_W - P * 2 - 16) / 2, kh = 112;
+  const kpi = (x, y, val, color, label, extra) => {
+    wkCard_(c, x, y, gw, kh, 18);
+    wkText_(c, val, x + 22, y + 60, wkF_(800, 44), color);
+    if (extra) {
+      c.font = wkF_(800, 44);
+      const vx = x + 22 + c.measureText(val).width + 12;
+      wkText_(c, extra.t, vx, y + 54, wkF_(700, 21), extra.c);
+    }
+    wkText_(c, label, x + 22, y + 92, wkF_(600, 17), '#8A93BF');
+  };
+  const fmtWr = v => v == null ? '–' : v.toFixed(1) + '%';
+  let delta = null;
+  if (d.week.wr != null && d.prev.wr != null) {
+    const dv = d.week.wr - d.prev.wr;
+    delta = { t: `${dv >= 0 ? '▲' : '▼'} ${Math.abs(dv).toFixed(1)} п.п.`, c: dv >= 0 ? '#4EFFA0' : '#FF5272' };
+  }
+  const ky = 200;
+  kpi(P, ky, fmtWr(d.week.wr), wrHex(d.week.wr || 0), 'WinRate за неделю' + (delta ? ' · к прошлой неделе' : ''), delta);
+  kpi(P + gw + 16, ky, String(d.week.n), '#B98BFF', 'Сигналов за неделю');
+  kpi(P, ky + kh + 14, fmtWr(d.total.wr), wrHex(d.total.wr || 0), 'WinRate за всё время');
+  kpi(P + gw + 16, ky + kh + 14, profileFmtNum_(d.total.n), '#B98BFF', 'Сигналов всего');
+
+  // PNL: новая система и MEXC на одной шкале
+  const py = ky + kh * 2 + 14 + 20, ph = 440;
+  wkCard_(c, P, py, WK_W - P * 2, ph);
+  wkText_(c, 'Total PNL — новая система и MEXC', P + 24, py + 40, wkF_(700, 22), '#FFFFFF');
+  const leg = (x, y, color, name, b) => {
+    c.save(); c.fillStyle = color; c.shadowColor = color; c.shadowBlur = 10;
+    c.beginPath(); c.arc(x + 6, y - 6, 6, 0, Math.PI * 2); c.fill(); c.restore();
+    const wp = b.weekPct, st = b.stat;
+    const txt = `${name}: неделя ${wp >= 0 ? '+' : ''}${wp.toFixed(1)}%` + (st.n ? ` · WR ${st.wr.toFixed(1)}% (${st.n})` : '');
+    wkText_(c, txt, x + 20, y, wkF_(600, 17), '#E8EAFF');
+    c.font = wkF_(600, 17);
+    return x + 20 + c.measureText(txt).width + 26;
+  };
+  let lx = leg(P + 24, py + 74, WK_COLORS.PRO, 'Новая система', d.pro);
+  if (d.mexc.has) leg(lx, py + 74, WK_COLORS.MEXC, 'MEXC', d.mexc);
+
+  const cw = WK_W - P * 2 - 28, chH = ph - 104;
+  const wkFrom = d.days.indexOf(d.mon), wkTo = d.days.length - 1;
+  const ds = [{ label: 'Новая система', data: d.pro.curve, color: WK_COLORS.PRO }];
+  if (d.mexc.has) ds.push({ label: 'MEXC', data: d.mexc.curve, color: WK_COLORS.MEXC });
+  const pnlImg = wkChartImg_(cw, chH, {
+    type: 'line',
+    data: {
+      labels: d.days.map(wkFmt_),
+      datasets: [
+        ...ds.map(x => ({ data: x.data, fillOnly: true, borderWidth: 0, pointRadius: 0, fill: 'origin', tension: 0.25, spanGaps: false,
+          backgroundColor: hexA(x.color, 0.16) })),
+        ...ds.map(x => ({ data: x.data, neon: true, borderColor: x.color, borderWidth: 3, pointRadius: 0, fill: false, tension: 0.25, spanGaps: false })),
+      ],
+    },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      layout: { padding: { top: 6, right: 6 } },
+      scales: {
+        x: { ticks: { color: '#8A93BF', maxTicksLimit: 6, maxRotation: 0, font: { size: 15 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { ticks: { color: '#8A93BF', font: { size: 15 }, callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+      },
+    },
+    plugins: [neonGlowPlugin, {
+      // Отчётная неделя - подсвеченной полосой.
+      id: 'wkBand',
+      beforeDatasetsDraw(ch) {
+        if (wkFrom < 0) return;
+        const xs = ch.scales.x, a = ch.chartArea;
+        const x0 = xs.getPixelForValue(wkFrom), x1 = xs.getPixelForValue(wkTo);
+        const cc = ch.ctx;
+        cc.save();
+        cc.fillStyle = 'rgba(34,232,255,0.10)'; cc.fillRect(x0, a.top, Math.max(2, x1 - x0), a.bottom - a.top);
+        cc.strokeStyle = 'rgba(34,232,255,0.45)'; cc.setLineDash([4, 4]); cc.beginPath(); cc.moveTo(x0, a.top); cc.lineTo(x0, a.bottom); cc.stroke();
+        cc.restore();
+      },
+    }, {
+      id: 'wkZero',
+      beforeDatasetsDraw(ch) {
+        const y = ch.scales.y.getPixelForValue(0), a = ch.chartArea, cc = ch.ctx;
+        if (y < a.top || y > a.bottom) return;
+        cc.save(); cc.strokeStyle = 'rgba(255,255,255,0.18)'; cc.beginPath(); cc.moveTo(a.left, y); cc.lineTo(a.right, y); cc.stroke(); cc.restore();
+      },
+    }],
+  });
+  c.drawImage(pnlImg.cv, P + 14, py + 92, cw, chH);
+  pnlImg.done();
+
+  // Подпись внизу считаем заранее: её высота задаёт высоту нижних карточек.
+  c.font = wkF_(500, 15);
+  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: новая система - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно.', WK_W - P * 2);
+  const footLh = 21, footTop = WK_H - 30 - (footLines.length - 1) * footLh;
+
+  // Пары за неделю
+  const ry = py + ph + 18, rh = footTop - 30 - ry, rw = (WK_W - P * 2 - 16) / 2;
+  wkCard_(c, P, ry, rw, rh);
+  c.save(); c.fillStyle = '#22E8FF'; c.shadowColor = '#22E8FF'; c.shadowBlur = 10; c.fillRect(P + 22, ry + 26, 10, 10); c.restore();
+  wkText_(c, 'По парам — неделя', P + 42, ry + 38, wkF_(700, 21), '#FFFFFF');
+  const cols = [P + 20, P + 140, P + 204, P + 282, P + 344, P + 402, P + rw - 18];
+  const hy = ry + 82;
+  ['', '↑ Всего', '↑ WR', '↓ Всего', '↓ WR', 'Всего', 'WR'].forEach((h, i) =>
+    wkText_(c, h, cols[i], hy, wkF_(600, 14), '#8A93BF', i ? 'right' : 'left'));
+  const wrCell = s => s.n ? s.wr.toFixed(0) + '%' : '–';
+  const row = (y, name, r, bold) => {
+    const f = wkF_(bold ? 800 : 600, 18);
+    wkText_(c, name, cols[0], y, f, '#FFFFFF');
+    wkText_(c, String(r.up.n), cols[1], y, f, '#E8EAFF', 'right');
+    wkText_(c, wrCell(r.up), cols[2], y, f, r.up.n ? wrHex(r.up.wr) : '#8A93BF', 'right');
+    wkText_(c, String(r.dn.n), cols[3], y, f, '#E8EAFF', 'right');
+    wkText_(c, wrCell(r.dn), cols[4], y, f, r.dn.n ? wrHex(r.dn.wr) : '#8A93BF', 'right');
+    wkText_(c, String(r.tot.n), cols[5], y, f, '#E8EAFF', 'right');
+    wkText_(c, r.tot.n ? r.tot.wr.toFixed(1) + '%' : '–', cols[6], y, f, r.tot.n ? wrHex(r.tot.wr) : '#8A93BF', 'right');
+    c.save(); c.strokeStyle = 'rgba(255,255,255,0.06)'; c.beginPath(); c.moveTo(P + 18, y - 28); c.lineTo(P + rw - 14, y - 28); c.stroke(); c.restore();
+  };
+  row(hy + 46, 'ETH', d.pairs[0]);
+  row(hy + 92, 'BTC', d.pairs[1]);
+  row(hy + 138, 'ИТОГО', d.tot, true);
+
+  // WR по месяцам новой системы
+  const mx = P + rw + 16;
+  wkCard_(c, mx, ry, rw, rh);
+  c.save(); c.fillStyle = '#FFD166'; c.shadowColor = '#FFD166'; c.shadowBlur = 10; c.fillRect(mx + 22, ry + 26, 10, 10); c.restore();
+  wkText_(c, 'WinRate по месяцам', mx + 42, ry + 38, wkF_(700, 21), '#FFFFFF');
+  wkText_(c, 'новая система', mx + 42, ry + 62, wkF_(600, 15), '#8A93BF');
+  const MN = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+  const mons = d.months.slice(-6);
+  // Шкала с шагом 5%: иначе верхняя метка («72%») налезала на соседнюю.
+  const lo = Math.min(50, Math.floor((Math.min(...mons.map(m => m.wr), WR_BREAKEVEN) - 2) / 5) * 5);
+  const hi = Math.max(65, Math.ceil((Math.max(...mons.map(m => m.wr)) + 4) / 5) * 5);
+  const monImg = wkChartImg_(rw - 24, rh - 84, {
+    type: 'bar',
+    data: { labels: mons.map(m => MN[+m.k.slice(5, 7) - 1]), datasets: [{ data: mons.map(m => +m.wr.toFixed(1)), borderRadius: 8, backgroundColor: mons.map(m => wrRgba(m.wr).replace('0.65', '0.88')) }] },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      layout: { padding: { top: 26 } },
+      scales: {
+        x: { ticks: { color: '#8A93BF', font: { size: 15 } }, grid: { display: false } },
+        y: { min: lo, max: hi, ticks: { color: '#8A93BF', font: { size: 13 }, callback: v => v + '%', stepSize: 5 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+      },
+    },
+    plugins: [{
+      id: 'wkLbl',
+      afterDatasetsDraw(ch) {
+        const cc = ch.ctx;
+        ch.getDatasetMeta(0).data.forEach((b, i) => {
+          cc.save(); cc.fillStyle = '#FFFFFF'; cc.font = wkF_(700, 15); cc.textAlign = 'center';
+          cc.fillText(mons[i].wr.toFixed(1) + '%', b.x, b.y - 8); cc.restore();
+        });
+        const y = ch.scales.y.getPixelForValue(WR_BREAKEVEN), a = ch.chartArea;
+        cc.save(); cc.setLineDash([6, 5]); cc.strokeStyle = '#FFD166'; cc.lineWidth = 2;
+        cc.beginPath(); cc.moveTo(a.left, y); cc.lineTo(a.right, y); cc.stroke(); cc.restore();
+      },
+    }],
+  });
+  c.drawImage(monImg.cv, mx + 12, ry + 76, rw - 24, rh - 84);
+  monImg.done();
+
+  // Подпись: как считали
+  footLines.forEach((ln, i) => wkText_(c, ln, P, footTop + i * footLh, wkF_(500, 15), '#8A93BF'));
+  return cv;
+}
+
+// ---- Файлы ----
+function wkBlob_(cv, type, q) { return new Promise(res => cv.toBlob(res, type, q)); }
+// PDF на одну страницу с JPEG внутри. Своим кодом: библиотека ради одной
+// картинки весила бы больше всего остального раздела.
+async function wkPdf_(jpegBlob, w, h) {
+  const img = new Uint8Array(await jpegBlob.arrayBuffer());
+  const enc = s => new TextEncoder().encode(s);
+  const pw = WK_W, ph = WK_H;                          // размер страницы в пунктах
+  const content = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+  const parts = [], offs = [];
+  let len = 0;
+  const push = b => { parts.push(b); len += b.length; };
+  push(enc('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'));
+  const obj = (n, body) => { offs[n] = len; push(enc(`${n} 0 obj\n`)); body(); push(enc('\nendobj\n')); };
+  obj(1, () => push(enc('<< /Type /Catalog /Pages 2 0 R >>')));
+  obj(2, () => push(enc('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')));
+  obj(3, () => push(enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`)));
+  obj(4, () => {
+    push(enc(`<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.length} >>\nstream\n`));
+    push(img);
+    push(enc('\nendstream'));
+  });
+  obj(5, () => push(enc(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)));
+  const xref = len;
+  let x = 'xref\n0 6\n0000000000 65535 f \n';
+  for (let i = 1; i <= 5; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+  push(enc(x + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`));
+  return new Blob(parts, { type: 'application/pdf' });
+}
+function wkFileName_(ext) { return `weekly_${wkFmt_(WK.data.mon).replace('.', '-')}_${wkFmt_(WK.data.sun).replace('.', '-')}_${WK.data.sun.slice(0, 4)}.${ext}`; }
+function wkStatus_(msg, cls) {
+  const el = document.getElementById('wkStatus');
+  if (el) { el.textContent = msg || ''; el.className = 'wk-status' + (cls ? ' ' + cls : ''); }
+}
+function wkDownload_(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function wkDownloadPng() {
+  if (!WK.canvas) return;
+  wkDownload_(await wkBlob_(WK.canvas, 'image/png'), wkFileName_('png'));
+  wkStatus_('PNG сохранён. Если загрузка не началась (Telegram на телефоне) - отправьте себе в бота.');
+}
+async function wkDownloadPdf() {
+  if (!WK.canvas) return;
+  const jpg = await wkBlob_(WK.canvas, 'image/jpeg', 0.92);
+  wkDownload_(await wkPdf_(jpg, WK.canvas.width, WK.canvas.height), wkFileName_('pdf'));
+  wkStatus_('PDF сохранён. Если загрузка не началась (Telegram на телефоне) - отправьте себе в бота.');
+}
+function wkB64_(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
+}
+// Картинка и PDF - в личный чат с ботом, через тот же Apps Script, что
+// отдаёт каналы. Сервер проверяет подпись initData и что это владелец.
+async function wkSendToBot() {
+  if (!WK.canvas || WK.busy) return;
+  const url = chanApiUrl_();
+  const initData = (tg && tg.initData) || '';
+  if (!url || !initData) { wkStatus_('Отправка работает только внутри Telegram.', 'err'); return; }
+  WK.busy = true;
+  const btn = document.getElementById('wkSendBtn');
+  if (btn) btn.disabled = true;
+  wkStatus_('Отправляю…');
+  try {
+    const jpg = await wkBlob_(WK.canvas, 'image/jpeg', 0.92);
+    const pdf = await wkPdf_(jpg, WK.canvas.width, WK.canvas.height);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        action: 'sendWeeklyReport', initData,
+        week: `${wkFmt_(WK.data.mon)} – ${wkFmt_(WK.data.sun)}.${WK.data.sun.slice(0, 4)}`,
+        name: wkFileName_('pdf').replace(/\.pdf$/, ''),
+        jpg: await wkB64_(jpg), pdf: await wkB64_(pdf),
+      }),
+    });
+    const j = await res.json().catch(() => null);
+    if (j && j.ok) wkStatus_('Отправлено: картинка и PDF - в чате с ботом.', 'ok');
+    else wkStatus_('Не отправилось: ' + ((j && j.error) || ('HTTP ' + res.status)), 'err');
+  } catch (e) {
+    wkStatus_('Не отправилось: ' + (e && e.message || e), 'err');
+  } finally {
+    WK.busy = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---- Страница ----
+async function wkRender_() {
+  const host = document.getElementById('wkPreview');
+  const lbl = document.getElementById('wkWeekLbl');
+  if (!host) return;
+  const mon = WK.mon;
+  if (lbl) lbl.textContent = `${wkFmt_(mon)} – ${wkFmt_(wkAddDays_(mon, 6))}.${wkAddDays_(mon, 6).slice(0, 4)}`;
+  const curMon = wkMonday_(warsawNow_().dk);
+  const next = document.getElementById('wkNext');
+  if (next) next.disabled = mon >= curMon;
+  const note = document.getElementById('wkWeekNote');
+  if (note) note.textContent = mon === curMon ? 'текущая неделя - ещё не закончилась' : '';
+  host.classList.add('loading');
+  wkStatus_('');
+  try {
+    const d = await wkCompute_(mon);
+    if (WK.mon !== mon) return;                       // пока считали, переключили неделю
+    const cv = await wkDraw_(d);
+    if (WK.mon !== mon) return;
+    WK.data = d; WK.canvas = cv;
+    cv.className = 'wk-canvas';
+    host.innerHTML = '';
+    host.appendChild(cv);
+  } catch (e) {
+    console.log('weekly report error:', e);
+    wkStatus_('Не удалось собрать отчёт: ' + (e && e.message || e), 'err');
+  } finally {
+    host.classList.remove('loading');
+  }
+}
+function wkShift(n) {
+  const curMon = wkMonday_(warsawNow_().dk);
+  const m = wkAddDays_(WK.mon, n * 7);
+  if (m > curMon) return;
+  WK.mon = m;
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  wkRender_();
+}
+function wkOpen_() {
+  if (!WK.mon) WK.mon = wkDefaultMonday_();
+  wkRender_();
 }
 
 // ===== ДОСТУП К КАНАЛАМ =====

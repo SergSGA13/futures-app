@@ -3624,3 +3624,35 @@ html.mode-beginner .calc-adv:not(.open) { display: none; }
 }
 .pf-tz-chip svg { color: var(--cyan); flex: 0 0 auto; }
 .pf-tz-chip:active { background: rgba(34, 232, 255, 0.12); }
+
+/* ===== Недельный отчёт (для разработчика) ===== */
+.wk-weekbar { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.wk-nav {
+  width: 40px; height: 40px; flex: 0 0 auto; border-radius: 12px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--card-border); color: var(--text);
+  font-size: 22px; line-height: 1; font-family: inherit;
+}
+.wk-nav:disabled { opacity: .35; cursor: default; }
+.wk-week { flex: 1; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.wk-week b { font-family: 'Orbitron FP', inherit; font-size: 16px; letter-spacing: 1px; color: #fff; }
+.wk-week span { font-size: 11px; color: var(--yellow); min-height: 14px; }
+.wk-preview {
+  position: relative; width: 100%; aspect-ratio: 4 / 5; border-radius: 14px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--card-border);
+}
+.wk-preview.loading::after {
+  content: 'Собираю отчёт…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 6, 14, 0.6); color: var(--text-muted); font-size: 13px;
+}
+.wk-canvas { display: block; width: 100%; height: 100%; }
+.wk-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.wk-btn {
+  padding: 11px 10px; border-radius: 10px; cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700; color: var(--text);
+  background: var(--card); border: 1px solid var(--card-border);
+}
+.wk-btn.primary { grid-column: 1 / -1; color: #fff; border: none; background: linear-gradient(135deg, #6B30CC, #9D50FF); }
+.wk-btn:disabled { opacity: .55; cursor: default; }
+.wk-status { min-height: 18px; margin: 10px 0 4px; font-size: 12px; color: var(--text-muted); }
+.wk-status.ok { color: var(--green); }
+.wk-status.err { color: var(--red); }

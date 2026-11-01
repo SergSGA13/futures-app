@@ -11,7 +11,7 @@
  * Apps Script его не обслуживают.
  */
 
-var MINIAPP_ACTIONS = ['getMyChannels'];
+var MINIAPP_ACTIONS = ['getMyChannels', 'sendWeeklyReport'];
 
 function miniAppTryHandle_(e) {
   var body = e && e.postData && e.postData.contents;
@@ -29,10 +29,12 @@ function miniAppTryHandle_(e) {
       // Без действительной подписи не отдаём ничего, даже названий каналов.
       // Причину пишем в журнал: с телефона ответ сервера не посмотришь, а
       // «Выполнения» в Apps Script открываются в два клика.
-      Logger.log('getMyChannels: отказ по подписи - ' + v.error);
+      Logger.log(req.action + ': отказ по подписи - ' + v.error);
       out = { ok: false, error: 'auth: ' + v.error };
     } else if (req.action === 'getMyChannels') {
       out = getMyChannels_(v.user, req.lang);
+    } else if (req.action === 'sendWeeklyReport') {
+      out = sendWeeklyReport_(v.user, req);     // 08_weekly_report.gs
     } else {
       out = { ok: false, error: 'unknown action' };
     }

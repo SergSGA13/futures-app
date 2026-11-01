@@ -646,6 +646,13 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
+          <div class="stats-sub-btn dev pro-only" id="weeklyEntryBtn" style="display:none" onclick="navigate('stats-weekly')">
+            <div class="stats-sub-info">
+              <div class="stats-sub-title">Weekly Report <span class="dev-badge" data-i18n="stats.dev.badge">для разработчика</span></div>
+              <div class="stats-sub-desc">Слайд итогов недели для Telegram - PNG и PDF</div>
+            </div>
+            <div class="stats-sub-arrow">›</div>
+          </div>
           <div class="stats-sub-btn dev pro-only" id="devEntryBtn" style="display:none" onclick="navigate('stats-l30d-dev')">
             <div class="stats-sub-info">
               <div class="stats-sub-title">Last 30 Days <span class="dev-badge" data-i18n="stats.dev.badge">для разработчика</span></div>
@@ -1443,6 +1450,28 @@
       </div>
     </div>
     <!-- /STATISTICS: НОВАЯ СИСТЕМА -->
+
+    <!-- STATISTICS: НЕДЕЛЬНЫЙ ОТЧЁТ (для разработчика) -->
+    <div class="page" id="page-stats-weekly">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom:10px">Weekly Report <span class="dev-badge">для разработчика</span></h2>
+        <p class="dev-note">Слайд 4:5 с итогами недели (Пн–Вс по Варшаве): цифры недели, PNL новой системы и MEXC на одной шкале, пары за неделю, WinRate по месяцам. Деньги - на депозит 5 000 USDT с боевыми ставками.</p>
+        <div class="wk-weekbar">
+          <button type="button" class="wk-nav" onclick="wkShift(-1)" aria-label="Предыдущая неделя">‹</button>
+          <div class="wk-week"><b id="wkWeekLbl"></b><span id="wkWeekNote"></span></div>
+          <button type="button" class="wk-nav" id="wkNext" onclick="wkShift(1)" aria-label="Следующая неделя">›</button>
+        </div>
+        <div class="wk-preview" id="wkPreview"></div>
+        <div class="wk-actions">
+          <button type="button" class="wk-btn primary" id="wkSendBtn" onclick="wkSendToBot()">Отправить мне в бота</button>
+          <button type="button" class="wk-btn" onclick="wkDownloadPng()">Скачать PNG</button>
+          <button type="button" class="wk-btn" onclick="wkDownloadPdf()">Скачать PDF</button>
+        </div>
+        <p class="wk-status" id="wkStatus"></p>
+        <p class="dev-note">В Telegram на телефоне скачивание не работает - там картинку и PDF присылает бот в личный чат, оттуда их можно переслать в канал.</p>
+      </div>
+    </div>
+    <!-- /STATISTICS: НЕДЕЛЬНЫЙ ОТЧЁТ -->
 
 
   </main>

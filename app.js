@@ -8434,8 +8434,9 @@ function initMexcStatsUI() {
 // ===== ВЕТКА BYBIT 5m (лист 5Msignal) =====
 // Отдельная ветка: индикатор на 5-минутном графике ByBit, экспирация 5 минут.
 // Строку пишет хук; позже в неё дописываются цена через 5 минут («Close 5m»)
-// и результат. Ответ исполнителя - в «Executors», отправка в Telegram - в
-// «TG»: это и есть отработка сигнала, её показывает журнал страницы.
+// и результат - это и есть отработка сигнала, её показывает журнал страницы.
+// Служебные колонки листа о том, кто и как исполнял сигнал, приложение не
+// читает вовсе: это закрытые данные, показывать их нельзя никому.
 // Лист новый и ещё будет меняться, поэтому колонки ищем по заголовкам, а
 // номера ниже - только запасной вариант под нынешнюю раскладку.
 // Деньги - как у PRO: ставка из профиля, но не выше боевой для пары (ETH 125,
@@ -8444,7 +8445,7 @@ const BB_STATS = { days: 30, shown: 0, journal: [], charts: {} };
 const BB_PAYOUT = 0.8;
 const BB_BE = 100 / (1 + BB_PAYOUT);
 const BB_PAGE = 30;                 // строк журнала за один показ
-const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 6, ver: 7, tg: 10, exec: 11, recv: 12, close: 14 };
+const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 6, ver: 7, tg: 10, recv: 12, close: 14 };
 const BB_COLOR = '#22D3EE';
 const BB_DOW = {
   ru: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
@@ -8459,7 +8460,7 @@ function bbCols_(rows) {
   return {
     ticker: at(/^ticker$/, d.ticker), dir: at(/^direction$/, d.dir), price: at(/^price$/, d.price),
     settings: at(/^settings$/, d.settings), ver: at(/^direction1$/, d.ver), tg: at(/^tg$/, d.tg),
-    exec: at(/^executors?$/, d.exec), recv: at(/^receivedat$/, d.recv), close: at(/^close/, d.close),
+    recv: at(/^receivedat$/, d.recv), close: at(/^close/, d.close),
     res: at(/^result$/, -1),
   };
 }
@@ -8472,22 +8473,6 @@ function bbNum_(v) {
   s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
   const n = parseFloat(s);
   return isFinite(n) ? n : null;
-}
-
-// «EX1=http 200; EX2=timeout» -> [{name, st, ok}]. Успех - код 2xx или «ok».
-function bbExec_(txt) {
-  const s = String(txt || '').trim();
-  if (!s) return [];
-  const okOf = st => /\b2\d\d\b/.test(st) || /^ok\b/i.test(st);
-  const out = [];
-  const re = /([A-Za-z][\w-]*)\s*=\s*([^;,|\n]+)/g;
-  let m;
-  while ((m = re.exec(s))) {
-    const st = m[2].trim();
-    out.push({ name: m[1], st: st.replace(/^http\s*/i, ''), ok: okOf(st) });
-  }
-  if (!out.length) out.push({ name: '', st: s.slice(0, 24), ok: okOf(s) });
-  return out;
 }
 
 // Строка листа -> сигнал. Время - из «ReceivedAt» (UTC), иначе из A. Дата и
@@ -8513,7 +8498,7 @@ function bbParseRow_(r, c) {
     price, close, move: price && close != null ? (close - price) / price * 100 : null,
     priceRaw: String(r[c.price] || '').trim(),
     ver: String(r[c.ver] || '').trim() || String(r[c.settings] || '').trim(),
-    exec: bbExec_(r[c.exec]), tg: String(r[c.tg] || '').trim(),
+    tg: String(r[c.tg] || '').trim(),
   };
 }
 
@@ -8648,9 +8633,6 @@ function bbJournalRowHtml_(s) {
   }
   const tags = [];
   if (s.ver) tags.push(`<span class="bb-tag">${chanEsc_(s.ver.slice(0, 24))}</span>`);
-  for (const e of s.exec) {
-    tags.push(`<span class="bb-tag ${e.ok ? 'bb-ok' : 'bb-bad'}">${chanEsc_((e.name ? e.name + ' ' : '') + e.st)}</span>`);
-  }
   if (s.tg) {
     const ok = /^ok\b/i.test(s.tg);
     tags.push(`<span class="bb-tag ${ok ? 'bb-ok' : 'bb-bad'}">TG ${ok ? '✓' : chanEsc_(s.tg.slice(0, 16))}</span>`);

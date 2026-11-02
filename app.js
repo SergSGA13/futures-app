@@ -1187,18 +1187,47 @@ async function fetchMexc30Signals() {
 // ByBit, экспирация 5 минут. Результат и цена через 5 минут дописываются в
 // лист позже, так что свежие строки бывают ещё без них. Лист читается так же
 // бережно, как MEXC30signal: нет листа - пустой набор, а не упавшая страница.
+//
+// Лист целиком не скачиваем: в нём есть закрытые служебные колонки, и на
+// устройство они попадать не должны - даже невидимо, в ответе сети. Сначала
+// берём одну строку заголовков, по ней - буквы нужных колонок, и запрашиваем
+// только их (запрос gviz «select»). Нет заголовков - берём буквы нынешней
+// раскладки листа; запроса всех колонок нет ни в одной ветке.
+const BB_SHEET_ID = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+const BB_WANT = [/^time$/, /^ticker$/, /^direction$/, /^price$/, /^settings$/, /^direction1$/, /^tg$/, /^receivedat$/, /^close/, /^result$/];
+const BB_SELECT_DEFAULT = 'A,B,C,D,G,H,K,M,O,P';
 let bybitSignalRows = null;
+
+function bbColLetter_(i) {
+  let s = '';
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s;
+  return s;
+}
+// Буквы нужных колонок по строке заголовков. A - всегда первой: время
+// сигнала в ней, и rowUtcMs_ читает именно первую ячейку строки.
+function bbSelectFromHead_(head) {
+  const idx = [0];
+  (head || []).forEach((h, i) => {
+    const v = String(h || '').trim().toLowerCase();
+    if (i > 0 && BB_WANT.some(re => re.test(v))) idx.push(i);
+  });
+  return idx.length > 3 ? idx.map(bbColLetter_).join(',') : null;
+}
+async function bbGviz_(tq) {
+  const url = `https://docs.google.com/spreadsheets/d/${BB_SHEET_ID}/gviz/tq?tqx=out:csv&headers=1&sheet=5Msignal&tq=${encodeURIComponent(tq)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const text = await res.text();
+  return /^\s*</.test(text) ? null : parseCSV(text);
+}
 async function fetchBybitSignals() {
   if (bybitSignalRows) return bybitSignalRows;
   await sheetTzReady_();
-  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=5Msignal`;
   try {
-    const res = await fetch(url);
-    if (!res.ok) { bybitSignalRows = []; return bybitSignalRows; }
-    const text = await res.text();
-    if (/^\s*</.test(text)) { bybitSignalRows = []; return bybitSignalRows; }
-    bybitSignalRows = parseCSV(text);
+    let select = null;
+    try { select = bbSelectFromHead_(((await bbGviz_('select * limit 0')) || [])[0]); }
+    catch (e) { console.log('5Msignal header error:', e); }
+    bybitSignalRows = (await bbGviz_('select ' + (select || BB_SELECT_DEFAULT))) || [];
   } catch (e) {
     console.log('5Msignal fetch error:', e);
     bybitSignalRows = [];
@@ -8445,7 +8474,9 @@ const BB_STATS = { days: 30, shown: 0, journal: [], charts: {} };
 const BB_PAYOUT = 0.8;
 const BB_BE = 100 / (1 + BB_PAYOUT);
 const BB_PAGE = 30;                 // строк журнала за один показ
-const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 6, ver: 7, tg: 10, recv: 12, close: 14 };
+// Запасные номера - под ответ на BB_SELECT_DEFAULT (A,B,C,D,G,H,K,M,O,P),
+// если в нём вдруг не окажется заголовков.
+const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 4, ver: 5, tg: 6, recv: 7, close: 8 };
 const BB_COLOR = '#22D3EE';
 const BB_DOW = {
   ru: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],

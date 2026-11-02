@@ -239,12 +239,13 @@
               <div class="sig-timer-badge" id="signalTimer">-</div>
             </div>
 
-            <!-- Ветка (PRO/MEXC/ALT10m) + дата -->
+            <!-- Ветка (PRO/MEXC/ALT10m/ByBit 5m) + дата -->
             <div class="sig-head2">
               <div class="fs-seg compact sig-branch-seg" id="sigBranchSeg">
                 <button class="active" data-branch="PRO">PRO</button>
                 <button data-branch="MEXC">MEXC</button>
                 <button data-branch="ALT10m">ALT10</button>
+                <button data-branch="BYBIT">ByBit</button>
               </div>
               <span class="sig-div"></span>
               <input type="date" id="sigDateInput" class="sig-date-input" />
@@ -629,6 +630,16 @@
             </div>
             <div class="stats-sub-arrow">›</div>
           </div>
+          <div class="stats-sub-btn bybit" onclick="navigate('stats-bybit')">
+            <div class="stats-sub-icon bybit">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
+            </div>
+            <div class="stats-sub-info">
+              <div class="stats-sub-title">ByBit <span class="bybit-chip">5m</span></div>
+              <div class="stats-sub-desc" data-i18n="bb.entry.desc">Сигналы 5-минутной ветки ByBit и их отработка</div>
+            </div>
+            <div class="stats-sub-arrow">›</div>
+          </div>
           <div class="stats-sub-btn era" onclick="navigate('stats-era')">
             <div class="stats-sub-icon era">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><polyline points="14 8 20 8 20 14"/></svg>
@@ -955,6 +966,100 @@
       </div>
     </div>
     <!-- /STATISTICS: MEXC BRANCH -->
+
+    <!-- STATISTICS: BYBIT 5m (лист 5Msignal) -->
+    <div class="page" id="page-stats-bybit">
+      <div class="page-content">
+        <h2 class="section-title" style="margin-bottom:6px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          ByBit <span class="bybit-chip">5m</span>
+        </h2>
+        <div class="pf-chip-slot"></div>
+        <p class="dev-note pro-only" data-i18n="bb.note">Лист 5Msignal: сигналы ветки ByBit с экспирацией 5 минут. Результат - по цене через 5 минут после сигнала (колонка «Close 5m»). Деньги - по ставке из профиля, но не выше боевой для пары (ETH 125, BTC 250), выплата 0.8 - безубыток 55.6%.</p>
+
+        <div class="sig-headwrap bb-headwrap">
+          <div class="sig-head">
+            <div class="sig-title-pill bb-title-pill">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/></svg>
+              <span data-i18n="mexc.period">Период</span>
+            </div>
+            <span class="sig-spacer"></span>
+            <div class="fs-seg compact bb-period-seg" id="bbPeriodSeg">
+              <button data-days="7">7Д</button>
+              <button class="active" data-days="30">30Д</button>
+              <button data-days="0" data-i18n="bb.all">Всё</button>
+            </div>
+          </div>
+          <!-- Фиксированная ставка или сложный процент - общий переключатель веток -->
+          <div class="sig-head2 stats-cmp-row">
+            <span class="mexc-src-lbl" data-i18n="stats.cmp.label">Ставка</span>
+            <span class="sig-div"></span>
+            <div class="fs-seg compact stats-cmp-seg">
+              <button type="button" class="active" data-scmp="off" onclick="statsCmpSet(false)" data-i18n="stats.cmp.off">Фиксированная</button>
+              <button type="button" data-scmp="on" onclick="statsCmpSet(true)" data-i18n="stats.cmp.on">Сложный %</button>
+            </div>
+          </div>
+          <div class="sig-chart-stat" id="bbSummary"></div>
+        </div>
+
+        <div class="pnl-chart-card" id="bbPnlCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="bb.pnl">Накопленный PNL - ByBit 5m</span></div>
+          <div class="pnl-chart-wrap"><canvas id="bbPnlChart"></canvas></div>
+          <p class="pnl-chart-footnote" data-pf-note="bb.pnl.note" data-pf-note-cmp="bb.pnl.cmp"></p>
+        </div>
+
+        <div class="pnl-chart-card" id="bbDrawdownCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="1 6 8 6 12 18 16 6 23 6"/></svg><span data-i18n="bb.dd">Просадка (Drawdown) - ByBit 5m</span></div>
+          <p class="dev-note" id="bbDrawdownNote" style="margin-bottom:8px"></p>
+          <div class="pnl-chart-wrap" style="height:140px"><canvas id="bbDrawdownChart"></canvas></div>
+        </div>
+
+        <!-- Журнал: каждый сигнал и его отработка - цена через 5 минут,
+             результат, ответ исполнителя (Executors) и отправка в Telegram -->
+        <div class="pnl-chart-card" id="bbJournalCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg><span data-i18n="bb.journal">Сигналы и отработка</span> <span class="calc-hint" data-tz="user"></span></div>
+          <p class="dev-note" style="margin-bottom:4px" data-i18n="bb.journal.note">Новые сверху. Слева - цена сигнала, справа - цена через 5 минут, процент - движение за это время.</p>
+          <p class="dev-note pro-only" style="margin-bottom:6px" data-i18n="bb.journal.pro">Метки: конфигурация, ответ исполнителя (EX, зелёный - принят) и отправка в Telegram (TG).</p>
+          <div id="bbJournal" class="signals-list bb-journal"></div>
+          <button type="button" class="bb-more" id="bbMoreBtn" onclick="bbMore()" hidden></button>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbWrDailyCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span data-i18n="bb.wrdaily">WinRate по дням - ByBit 5m</span></div>
+          <div class="pnl-chart-wrap" style="height:190px"><canvas id="bbWrDailyChart"></canvas></div>
+          <p class="dev-note" style="margin-top:8px" data-i18n="mexc.wrdaily.note">Жёлтая черта - безубыток 55.6% при выплате 0.8. Серым отмечены дни, где сигналов меньше 5 и выводы делать рано.</p>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbPairsCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/></svg><span data-i18n="bb.pairs">По торговым парам - ByBit 5m</span></div>
+          <div id="bbPairsTable"></div>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbVerCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg><span data-i18n="bb.ver">По конфигурациям - ByBit 5m</span></div>
+          <div id="bbVerTable"></div>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbDowCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span data-i18n="bb.dow">По дням недели - ByBit 5m</span></div>
+          <div id="bbDowTable"></div>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbHourCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="bb.hour">По часам - ByBit 5m</span> <span class="calc-hint" data-tz="user"></span></div>
+          <div id="bbHourTable"></div>
+        </div>
+
+        <div class="pnl-chart-card pro-only" id="bbTFCard" style="display:none">
+          <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg><span data-i18n="bb.tz">По 15-минутным зонам - ByBit 5m</span></div>
+          <div id="bbTFTable"></div>
+        </div>
+
+        <div class="signals-empty" id="bbEmpty" style="display:none" data-i18n="bb.empty">Нет сигналов ByBit 5m за выбранный период.</div>
+
+      </div>
+    </div>
+    <!-- /STATISTICS: BYBIT 5m -->
 
     <!-- STATISTICS: LAST 30 DAYS · DEV (ALLsignal + BLOCKEDsignal, computed from raw rows) -->
     <div class="page" id="page-stats-l30d-dev">

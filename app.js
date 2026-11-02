@@ -113,6 +113,8 @@ function setLanguage(lang) {
   // Названия каналов приходят с сервера уже на нужном языке, поэтому один
   // applyTranslations экран доступа не переведёт - нужен повторный запрос.
   if (currentPage === 'channels') renderChannels(true);
+  // Журнал и сводка ByBit собираются в JS - их переводит только перерисовка.
+  if (currentPage === 'stats-bybit') renderBybitStats();
 }
 
 // ===== ПРОФИЛЬ: ДЕПОЗИТ И СТАВКА =====
@@ -272,6 +274,7 @@ function profileApply_() {
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
   if (currentPage === 'stats-mexc') renderMexcStats();
+  if (currentPage === 'stats-bybit') renderBybitStats();
 }
 
 // Плашка «Депозит · ставка ✎» на страницах, которые считают по профилю.
@@ -579,6 +582,7 @@ function modeApply_() {
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
   if (currentPage === 'stats-mexc') renderMexcStats();
+  if (currentPage === 'stats-bybit') renderBybitStats();
 }
 
 function modeSegHtml_() {
@@ -742,6 +746,7 @@ function tzApply_() {
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
   if (currentPage === 'stats-mexc') renderMexcStats();
+  if (currentPage === 'stats-bybit') renderBybitStats();
 }
 
 // Подписи пояса: data-tz="user" - пояс пользователя (статистика),
@@ -783,6 +788,7 @@ const navMap = {
   'stats-all': 'nav-statistics',
   'stats-era': 'nav-statistics',
   'stats-mexc': 'nav-statistics',
+  'stats-bybit': 'nav-statistics',
   'zones': 'nav-home',
   'channels': 'nav-home',
   'articles': 'nav-articles',
@@ -798,6 +804,7 @@ const pageTitleKeys = {
   'stats-all': 'title.stats.all',
   'stats-era': 'title.stats.era',
   'stats-mexc': 'title.stats.mexc',
+  'stats-bybit': 'title.stats.bybit',
   'zones': 'title.zones',
   'channels': 'title.chan',
   'article-tilt': 'title.art',
@@ -842,6 +849,7 @@ function navigate(pageId) {
   if (pageId === 'stats-all')  { initAllPeriodsUI(); renderAllPeriods(); }
   if (pageId === 'stats-era')  { initEraUI(); renderEraStats(); }
   if (pageId === 'stats-mexc') { initMexcStatsUI(); renderMexcStats(); }
+  if (pageId === 'stats-bybit') { initBybitUI(); renderBybitStats(); }
   if (pageId === 'zones') { renderZones(); }
   if (pageId === 'channels') { renderChannels(); }
   if (pageId === 'futures-strategy') { window.FutStrat && FutStrat.mount('futStrat'); }
@@ -1173,6 +1181,29 @@ async function fetchMexc30Signals() {
     mexc30SignalRows = [];
   }
   return mexc30SignalRows;
+}
+
+// Ветка ByBit 5m - лист 5Msignal: сигналы индикатора с 5-минутного графика
+// ByBit, экспирация 5 минут. Результат и цена через 5 минут дописываются в
+// лист позже, так что свежие строки бывают ещё без них. Лист читается так же
+// бережно, как MEXC30signal: нет листа - пустой набор, а не упавшая страница.
+let bybitSignalRows = null;
+async function fetchBybitSignals() {
+  if (bybitSignalRows) return bybitSignalRows;
+  await sheetTzReady_();
+  const sheetId = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=5Msignal`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { bybitSignalRows = []; return bybitSignalRows; }
+    const text = await res.text();
+    if (/^\s*</.test(text)) { bybitSignalRows = []; return bybitSignalRows; }
+    bybitSignalRows = parseCSV(text);
+  } catch (e) {
+    console.log('5Msignal fetch error:', e);
+    bybitSignalRows = [];
+  }
+  return bybitSignalRows;
 }
 
 async function fetchAnalL7d() {
@@ -5990,6 +6021,15 @@ async function fetchBranchSignals_(branch) {
     });
   }
 
+  // ByBit 5m - лист 5Msignal; в ленту и на график - только с результатом.
+  if (branch === 'BYBIT') {
+    const sigs = await bybitSignalsAll_();
+    return sigs.filter(s => s.res).map(s => ({
+      dk: s.dk, time: `${tzPad_(s.hour)}:${tzPad_(s.minute)}:${tzPad_(s.second)}`,
+      pair: s.pair, dir: s.dir, price: s.priceRaw, res: s.res, ts: s.ts,
+    }));
+  }
+
   let rows;
   if (branch === 'ALT10m') {
     const raw = await fetchBlockedSignals();
@@ -6476,6 +6516,7 @@ function refreshHome() {
   analL7dRows = null;
   allSignalRows = null;
   blockedSignalRows = null;
+  bybitSignalRows = null;
   devL30dRendered = false;
   dowChartInstances['devDowChart']?.destroy();
   delete dowChartInstances['devDowChart'];
@@ -7346,6 +7387,7 @@ function statsCmpSet(on) {
   if (currentPage === 'stats-all') renderAllPeriods();
   if (currentPage === 'stats-era') renderEraStats();
   if (currentPage === 'stats-mexc') renderMexcStats();
+  if (currentPage === 'stats-bybit') renderBybitStats();
 }
 
 function calcDepLine_(ppm, ppy) {
@@ -8387,6 +8429,368 @@ function initMexcStatsUI() {
     });
   }
 
+}
+
+// ===== ВЕТКА BYBIT 5m (лист 5Msignal) =====
+// Отдельная ветка: индикатор на 5-минутном графике ByBit, экспирация 5 минут.
+// Строку пишет хук; позже в неё дописываются цена через 5 минут («Close 5m»)
+// и результат. Ответ исполнителя - в «Executors», отправка в Telegram - в
+// «TG»: это и есть отработка сигнала, её показывает журнал страницы.
+// Лист новый и ещё будет меняться, поэтому колонки ищем по заголовкам, а
+// номера ниже - только запасной вариант под нынешнюю раскладку.
+// Деньги - как у PRO: ставка из профиля, но не выше боевой для пары (ETH 125,
+// BTC 250, прочие пары - как ETH), выплата 0.8.
+const BB_STATS = { days: 30, shown: 0, journal: [], charts: {} };
+const BB_PAYOUT = 0.8;
+const BB_BE = 100 / (1 + BB_PAYOUT);
+const BB_PAGE = 30;                 // строк журнала за один показ
+const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 6, ver: 7, tg: 10, exec: 11, recv: 12, close: 14 };
+const BB_COLOR = '#22D3EE';
+const BB_DOW = {
+  ru: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
+  uk: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'],
+  en: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+};
+
+function bbCols_(rows) {
+  const head = ((rows && rows[0]) || []).map(h => String(h || '').trim().toLowerCase());
+  const at = (re, def) => { const i = head.findIndex(h => re.test(h)); return i >= 0 ? i : def; };
+  const d = BB_COLS_DEFAULT;
+  return {
+    ticker: at(/^ticker$/, d.ticker), dir: at(/^direction$/, d.dir), price: at(/^price$/, d.price),
+    settings: at(/^settings$/, d.settings), ver: at(/^direction1$/, d.ver), tg: at(/^tg$/, d.tg),
+    exec: at(/^executors?$/, d.exec), recv: at(/^receivedat$/, d.recv), close: at(/^close/, d.close),
+    res: at(/^result$/, -1),
+  };
+}
+
+// Цена из листа: хук пишет «2449.86», формула - «2452,28», бывает и
+// «76 669,2» с пробелами. Разделитель дробной части - последний из двух.
+function bbNum_(v) {
+  let s = String(v == null ? '' : v).replace(/[\s ]/g, '');
+  if (!s) return null;
+  s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+
+// «EX1=http 200; EX2=timeout» -> [{name, st, ok}]. Успех - код 2xx или «ok».
+function bbExec_(txt) {
+  const s = String(txt || '').trim();
+  if (!s) return [];
+  const okOf = st => /\b2\d\d\b/.test(st) || /^ok\b/i.test(st);
+  const out = [];
+  const re = /([A-Za-z][\w-]*)\s*=\s*([^;,|\n]+)/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const st = m[2].trim();
+    out.push({ name: m[1], st: st.replace(/^http\s*/i, ''), ok: okOf(st) });
+  }
+  if (!out.length) out.push({ name: '', st: s.slice(0, 24), ok: okOf(s) });
+  return out;
+}
+
+// Строка листа -> сигнал. Время - из «ReceivedAt» (UTC), иначе из A. Дата и
+// часы - варшавские, как у остальных веток; в пояс пользователя статистика
+// переводит сама. res пустой - результата ещё нет.
+function bbParseRow_(r, c) {
+  if (!r) return null;
+  const dir = String(r[c.dir] || '').trim().toUpperCase();
+  if (dir !== 'UP' && dir !== 'DOWN') return null;
+  let res = c.res >= 0 ? String(r[c.res] || '').trim() : '';
+  if (c.res < 0) { const i = mexcResultIdx_(r); res = i >= 0 ? String(r[i]).trim() : ''; }
+  if (!DEV_RESOLVED.has(res)) res = '';
+  const iso = String(r[c.recv] || '').trim();
+  let ts = /^\d{4}-\d{2}-\d{2}T/.test(iso) ? Date.parse(iso) : NaN;
+  if (!isFinite(ts)) ts = rowUtcMs_(r);
+  if (ts == null || !isFinite(ts)) return null;
+  const p = tzParts_(ts, TZ_HOME);
+  const price = bbNum_(r[c.price]);
+  const close = bbNum_(r[c.close]);
+  return {
+    res, dir, pair: sigPairBase(r[c.ticker]), ts,
+    dk: tzDk_(p), hour: p.h, minute: p.mi, second: p.s,
+    price, close, move: price && close != null ? (close - price) / price * 100 : null,
+    priceRaw: String(r[c.price] || '').trim(),
+    ver: String(r[c.ver] || '').trim() || String(r[c.settings] || '').trim(),
+    exec: bbExec_(r[c.exec]), tg: String(r[c.tg] || '').trim(),
+  };
+}
+
+// Все строки листа, разобранные один раз на загрузку листа.
+let bbParsedCache = null;
+async function bybitSignalsAll_() {
+  const rows = await fetchBybitSignals();
+  if (bbParsedCache && bbParsedCache.rows === rows) return bbParsedCache.sigs;
+  const c = bbCols_(rows);
+  const sigs = (rows && rows.length > 1) ? rows.slice(1).map(r => bbParseRow_(r, c)).filter(Boolean) : [];
+  bbParsedCache = { rows, sigs };
+  return sigs;
+}
+
+function bbStakeMax_(pair) { return PRO_STAKE_MAX[pair] || PRO_STAKE_MAX.ETH; }
+function bbPnlSig_(s) {
+  const st = profileStake(bbStakeMax_(s.pair));
+  return s.res === 'WIN' ? st * BB_PAYOUT : s.res === 'LOSE' ? -st : 0;
+}
+
+// Сколько дней показывать на графике WR: у «Всё» - от первого сигнала.
+function bbSpanDays_(sigs) {
+  if (BB_STATS.days) return BB_STATS.days;
+  let min = null;
+  for (const s of sigs) if (!min || s.dk < min) min = s.dk;
+  if (!min) return 30;
+  const [y, m, d] = min.split('-').map(Number);
+  const n = new Date();
+  return Math.max(1, Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(y, m - 1, d)) / 86400000) + 1);
+}
+
+function bbShow_(id, on) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = on ? 'block' : 'none';
+}
+
+function bbDestroyCharts_() {
+  for (const k of Object.keys(BB_STATS.charts)) {
+    try { BB_STATS.charts[k]?.destroy(); } catch (e) { /* уже уничтожен */ }
+    delete BB_STATS.charts[k];
+  }
+  // Просадку рисует общий renderDrawdownInto, он держит график у себя.
+  pnlChartInstances.bbDrawdown?.destroy();
+  delete pnlChartInstances.bbDrawdown;
+}
+
+function bbSummaryHtml_(sigs, pending, pnlFn) {
+  const pnlOf = pnlFn || bbPnlSig_;
+  let w = 0, l = 0, pnl = 0;
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
+    pnl += pnlOf(s);
+  }
+  const wr = w + l ? w / (w + l) * 100 : null;
+  const wait = pending
+    ? `<div class="bb-sub-line">${t('bb.sum.wait')}: <b>${pending}</b></div>` : '';
+  return {
+    html: `${t('bb.sum.sig')}: <b>${sigs.length}</b><span class="pro-only"> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b></span>` +
+          ` &nbsp;·&nbsp; WR <b class="${wrClassAt_(wr, BB_BE)}">${wr == null ? '-' : wr.toFixed(1) + '%'}</b>` +
+          ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` +
+          `<span class="pro-only"> &nbsp;·&nbsp; <span class="mexc-be">${t('bb.sum.be')} ${BB_BE.toFixed(1)}%</span></span>` + wait,
+    wr,
+  };
+}
+
+// Итог под таблицей пар: деньги и WR по ставке профиля с потолками пар.
+function bbPairsTotalHtml_(sigs, pairs) {
+  let w = 0, l = 0, pnl = 0;
+  for (const s of sigs) {
+    if (s.res === 'WIN') w++; else if (s.res === 'LOSE') l++;
+    pnl += bbPnlSig_(s);
+  }
+  if (!(w + l)) return '';
+  const wr = w / (w + l) * 100;
+  const stakes = pairs.map(p => `${chanEsc_(p)} ${profileStake(bbStakeMax_(p))}`).join(' · ');
+  return `<div class="dev-branch-total">
+    <span>PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b></span>
+    <span>WR <b class="${wrClassAt_(wr, BB_BE)}">${wr.toFixed(1)}%</b></span>
+    <span class="dev-branch-stake">${stakes} USDT</span>
+  </div>`;
+}
+
+function bbRenderPnlChart_(sigs, pnlFn) {
+  if (typeof Chart === 'undefined') return false;
+  const ctx = document.getElementById('bbPnlChart')?.getContext('2d');
+  if (!ctx) return false;
+  const pnlOf = pnlFn || bbPnlSig_;
+  const daily = {};
+  for (const s of sigs) daily[s.dk] = (daily[s.dk] || 0) + pnlOf(s);
+  const days = Object.keys(daily).sort();
+  if (days.length < 2) return false;
+
+  let cum = 0;
+  const labels = [], pct = [];
+  for (const dk of days) {
+    cum += daily[dk];
+    labels.push(`${dk.slice(8, 10)}.${dk.slice(5, 7)}`);
+    pct.push(Math.round(cum / profileDeposit() * 1000) / 10);
+  }
+  const grad = ctx.createLinearGradient(0, 0, 0, 200);
+  grad.addColorStop(0, 'rgba(34, 211, 238, 0.35)');
+  grad.addColorStop(1, 'rgba(34, 211, 238, 0.0)');
+  BB_STATS.charts.pnl = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{ data: pct, borderColor: BB_COLOR, backgroundColor: grad, borderWidth: 2, pointRadius: days.length > 20 ? 0 : 2, pointBackgroundColor: BB_COLOR, fill: true, tension: 0.3 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => t('mexc.pnl.tip').replace('{p}', c.parsed.y).replace('{dep}', profileFmtNum_(profileDeposit())) } } },
+      scales: {
+        x: { ticks: { color: '#7B84B0', maxTicksLimit: 6, maxRotation: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#7B84B0', font: { size: 11 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
+      }
+    }
+  });
+  return true;
+}
+
+// ---- Журнал: сигнал и его отработка ----
+function bbFmtPrice_(v) {
+  return v == null ? '…' : v.toFixed(sigPrecisionFor(v).precision);
+}
+function bbJournalRowHtml_(s) {
+  const up = s.dir === 'UP';
+  const time = `${s.dk.slice(8, 10)}.${s.dk.slice(5, 7)} ${tzPad_(s.hour)}:${tzPad_(s.minute)}`;
+  const resCls = s.res === 'WIN' ? 'sig-win' : s.res === 'LOSE' ? 'sig-lose' : s.res ? 'bb-half' : 'sig-pending';
+  const resTxt = s.res === 'WIN' ? 'WIN' : s.res === 'LOSE' ? 'LOSE' : s.res ? '50/50' : t('bb.pending');
+  let move = '';
+  if (s.move != null) {
+    // Цвет - за направление сигнала: рост хорош для UP, падение - для DOWN.
+    const cls = s.move === 0 ? '' : (up ? s.move > 0 : s.move < 0) ? 'wr-green' : 'wr-red';
+    move = `<span class="bb-move ${cls}">${s.move > 0 ? '+' : ''}${s.move.toFixed(2)}%</span>`;
+  }
+  const tags = [];
+  if (s.ver) tags.push(`<span class="bb-tag">${chanEsc_(s.ver.slice(0, 24))}</span>`);
+  for (const e of s.exec) {
+    tags.push(`<span class="bb-tag ${e.ok ? 'bb-ok' : 'bb-bad'}">${chanEsc_((e.name ? e.name + ' ' : '') + e.st)}</span>`);
+  }
+  if (s.tg) {
+    const ok = /^ok\b/i.test(s.tg);
+    tags.push(`<span class="bb-tag ${ok ? 'bb-ok' : 'bb-bad'}">TG ${ok ? '✓' : chanEsc_(s.tg.slice(0, 16))}</span>`);
+  }
+  return `<div class="bb-row">
+    <div class="bb-row-top">
+      <span class="sig-time">${time}</span>
+      <span class="sig-pair">${chanEsc_(s.pair)}</span>
+      <span class="sig-dir ${up ? 'sig-up' : 'sig-down'}">${up ? '↑ UP' : '↓ DOWN'}</span>
+      <span class="bb-res ${resCls}">${resTxt}</span>
+    </div>
+    <div class="bb-row-sub"><span class="bb-prices">${bbFmtPrice_(s.price)} → ${bbFmtPrice_(s.close)}</span>${move}` +
+    (tags.length ? `<span class="bb-tags pro-only">${tags.join('')}</span>` : '') + `</div>
+  </div>`;
+}
+
+function bbRenderJournal_() {
+  const el = document.getElementById('bbJournal');
+  const more = document.getElementById('bbMoreBtn');
+  if (!el) return;
+  const list = BB_STATS.journal;
+  el.innerHTML = list.length
+    ? list.slice(0, BB_STATS.shown).map(bbJournalRowHtml_).join('')
+    : `<div class="signals-empty">${t('bb.empty')}</div>`;
+  if (more) {
+    const rest = list.length - BB_STATS.shown;
+    more.hidden = rest <= 0;
+    more.textContent = t('bb.more').replace('{n}', Math.min(rest, BB_PAGE));
+  }
+}
+function bbMore() {
+  BB_STATS.shown += BB_PAGE;
+  if (tg) tg.HapticFeedback?.selectionChanged();
+  bbRenderJournal_();
+}
+
+const BB_CARDS = ['bbPnlCard', 'bbDrawdownCard', 'bbWrDailyCard', 'bbPairsCard', 'bbVerCard', 'bbDowCard', 'bbHourCard', 'bbTFCard'];
+
+async function renderBybitStats() {
+  const sumEl = document.getElementById('bbSummary');
+  bbDestroyCharts_();
+  if (sumEl) { sumEl.className = 'sig-chart-stat'; sumEl.innerHTML = t('sig.loading'); }
+
+  try {
+    const all = (await bybitSignalsAll_()).map(sigToUserTz_);
+    const cutoff = BB_STATS.days ? cutoffDk(BB_STATS.days) : '';
+    const inPeriod = all.filter(s => s.dk >= cutoff);
+    const sigs = inPeriod.filter(s => s.res);
+    const pending = inPeriod.length - sigs.length;
+
+    // Журнал - все сигналы периода, и с результатом, и ещё без него.
+    BB_STATS.journal = inPeriod.slice().sort((a, b) => b.ts - a.ts);
+    BB_STATS.shown = BB_PAGE;
+    bbRenderJournal_();
+    bbShow_('bbJournalCard', inPeriod.length > 0);
+
+    if (!sigs.length) {
+      for (const c of BB_CARDS) bbShow_(c, false);
+      if (sumEl) sumEl.innerHTML = pending ? `${t('bb.sum.wait')}: <b>${pending}</b>` : t('bb.nodata');
+      bbShow_('bbEmpty', !inPeriod.length);
+      return;
+    }
+    bbShow_('bbEmpty', false);
+
+    // Сложный процент - как на других ветках: меняет кривую, итог и
+    // просадку, таблицы остаются на фиксированной ставке.
+    let cmpFn = null;
+    if (STATS_CMP.on) {
+      const map = statsCmpMap_(sigs.map(s => ({ s, keys: [s] })), s => bbStakeMax_(s.pair), () => BB_PAYOUT);
+      cmpFn = s => map.get(s) || 0;
+    }
+
+    if (sumEl) {
+      const s = bbSummaryHtml_(sigs, pending, cmpFn);
+      sumEl.className = 'sig-chart-stat' + (s.wr == null ? '' : s.wr >= BB_BE + 6 ? ' sig-wr-good' : s.wr < BB_BE ? ' sig-wr-bad' : '');
+      sumEl.innerHTML = s.html;
+    }
+
+    // Графики не должны ронять таблицы и журнал.
+    try { bbShow_('bbPnlCard', bbRenderPnlChart_(sigs, cmpFn)); }
+    catch (e) { console.log('ByBit pnl chart error:', e); bbShow_('bbPnlCard', false); }
+    try {
+      renderDrawdownInto({
+        sigs, key: 'bbDrawdown', pnlFn: cmpFn || bbPnlSig_, deposit: profileDeposit(), relPeak: !!cmpFn,
+        canvasId: 'bbDrawdownChart', noteId: 'bbDrawdownNote', emptyNote: t('dd.none'),
+      });
+      bbShow_('bbDrawdownCard', !!pnlChartInstances.bbDrawdown);
+    } catch (e) { console.log('ByBit drawdown error:', e); bbShow_('bbDrawdownCard', false); }
+    try {
+      BB_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('bbWrDailyChart', sigs, bbSpanDays_(sigs));
+      bbShow_('bbWrDailyCard', !!BB_STATS.charts.wr);
+    } catch (e) { console.log('ByBit wr chart error:', e); bbShow_('bbWrDailyCard', false); }
+
+    const pairOrder = mexcPairOrder_(sigs);
+    const pairTable = devBuildTable(pairOrder, devAggregate(sigs, s => s.pair), BB_BE);
+    const pairEl = document.getElementById('bbPairsTable');
+    if (pairEl && pairTable) pairEl.innerHTML = pairTable + bbPairsTotalHtml_(sigs, pairOrder) + wrLegendHtml();
+    bbShow_('bbPairsCard', !!pairTable);
+
+    // По конфигурациям - только когда их больше одной, иначе это та же
+    // строка TOTAL, что и в таблице пар.
+    const verOrder = mexcPairOrder_(sigs.map(s => ({ pair: s.ver || '-' })));
+    const verTable = verOrder.length > 1
+      ? devBuildTable(verOrder.map(chanEsc_), devAggregate(sigs, s => chanEsc_(s.ver || '-')), BB_BE) : '';
+    statsShowTable_('bbVerTable', 'bbVerCard', verTable);
+
+    const dowOrder = BB_DOW[currentLang] || BB_DOW.ru;
+    statsShowTable_('bbDowTable', 'bbDowCard', devBuildTable(dowOrder, devAggregate(sigs, s => {
+      const [y, m, d] = s.dk.split('-').map(Number);
+      return dowOrder[(new Date(y, m - 1, d).getDay() + 6) % 7];
+    }), BB_BE));
+
+    const hourOrder = [];
+    for (let h = 0; h < 24; h++) hourOrder.push(`${h}:00`);
+    statsShowTable_('bbHourTable', 'bbHourCard',
+      devBuildTable(hourOrder, devAggregate(sigs, s => s.hour == null ? null : `${s.hour}:00`), BB_BE));
+
+    const tzOrder = ['0-14', '15-29', '30-44', '45-59'];
+    statsShowTable_('bbTFTable', 'bbTFCard',
+      devBuildTable(tzOrder, devAggregate(sigs, s => s.minute == null ? null : tzOrder[Math.floor(s.minute / 15)]), BB_BE));
+  } catch (e) {
+    console.log('ByBit stats error:', e);
+    if (sumEl) sumEl.innerHTML = t('sig.error');
+  }
+}
+
+function initBybitUI() {
+  const seg = document.getElementById('bbPeriodSeg');
+  if (!seg || seg.dataset.wired) return;
+  seg.dataset.wired = '1';
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const days = parseInt(btn.dataset.days, 10) || 0;
+    if (days === BB_STATS.days) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    BB_STATS.days = days;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    renderBybitStats();
+  });
 }
 
 // ===== НЕДЕЛЬНЫЙ ОТЧЁТ: СЛАЙД 4:5 ДЛЯ TELEGRAM =====

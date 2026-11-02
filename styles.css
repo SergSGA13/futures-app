@@ -396,7 +396,8 @@ body { background: transparent; }
 /* Бейджи внутри заголовка остаются своими: свой цвет, регистр и шрифт. */
 .section-title .dev-badge,
 .section-title .era-chip,
-.section-title .mexc-chip {
+.section-title .mexc-chip,
+.section-title .bybit-chip {
   -webkit-text-fill-color: currentColor;
   text-transform: none;
   letter-spacing: normal;
@@ -982,8 +983,11 @@ body { background: transparent; }
 .sig-branch-seg button { min-width: 38px; }
 .sig-period-seg { flex: 0 0 auto; }
 .sig-period-seg button { min-width: 22px; }
+/* Основа 0, а не auto: с четырьмя ветками собственная ширина поля даты
+   переносила его на новую строку, хотя места хватало. Перенос - только
+   когда остаётся меньше 96 px (экраны уже 360). */
 .sig-date-input {
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 0; min-width: 96px;
   background: linear-gradient(135deg, rgba(102,163,255,.14), rgba(157,80,255,.10));
   border: 1px solid rgba(102,163,255,.50);
   border-radius: 8px;
@@ -1330,6 +1334,105 @@ body { background: transparent; }
   border-color: rgba(247, 147, 26, 0.30);
   background: linear-gradient(180deg, rgba(247, 147, 26, 0.09), rgba(255, 184, 77, 0.04));
   box-shadow: 0 0 18px rgba(247, 147, 26, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ===== Ветка ByBit 5m: бирюзовый акцент, чтобы не путать с оранжевой MEXC ===== */
+.stats-sub-btn.bybit {
+  border-color: rgba(34, 211, 238, 0.38);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.10);
+}
+.stats-sub-icon.bybit {
+  background: rgba(34, 211, 238, 0.10);
+  border: 1px solid rgba(34, 211, 238, 0.32);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.16);
+}
+.bybit-chip {
+  display: inline-block; vertical-align: 1px; margin-left: 6px; padding: 1px 6px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+  color: #22D3EE; background: rgba(34, 211, 238, 0.10);
+  border: 1px solid rgba(34, 211, 238, 0.32); border-radius: 5px;
+}
+.bb-headwrap {
+  border-color: rgba(34, 211, 238, 0.40);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.10), 0 0 26px rgba(34, 211, 238, 0.12),
+              0 14px 40px rgba(34, 211, 238, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.bb-headwrap::before {
+  background: linear-gradient(90deg, transparent, #22D3EE, #66A3FF, transparent);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.55);
+}
+.bb-title-pill {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(102, 163, 255, 0.10));
+  border-color: rgba(34, 211, 238, 0.48);
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.bb-headwrap .fs-seg {
+  background: rgba(8, 11, 22, 0.62);
+  border-color: rgba(34, 211, 238, 0.30);
+}
+.bb-period-seg button { min-width: 34px; }
+/* Тот же приём, что у MEXC: якорь на шапку, чтобы перебить общий .fs-seg button.active */
+.bb-headwrap .fs-seg button.active {
+  background: linear-gradient(135deg, #67E8F9, #22D3EE); color: #04222A;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.45);
+}
+.bb-headwrap .sig-chart-stat {
+  border-color: rgba(34, 211, 238, 0.30);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.09), rgba(102, 163, 255, 0.04));
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.bb-sub-line {
+  margin-top: 5px; padding-top: 5px; font-size: 11px;
+  border-top: 1px dashed rgba(34, 211, 238, 0.22); opacity: .85;
+}
+
+/* Журнал «Сигналы и отработка»: строка сигнала и под ней - его исход */
+.bb-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.bb-row:last-child { border-bottom: none; }
+.bb-row-top {
+  display: grid;
+  grid-template-columns: 76px 38px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.bb-res {
+  font-size: 11px; font-weight: 800; letter-spacing: .3px;
+  padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.bb-res.sig-win  { background: rgba(78, 255, 160, 0.10); border-color: rgba(78, 255, 160, 0.32); }
+.bb-res.sig-lose { background: rgba(255, 59, 107, 0.10); border-color: rgba(255, 59, 107, 0.32); }
+.bb-res.bb-half  { color: #FFD166; background: rgba(255, 209, 102, 0.10); border-color: rgba(255, 209, 102, 0.32); }
+.bb-row-sub {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  margin-top: 4px; padding-left: 84px;
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.bb-move { font-weight: 700; }
+.bb-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.bb-tag {
+  font-size: 9.5px; font-weight: 700; line-height: 1.5;
+  padding: 0 5px; border-radius: 4px; white-space: nowrap;
+  color: var(--text-muted); background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.bb-tag.bb-ok  { color: #4EFFA0; border-color: rgba(78, 255, 160, 0.28); background: rgba(78, 255, 160, 0.07); }
+.bb-tag.bb-bad { color: #FF5272; border-color: rgba(255, 82, 114, 0.32); background: rgba(255, 82, 114, 0.08); }
+.bb-more {
+  display: block; width: 100%; margin-top: 8px; padding: 9px;
+  border-radius: var(--radius-sm); cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 700; color: #22D3EE;
+  background: rgba(34, 211, 238, 0.08); border: 1px solid rgba(34, 211, 238, 0.30);
+}
+.bb-more:active { background: rgba(34, 211, 238, 0.16); }
+.bb-more[hidden] { display: none; }
+@media (max-width: 359px) {
+  .bb-row-top { grid-template-columns: 68px 34px 1fr auto; gap: 6px; font-size: 12px; }
+  .bb-row-sub { padding-left: 0; }
 }
 .dev-badge {
   display: inline-block;

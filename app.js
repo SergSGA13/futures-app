@@ -8887,12 +8887,13 @@ async function wkCompute_(mon) {
     return s.res === 'WIN' ? st * MEXC_PAYOUT[exp] : -st;
   };
 
-  // ByBit 5m: лист 5Msignal, боевые ставки как у PRO (ETH 125 / BTC 250,
-  // прочие пары - как ETH), выплата 0.8, без лимита ставок.
+  // ByBit 5m: лист 5Msignal, только ETH - так линия подписана на слайде;
+  // случайная строка другой пары в ней не окажется. Боевая ставка как у PRO
+  // (ETH 125), выплата 0.8, без лимита ставок.
   let bybit = [];
   try {
     bybit = (await bybitSignalsAll_())
-      .filter(s => (s.res === 'WIN' || s.res === 'LOSE') && s.dk >= ERA_SINCE_DK && s.dk <= sun);
+      .filter(s => s.pair === 'ETH' && (s.res === 'WIN' || s.res === 'LOSE') && s.dk >= ERA_SINCE_DK && s.dk <= sun);
   } catch (e) { console.log('weekly ByBit error:', e); }
   const bybitPnl = s => { const st = bbStakeMax_(s.pair); return s.res === 'WIN' ? st * BB_PAYOUT : -st; };
 
@@ -9070,10 +9071,11 @@ async function wkDraw_(d) {
 
   // PNL трёх бирж на одной шкале. Легенда - столбиками: биржа и её цвет,
   // под ними - неделя в % и WR.
-  const lines = [{ key: 'PRO', name: 'Binance · PRO', b: d.pro }];
-  if (d.mexc.has) lines.push({ key: 'MEXC', name: 'MEXC', b: d.mexc });
-  if (d.bybit.has) lines.push({ key: 'BYBIT', name: 'ByBit 5m', b: d.bybit });
-  const py = ky + kh * 2 + 12 + 16, ph = 440;
+  // Под названием биржи - какие сигналы в её линии.
+  const lines = [{ key: 'PRO', name: 'Binance · PRO', note: 'только 10-минутные сигналы', b: d.pro }];
+  if (d.mexc.has) lines.push({ key: 'MEXC', name: 'MEXC', note: '10- и 30-минутные сигналы', b: d.mexc });
+  if (d.bybit.has) lines.push({ key: 'BYBIT', name: 'ByBit 5m', note: 'только 5-минутные сигналы по ETH', b: d.bybit });
+  const py = ky + kh * 2 + 12 + 16, ph = 456;
   wkCard_(c, P, py, WK_W - P * 2, ph);
   wkText_(c, 'Total PNL — ' + lines.map(l => l.name.replace(' · PRO', '')).join(', ').replace(/, ([^,]*)$/, ' и $1'),
     P + 24, py + 40, wkF_(700, 22), '#FFFFFF');
@@ -9083,12 +9085,13 @@ async function wkDraw_(d) {
     c.save(); c.fillStyle = color; c.shadowColor = color; c.shadowBlur = 10;
     c.beginPath(); c.arc(x + 7, y - 7, 7, 0, Math.PI * 2); c.fill(); c.restore();
     wkText_(c, l.name, x + 22, y, wkF_(800, 19), color);
+    wkRich_(c, [{ t: l.note, w: 600, c: '#B8C0E8' }], x + 22, y + 23, legW - 34, 15);
     const wp = l.b.weekPct, st = l.b.stat;
     const txt = `неделя ${wp >= 0 ? '+' : ''}${wp.toFixed(1)}%` + (st.n ? ` · WR ${st.wr.toFixed(1)}% (${st.n})` : ' · сделок нет');
-    wkText_(c, txt, x + 22, y + 24, wkF_(600, 16), '#E8EAFF');
+    wkRich_(c, [{ t: txt, w: 600, c: '#E8EAFF' }], x + 22, y + 48, legW - 34, 16);
   });
 
-  const chTop = py + 112, cw = WK_W - P * 2 - 28, chH = ph - 124;
+  const chTop = py + 134, cw = WK_W - P * 2 - 28, chH = ph - 146;
   const wkFrom = d.days.indexOf(d.mon), wkTo = d.days.length - 1;
   const ds = lines.map(l => ({ label: l.name, data: l.b.curve, color: WK_COLORS[l.key] }));
   const pnlImg = wkChartImg_(cw, chH, {
@@ -9136,7 +9139,7 @@ async function wkDraw_(d) {
 
   // Подпись внизу считаем заранее: её высота задаёт высоту нижних карточек.
   c.font = wkF_(500, 15);
-  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: Binance - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно' + (d.bybit.has ? '; ByBit 5m - ETH 125 / BTC 250, выплата 0.8.' : '.'), WK_W - P * 2);
+  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: Binance - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно' + (d.bybit.has ? '; ByBit 5m - только ETH, ставка 125, выплата 0.8.' : '.'), WK_W - P * 2);
   const footLh = 21, footTop = WK_H - 30 - (footLines.length - 1) * footLh;
 
   // Пары за неделю

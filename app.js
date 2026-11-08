@@ -8808,9 +8808,13 @@ function initBybitUI() {
 
 // ===== НЕДЕЛЬНЫЙ ОТЧЁТ: СЛАЙД 4:5 ДЛЯ TELEGRAM =====
 // Раньше итоги недели собирались скриншотами с трёх вкладок и склейкой в
-// редакторе. Здесь тот же набор - цифры недели, PNL новой системы и MEXC на
-// одной шкале, пары за неделю, WR по месяцам - рисуется одним слайдом
-// 1080×1350 (в файле - вдвое крупнее) и уходит PNG, PDF или ботом в личку.
+// редакторе. Здесь тот же набор - цифры недели, PNL трёх бирж на одной шкале,
+// пары за неделю, WR по месяцам - рисуется одним слайдом 1080×1350 (в файле -
+// вдвое крупнее) и уходит PNG, PDF или ботом в личку.
+//
+// Цифры недели, пары и WR по месяцам - это сигналы PRO-группы в Telegram,
+// они для Binance; на слайде это написано прямо. На графике PNL рядом с ними
+// MEXC и ByBit 5m - у каждой линии подписана биржа.
 //
 // Неделя - понедельник..воскресенье по Варшаве, считается из самих
 // сигналов, а не из листа «Last 7 Days»: тот скользящий, и цифры зависели
@@ -8820,7 +8824,9 @@ function initBybitUI() {
 const WK = { mon: null, data: null, canvas: null, busy: false };
 const WK_DEP = 5000;
 const WK_W = 1080, WK_H = 1350, WK_S = 2;
-const WK_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A' };
+const WK_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A', BYBIT: BB_COLOR };
+const WK_SRC = 'PRO-группа в Telegram';            // откуда цифры недели
+const WK_SUB = 'PRO-группа Telegram · Binance';    // подпись нижних карточек
 
 function wkAddDays_(dk, n) {
   const [y, m, d] = dk.split('-').map(Number);
@@ -8881,6 +8887,15 @@ async function wkCompute_(mon) {
     return s.res === 'WIN' ? st * MEXC_PAYOUT[exp] : -st;
   };
 
+  // ByBit 5m: лист 5Msignal, боевые ставки как у PRO (ETH 125 / BTC 250,
+  // прочие пары - как ETH), выплата 0.8, без лимита ставок.
+  let bybit = [];
+  try {
+    bybit = (await bybitSignalsAll_())
+      .filter(s => (s.res === 'WIN' || s.res === 'LOSE') && s.dk >= ERA_SINCE_DK && s.dk <= sun);
+  } catch (e) { console.log('weekly ByBit error:', e); }
+  const bybitPnl = s => { const st = bbStakeMax_(s.pair); return s.res === 'WIN' ? st * BB_PAYOUT : -st; };
+
   // Общая ось дат с 1 июня по воскресенье; дни без сделок держат уровень.
   const days = [];
   for (let dk = ERA_SINCE_DK; dk <= sun; dk = wkAddDays_(dk, 1)) days.push(dk);
@@ -8911,6 +8926,7 @@ async function wkCompute_(mon) {
     days,
     pro: { curve: curve(era, proPnl), weekPct: weekPct(era, proPnl), stat: wkStat_(week) },
     mexc: { curve: curve(mexc, mexcPnl), weekPct: weekPct(mexc, mexcPnl), stat: wkStat_(mexc.filter(s => inWeek(s, mon, sun))), has: mexc.length > 0 },
+    bybit: { curve: curve(bybit, bybitPnl), weekPct: weekPct(bybit, bybitPnl), stat: wkStat_(bybit.filter(s => inWeek(s, mon, sun))), has: bybit.length > 0 },
     months: Object.keys(months).sort().map(k => ({ k, n: months[k].w + months[k].l, wr: months[k].w / (months[k].w + months[k].l) * 100 })),
   };
 }
@@ -8945,6 +8961,17 @@ function wkLines_(c, txt, maxW) {
   }
   if (line) out.push(line);
   return out;
+}
+// Строка из кусков разного цвета и жирности; не влезает в ширину - шрифт
+// уменьшается целиком, а не обрезается.
+function wkRich_(c, parts, x, y, maxW, px) {
+  const width = size => parts.reduce((a, p) => { c.font = wkF_(p.w, size); return a + c.measureText(p.t).width; }, 0);
+  let size = px;
+  while (size > 12 && width(size) > maxW) size--;
+  for (const p of parts) {
+    wkText_(c, p.t, x, y, wkF_(p.w, size), p.c);
+    x += c.measureText(p.t).width;
+  }
 }
 const WK_FONT = '-apple-system, "Segoe UI", Roboto, Arial, sans-serif';
 const wkF_ = (w, px) => `${w} ${px}px ${WK_FONT}`;
@@ -9001,17 +9028,33 @@ async function wkDraw_(d) {
   c.restore();
   wkText_(c, `${d.sun.slice(0, 4)} · неделя Пн–Вс · время Варшавы`, WK_W - P, 140, wkF_(600, 16), '#8A93BF', 'right');
 
+  // Откуда цифры: плашка над ними, на всю ширину, в цвет линии Binance.
+  const sy = 198, sh = 46;
+  c.save();
+  wkRound_(c, P, sy, WK_W - P * 2, sh, 16);
+  c.fillStyle = hexA(WK_COLORS.PRO, 0.13); c.fill();
+  c.strokeStyle = hexA(WK_COLORS.PRO, 0.55); c.lineWidth = 1.5; c.stroke();
+  c.fillStyle = WK_COLORS.PRO; c.shadowColor = WK_COLORS.PRO; c.shadowBlur = 10;
+  c.beginPath(); c.arc(P + 26, sy + sh / 2, 6, 0, Math.PI * 2); c.fill();
+  c.restore();
+  wkRich_(c, [
+    { t: 'Ключевые показатели — ', w: 600, c: '#B8C0E8' },
+    { t: WK_SRC, w: 800, c: '#FFFFFF' },
+    { t: ' · сигналы для биржи ', w: 600, c: '#B8C0E8' },
+    { t: 'Binance', w: 800, c: WK_COLORS.PRO },
+  ], P + 44, sy + 30, WK_W - P * 2 - 64, 19);
+
   // Четыре цифры
-  const gw = (WK_W - P * 2 - 16) / 2, kh = 112;
+  const gw = (WK_W - P * 2 - 16) / 2, kh = 104;
   const kpi = (x, y, val, color, label, extra) => {
     wkCard_(c, x, y, gw, kh, 18);
-    wkText_(c, val, x + 22, y + 60, wkF_(800, 44), color);
+    wkText_(c, val, x + 22, y + 56, wkF_(800, 44), color);
     if (extra) {
       c.font = wkF_(800, 44);
       const vx = x + 22 + c.measureText(val).width + 12;
-      wkText_(c, extra.t, vx, y + 54, wkF_(700, 21), extra.c);
+      wkText_(c, extra.t, vx, y + 50, wkF_(700, 21), extra.c);
     }
-    wkText_(c, label, x + 22, y + 92, wkF_(600, 17), '#8A93BF');
+    wkText_(c, label, x + 22, y + 86, wkF_(600, 17), '#8A93BF');
   };
   const fmtWr = v => v == null ? '–' : v.toFixed(1) + '%';
   let delta = null;
@@ -9019,39 +9062,42 @@ async function wkDraw_(d) {
     const dv = d.week.wr - d.prev.wr;
     delta = { t: `${dv >= 0 ? '▲' : '▼'} ${Math.abs(dv).toFixed(1)} п.п.`, c: dv >= 0 ? '#4EFFA0' : '#FF5272' };
   }
-  const ky = 200;
+  const ky = sy + sh + 14;
   kpi(P, ky, fmtWr(d.week.wr), wrHex(d.week.wr || 0), 'WinRate за неделю' + (delta ? ' · к прошлой неделе' : ''), delta);
   kpi(P + gw + 16, ky, String(d.week.n), '#B98BFF', 'Сигналов за неделю');
-  kpi(P, ky + kh + 14, fmtWr(d.total.wr), wrHex(d.total.wr || 0), 'WinRate за всё время');
-  kpi(P + gw + 16, ky + kh + 14, profileFmtNum_(d.total.n), '#B98BFF', 'Сигналов всего');
+  kpi(P, ky + kh + 12, fmtWr(d.total.wr), wrHex(d.total.wr || 0), 'WinRate за всё время');
+  kpi(P + gw + 16, ky + kh + 12, profileFmtNum_(d.total.n), '#B98BFF', 'Сигналов всего');
 
-  // PNL: новая система и MEXC на одной шкале
-  const py = ky + kh * 2 + 14 + 20, ph = 440;
+  // PNL трёх бирж на одной шкале. Легенда - столбиками: биржа и её цвет,
+  // под ними - неделя в % и WR.
+  const lines = [{ key: 'PRO', name: 'Binance · PRO', b: d.pro }];
+  if (d.mexc.has) lines.push({ key: 'MEXC', name: 'MEXC', b: d.mexc });
+  if (d.bybit.has) lines.push({ key: 'BYBIT', name: 'ByBit 5m', b: d.bybit });
+  const py = ky + kh * 2 + 12 + 16, ph = 440;
   wkCard_(c, P, py, WK_W - P * 2, ph);
-  wkText_(c, 'Total PNL — новая система и MEXC', P + 24, py + 40, wkF_(700, 22), '#FFFFFF');
-  const leg = (x, y, color, name, b) => {
+  wkText_(c, 'Total PNL — ' + lines.map(l => l.name.replace(' · PRO', '')).join(', ').replace(/, ([^,]*)$/, ' и $1'),
+    P + 24, py + 40, wkF_(700, 22), '#FFFFFF');
+  const legW = (WK_W - P * 2 - 48) / 3;
+  lines.forEach((l, i) => {
+    const x = P + 24 + i * legW, y = py + 74, color = WK_COLORS[l.key];
     c.save(); c.fillStyle = color; c.shadowColor = color; c.shadowBlur = 10;
-    c.beginPath(); c.arc(x + 6, y - 6, 6, 0, Math.PI * 2); c.fill(); c.restore();
-    const wp = b.weekPct, st = b.stat;
-    const txt = `${name}: неделя ${wp >= 0 ? '+' : ''}${wp.toFixed(1)}%` + (st.n ? ` · WR ${st.wr.toFixed(1)}% (${st.n})` : '');
-    wkText_(c, txt, x + 20, y, wkF_(600, 17), '#E8EAFF');
-    c.font = wkF_(600, 17);
-    return x + 20 + c.measureText(txt).width + 26;
-  };
-  let lx = leg(P + 24, py + 74, WK_COLORS.PRO, 'Новая система', d.pro);
-  if (d.mexc.has) leg(lx, py + 74, WK_COLORS.MEXC, 'MEXC', d.mexc);
+    c.beginPath(); c.arc(x + 7, y - 7, 7, 0, Math.PI * 2); c.fill(); c.restore();
+    wkText_(c, l.name, x + 22, y, wkF_(800, 19), color);
+    const wp = l.b.weekPct, st = l.b.stat;
+    const txt = `неделя ${wp >= 0 ? '+' : ''}${wp.toFixed(1)}%` + (st.n ? ` · WR ${st.wr.toFixed(1)}% (${st.n})` : ' · сделок нет');
+    wkText_(c, txt, x + 22, y + 24, wkF_(600, 16), '#E8EAFF');
+  });
 
-  const cw = WK_W - P * 2 - 28, chH = ph - 104;
+  const chTop = py + 112, cw = WK_W - P * 2 - 28, chH = ph - 124;
   const wkFrom = d.days.indexOf(d.mon), wkTo = d.days.length - 1;
-  const ds = [{ label: 'Новая система', data: d.pro.curve, color: WK_COLORS.PRO }];
-  if (d.mexc.has) ds.push({ label: 'MEXC', data: d.mexc.curve, color: WK_COLORS.MEXC });
+  const ds = lines.map(l => ({ label: l.name, data: l.b.curve, color: WK_COLORS[l.key] }));
   const pnlImg = wkChartImg_(cw, chH, {
     type: 'line',
     data: {
       labels: d.days.map(wkFmt_),
       datasets: [
         ...ds.map(x => ({ data: x.data, fillOnly: true, borderWidth: 0, pointRadius: 0, fill: 'origin', tension: 0.25, spanGaps: false,
-          backgroundColor: hexA(x.color, 0.16) })),
+          backgroundColor: hexA(x.color, ds.length > 2 ? 0.12 : 0.16) })),
         ...ds.map(x => ({ data: x.data, neon: true, borderColor: x.color, borderWidth: 3, pointRadius: 0, fill: false, tension: 0.25, spanGaps: false })),
       ],
     },
@@ -9064,7 +9110,7 @@ async function wkDraw_(d) {
       },
     },
     plugins: [neonGlowPlugin, {
-      // Отчётная неделя - подсвеченной полосой.
+      // Отчётная неделя - светлой полосой: бирюзовой нельзя, это цвет ByBit.
       id: 'wkBand',
       beforeDatasetsDraw(ch) {
         if (wkFrom < 0) return;
@@ -9072,8 +9118,8 @@ async function wkDraw_(d) {
         const x0 = xs.getPixelForValue(wkFrom), x1 = xs.getPixelForValue(wkTo);
         const cc = ch.ctx;
         cc.save();
-        cc.fillStyle = 'rgba(34,232,255,0.10)'; cc.fillRect(x0, a.top, Math.max(2, x1 - x0), a.bottom - a.top);
-        cc.strokeStyle = 'rgba(34,232,255,0.45)'; cc.setLineDash([4, 4]); cc.beginPath(); cc.moveTo(x0, a.top); cc.lineTo(x0, a.bottom); cc.stroke();
+        cc.fillStyle = 'rgba(255,255,255,0.07)'; cc.fillRect(x0, a.top, Math.max(2, x1 - x0), a.bottom - a.top);
+        cc.strokeStyle = 'rgba(255,255,255,0.40)'; cc.setLineDash([4, 4]); cc.beginPath(); cc.moveTo(x0, a.top); cc.lineTo(x0, a.bottom); cc.stroke();
         cc.restore();
       },
     }, {
@@ -9085,12 +9131,12 @@ async function wkDraw_(d) {
       },
     }],
   });
-  c.drawImage(pnlImg.cv, P + 14, py + 92, cw, chH);
+  c.drawImage(pnlImg.cv, P + 14, chTop, cw, chH);
   pnlImg.done();
 
   // Подпись внизу считаем заранее: её высота задаёт высоту нижних карточек.
   c.font = wkF_(500, 15);
-  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: новая система - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно.', WK_W - P * 2);
+  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: Binance - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно' + (d.bybit.has ? '; ByBit 5m - ETH 125 / BTC 250, выплата 0.8.' : '.'), WK_W - P * 2);
   const footLh = 21, footTop = WK_H - 30 - (footLines.length - 1) * footLh;
 
   // Пары за неделю
@@ -9098,8 +9144,9 @@ async function wkDraw_(d) {
   wkCard_(c, P, ry, rw, rh);
   c.save(); c.fillStyle = '#22E8FF'; c.shadowColor = '#22E8FF'; c.shadowBlur = 10; c.fillRect(P + 22, ry + 26, 10, 10); c.restore();
   wkText_(c, 'По парам — неделя', P + 42, ry + 38, wkF_(700, 21), '#FFFFFF');
+  wkText_(c, WK_SUB, P + 42, ry + 62, wkF_(700, 15), WK_COLORS.PRO);
   const cols = [P + 20, P + 140, P + 204, P + 282, P + 344, P + 402, P + rw - 18];
-  const hy = ry + 82;
+  const hy = ry + 92;
   ['', '↑ Всего', '↑ WR', '↓ Всего', '↓ WR', 'Всего', 'WR'].forEach((h, i) =>
     wkText_(c, h, cols[i], hy, wkF_(600, 14), '#8A93BF', i ? 'right' : 'left'));
   const wrCell = s => s.n ? s.wr.toFixed(0) + '%' : '–';
@@ -9114,16 +9161,16 @@ async function wkDraw_(d) {
     wkText_(c, r.tot.n ? r.tot.wr.toFixed(1) + '%' : '–', cols[6], y, f, r.tot.n ? wrHex(r.tot.wr) : '#8A93BF', 'right');
     c.save(); c.strokeStyle = 'rgba(255,255,255,0.06)'; c.beginPath(); c.moveTo(P + 18, y - 28); c.lineTo(P + rw - 14, y - 28); c.stroke(); c.restore();
   };
-  row(hy + 46, 'ETH', d.pairs[0]);
-  row(hy + 92, 'BTC', d.pairs[1]);
-  row(hy + 138, 'ИТОГО', d.tot, true);
+  row(hy + 44, 'ETH', d.pairs[0]);
+  row(hy + 88, 'BTC', d.pairs[1]);
+  row(hy + 132, 'ИТОГО', d.tot, true);
 
-  // WR по месяцам новой системы
+  // WR по месяцам - сигналы PRO (Binance)
   const mx = P + rw + 16;
   wkCard_(c, mx, ry, rw, rh);
   c.save(); c.fillStyle = '#FFD166'; c.shadowColor = '#FFD166'; c.shadowBlur = 10; c.fillRect(mx + 22, ry + 26, 10, 10); c.restore();
   wkText_(c, 'WinRate по месяцам', mx + 42, ry + 38, wkF_(700, 21), '#FFFFFF');
-  wkText_(c, 'новая система', mx + 42, ry + 62, wkF_(600, 15), '#8A93BF');
+  wkText_(c, WK_SUB, mx + 42, ry + 62, wkF_(700, 15), WK_COLORS.PRO);
   const MN = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
   const mons = d.months.slice(-6);
   // Шкала с шагом 5%: иначе верхняя метка («72%») налезала на соседнюю.

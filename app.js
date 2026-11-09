@@ -1500,6 +1500,10 @@ function wrRgba(pct) {
   const n = parseFloat(pct);
   return n >= WR_GREEN ? 'rgba(78,255,160,0.65)' : n >= WR_BREAKEVEN ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)';
 }
+// То же при своём безубытке ветки - пороги как у wrClassAt_ (be и be + 6).
+function wrRgbaAt_(wr, be) {
+  return wr >= be + 6 ? 'rgba(78,255,160,0.65)' : wr >= be ? 'rgba(255,209,102,0.65)' : 'rgba(255,82,114,0.65)';
+}
 
 // ===== БЕЗУБЫТОК: единая опора для всех WR-графиков и таблиц =====
 // При выплате 0.8 сделка окупается на WR = 1/(1+0.8) = 55.6%. Ниже этой
@@ -1510,14 +1514,15 @@ const WR_PAYOUT = 0.8;
 // Плагин Chart.js: горизонтальная черта безубытка с подписью.
 // Подпись уходит под линию, если сверху не хватает места (иначе её
 // обрезает верхний край канваса).
-function breakevenLinePlugin() {
+function breakevenLinePlugin(be) {
+  const b = be == null ? WR_BREAKEVEN : be;
   return {
     id: 'breakevenLine',
     afterDatasetsDraw(chart) {
       const { ctx: c, chartArea, scales: { y } } = chart;
       if (!chartArea || !y) return;
-      if (WR_BREAKEVEN < y.min || WR_BREAKEVEN > y.max) return;
-      const py = y.getPixelForValue(WR_BREAKEVEN);
+      if (b < y.min || b > y.max) return;
+      const py = y.getPixelForValue(b);
       c.save();
       c.setLineDash([4, 4]);
       c.strokeStyle = 'rgba(255,209,102,0.75)';
@@ -1529,7 +1534,7 @@ function breakevenLinePlugin() {
       c.setLineDash([]);
       // Подпись ложится поверх столбцов, поэтому под неё нужна подложка -
       // жёлтый текст на зелёной заливке иначе не читается.
-      const label = `${t('wr.be.short')} ${WR_BREAKEVEN}%`;
+      const label = `${t('wr.be.short')} ${Math.round(b * 100) / 100}%`;
       c.font = '600 9px sans-serif';
       const w = c.measureText(label).width;
       const above = (py - 3) > (chartArea.top + 11);
@@ -1547,10 +1552,11 @@ function breakevenLinePlugin() {
 
 // Диапазон оси Y для WR-графика, гарантированно включающий безубыток:
 // без этого черта просто не попадёт в область рисования.
-function wrAxisRange(values, padLow = 8, padHigh = 6) {
+function wrAxisRange(values, padLow = 8, padHigh = 6, be) {
+  const b = be == null ? WR_BREAKEVEN : be;
   const vals = values.filter(v => typeof v === 'number' && !isNaN(v));
-  const lo = Math.min(WR_BREAKEVEN, ...(vals.length ? vals : [WR_BREAKEVEN]));
-  const hi = Math.max(WR_BREAKEVEN, ...(vals.length ? vals : [WR_BREAKEVEN]));
+  const lo = Math.min(b, ...(vals.length ? vals : [b]));
+  const hi = Math.max(b, ...(vals.length ? vals : [b]));
   return {
     min: Math.max(0, Math.floor(lo - padLow)),
     max: Math.min(100, Math.ceil(hi + padHigh)),
@@ -1567,7 +1573,8 @@ let wrDailyChartInstance = null;
 // Отрисовка дневного WR по уже разобранным сигналам. Вынесена отдельно,
 // чтобы страница «Статистика» и DEV-блок рисовали один и тот же график,
 // различаясь только источником сигналов.
-function drawDailyWrChart(canvasId, sigs, days) {
+// be - безубыток ветки; не передан - общий 55.6%.
+function drawDailyWrChart(canvasId, sigs, days, be) {
   const cutoff = devDailyDateRange(days)[0];
 
   const map = {};
@@ -1591,12 +1598,12 @@ function drawDailyWrChart(canvasId, sigs, days) {
     counts.push(tot);
     // День с 1-2 сигналами даёт 0% или 100% и сбивает чтение графика,
     // поэтому малую выборку гасим серым, а не красим по WR.
-    colors.push(tot < MIN_SAMPLE ? 'rgba(123,132,176,0.4)' : wrRgba(wr));
+    colors.push(tot < MIN_SAMPLE ? 'rgba(123,132,176,0.4)' : be == null ? wrRgba(wr) : wrRgbaAt_(wr, be));
   }
 
   const ctx = document.getElementById(canvasId)?.getContext('2d');
   if (!ctx) return null;
-  const range = wrAxisRange(data);
+  const range = wrAxisRange(data, 8, 6, be);
 
   return new Chart(ctx, {
     type: 'bar',
@@ -1612,7 +1619,7 @@ function drawDailyWrChart(canvasId, sigs, days) {
         y: { min: range.min, max: range.max, ticks: { color: '#7B84B0', font: { size: 10 }, callback: v => `${v}%` }, grid: { color: 'rgba(255,255,255,0.04)' } }
       }
     },
-    plugins: [breakevenLinePlugin()]
+    plugins: [breakevenLinePlugin(be)]
   });
 }
 
@@ -1630,7 +1637,18 @@ async function renderWrDailyChart(canvasId, days = 30) {
 
 // Легенда под таблицами WR: объясняет раскраску и называет безубыток.
 // data-i18n оставляем, чтобы переключение языка подхватывало текст.
-function wrLegendHtml() {
+// be - свой безубыток ветки (ByBit): цифры в подписях - её, пороги как у
+// wrClassAt_. Такую легенду перерисовывает сама страница при смене языка.
+function wrLegendHtml(be) {
+  if (be != null) {
+    const f = v => String(Math.round(v * 100) / 100);
+    const tx = k => t(k).replace('{be}', f(be)).replace('{g}', f(be + 6));
+    return `<div class="wr-legend">
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-red"></i><span>${tx('wr.legend.red.at')}</span></span>
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-yellow"></i><span>${tx('wr.legend.yellow.at')}</span></span>
+    <span class="wr-legend-item"><i class="wr-dot wr-dot-green"></i><span>${tx('wr.legend.green.at')}</span></span>
+  </div>`;
+  }
   return `<div class="wr-legend">
     <span class="wr-legend-item"><i class="wr-dot wr-dot-red"></i><span data-i18n="wr.legend.red">${t('wr.legend.red')}</span></span>
     <span class="wr-legend-item"><i class="wr-dot wr-dot-yellow"></i><span data-i18n="wr.legend.yellow">${t('wr.legend.yellow')}</span></span>
@@ -7377,7 +7395,9 @@ const STATS_CMP = { on: false };
 
 // Деньги каждого сигнала при сложном проценте. items: [{s, keys}] - по
 // любому из keys (строка листа, разобранный сигнал) потом берём сумму.
-function statsCmpMap_(items, capOf, payoutOf) {
+// lossOf - доля ставки, которая теряется при LOSE (по умолчанию вся ставка;
+// у ByBit 1.0267 - с комиссией).
+function statsCmpMap_(items, capOf, payoutOf, lossOf) {
   const pct = calcProfilePct_();
   const sorted = items.slice().sort((a, b) => mexcSignalTs_(a.s) - mexcSignalTs_(b.s));
   const map = new Map();
@@ -7385,7 +7405,7 @@ function statsCmpMap_(items, capOf, payoutOf) {
   for (const { s, keys } of sorted) {
     if (s.dk !== day) { day = s.dk; dayBal = bal; }
     const st = cmpStake_(dayBal, pct, capOf(s));
-    const v = st < 1 ? 0 : s.res === 'WIN' ? st * payoutOf(s) : s.res === 'LOSE' ? -st : 0;
+    const v = st < 1 ? 0 : s.res === 'WIN' ? st * payoutOf(s) : s.res === 'LOSE' ? -st * (lossOf ? lossOf(s) : 1) : 0;
     bal += v;
     for (const k of keys) map.set(k, v);
   }
@@ -8468,11 +8488,14 @@ function initMexcStatsUI() {
 // читает вовсе: это закрытые данные, показывать их нельзя никому.
 // Лист новый и ещё будет меняться, поэтому колонки ищем по заголовкам, а
 // номера ниже - только запасной вариант под нынешнюю раскладку.
-// Деньги - как у PRO: ставка из профиля, но не выше боевой для пары (ETH 125,
-// BTC 250, прочие пары - как ETH), выплата 0.8.
+// Деньги: ставка из профиля, но не выше боевой для пары (ETH 125, BTC 250,
+// прочие пары - как ETH). Выплата у ByBit своя: выигрыш +77.33% ставки,
+// проигрыш -102.67% ставки (с комиссией), безубыток 102.67 / 180 = 57.04%.
 const BB_STATS = { days: 30, shown: 0, journal: [], charts: {} };
-const BB_PAYOUT = 0.8;
-const BB_BE = 100 / (1 + BB_PAYOUT);
+const BB_PAYOUT = 0.7733;
+const BB_LOSS = 1.0267;
+const BB_BE = 100 * BB_LOSS / (BB_PAYOUT + BB_LOSS);
+const bbPctTxt_ = v => (Math.round(v * 100) / 100) + '%';   // 57.04%
 const BB_PAGE = 30;                 // строк журнала за один показ
 // Запасные номера - под ответ на BB_SELECT_DEFAULT (A,B,C,D,G,H,K,M,O,P),
 // если в нём вдруг не окажется заголовков.
@@ -8547,7 +8570,7 @@ async function bybitSignalsAll_() {
 function bbStakeMax_(pair) { return PRO_STAKE_MAX[pair] || PRO_STAKE_MAX.ETH; }
 function bbPnlSig_(s) {
   const st = profileStake(bbStakeMax_(s.pair));
-  return s.res === 'WIN' ? st * BB_PAYOUT : s.res === 'LOSE' ? -st : 0;
+  return s.res === 'WIN' ? st * BB_PAYOUT : s.res === 'LOSE' ? -st * BB_LOSS : 0;
 }
 
 // Сколько дней показывать на графике WR: у «Всё» - от первого сигнала.
@@ -8590,7 +8613,7 @@ function bbSummaryHtml_(sigs, pending, pnlFn) {
     html: `${t('bb.sum.sig')}: <b>${sigs.length}</b><span class="pro-only"> &nbsp;·&nbsp; WIN <b class="wr-green">${w}</b> &nbsp;·&nbsp; LOSE <b class="wr-red">${l}</b></span>` +
           ` &nbsp;·&nbsp; WR <b class="${wrClassAt_(wr, BB_BE)}">${wr == null ? '-' : wr.toFixed(1) + '%'}</b>` +
           ` &nbsp;·&nbsp; PNL <b class="${pnl >= 0 ? 'wr-green' : 'wr-red'}">${devFmtUsdt(pnl)}</b>` +
-          `<span class="pro-only"> &nbsp;·&nbsp; <span class="mexc-be">${t('bb.sum.be')} ${BB_BE.toFixed(1)}%</span></span>` + wait,
+          `<span class="pro-only"> &nbsp;·&nbsp; <span class="mexc-be">${t('bb.sum.be')} ${bbPctTxt_(BB_BE)}</span></span>` + wait,
     wr,
   };
 }
@@ -8732,7 +8755,7 @@ async function renderBybitStats() {
     // просадку, таблицы остаются на фиксированной ставке.
     let cmpFn = null;
     if (STATS_CMP.on) {
-      const map = statsCmpMap_(sigs.map(s => ({ s, keys: [s] })), s => bbStakeMax_(s.pair), () => BB_PAYOUT);
+      const map = statsCmpMap_(sigs.map(s => ({ s, keys: [s] })), s => bbStakeMax_(s.pair), () => BB_PAYOUT, () => BB_LOSS);
       cmpFn = s => map.get(s) || 0;
     }
 
@@ -8753,14 +8776,14 @@ async function renderBybitStats() {
       bbShow_('bbDrawdownCard', !!pnlChartInstances.bbDrawdown);
     } catch (e) { console.log('ByBit drawdown error:', e); bbShow_('bbDrawdownCard', false); }
     try {
-      BB_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('bbWrDailyChart', sigs, bbSpanDays_(sigs));
+      BB_STATS.charts.wr = typeof Chart === 'undefined' ? null : drawDailyWrChart('bbWrDailyChart', sigs, bbSpanDays_(sigs), BB_BE);
       bbShow_('bbWrDailyCard', !!BB_STATS.charts.wr);
     } catch (e) { console.log('ByBit wr chart error:', e); bbShow_('bbWrDailyCard', false); }
 
     const pairOrder = mexcPairOrder_(sigs);
     const pairTable = devBuildTable(pairOrder, devAggregate(sigs, s => s.pair), BB_BE);
     const pairEl = document.getElementById('bbPairsTable');
-    if (pairEl && pairTable) pairEl.innerHTML = pairTable + bbPairsTotalHtml_(sigs, pairOrder) + wrLegendHtml();
+    if (pairEl && pairTable) pairEl.innerHTML = pairTable + bbPairsTotalHtml_(sigs, pairOrder) + wrLegendHtml(BB_BE);
     bbShow_('bbPairsCard', !!pairTable);
 
     // По конфигурациям - только когда их больше одной, иначе это та же
@@ -8889,13 +8912,13 @@ async function wkCompute_(mon) {
 
   // ByBit 5m: лист 5Msignal, только ETH - так линия подписана на слайде;
   // случайная строка другой пары в ней не окажется. Боевая ставка как у PRO
-  // (ETH 125), выплата 0.8, без лимита ставок.
+  // (ETH 125), выигрыш +77.33%, проигрыш -102.67% ставки, без лимита ставок.
   let bybit = [];
   try {
     bybit = (await bybitSignalsAll_())
       .filter(s => s.pair === 'ETH' && (s.res === 'WIN' || s.res === 'LOSE') && s.dk >= ERA_SINCE_DK && s.dk <= sun);
   } catch (e) { console.log('weekly ByBit error:', e); }
-  const bybitPnl = s => { const st = bbStakeMax_(s.pair); return s.res === 'WIN' ? st * BB_PAYOUT : -st; };
+  const bybitPnl = s => { const st = bbStakeMax_(s.pair); return s.res === 'WIN' ? st * BB_PAYOUT : -st * BB_LOSS; };
 
   // Общая ось дат с 1 июня по воскресенье; дни без сделок держат уровень.
   const days = [];
@@ -9139,7 +9162,7 @@ async function wkDraw_(d) {
 
   // Подпись внизу считаем заранее: её высота задаёт высоту нижних карточек.
   c.font = wkF_(500, 15);
-  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: Binance - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно' + (d.bybit.has ? '; ByBit 5m - только ETH, ставка 125, выплата 0.8.' : '.'), WK_W - P * 2);
+  const footLines = wkLines_(c, 'Учтены только сигналы с оценкой WIN/LOSE, смешанные (win и loss) исключены. PNL - на депозит 5 000 USDT с боевыми ставками: Binance - ETH 125 / BTC 250, выплата 0.8; MEXC - BTC 250, остальные 150, выплата 0.8 / 0.85, не больше 5 ставок одновременно' + (d.bybit.has ? `; ByBit 5m - только ETH, ставка 125, выигрыш +${bbPctTxt_(BB_PAYOUT * 100)}, проигрыш -${bbPctTxt_(BB_LOSS * 100)}.` : '.'), WK_W - P * 2);
   const footLh = 21, footTop = WK_H - 30 - (footLines.length - 1) * footLh;
 
   // Пары за неделю

@@ -1193,9 +1193,18 @@ async function fetchMexc30Signals() {
 // берём одну строку заголовков, по ней - буквы нужных колонок, и запрашиваем
 // только их (запрос gviz «select»). Нет заголовков - берём буквы нынешней
 // раскладки листа; запроса всех колонок нет ни в одной ветке.
+//
+// Индикатор одной строкой (v.5000, v.6000, v.8000, v.7) лежит в колонке S,
+// у неё нет своего заголовка (сейчас там «Столбец 1»). Берём колонку с
+// заголовком «Indicator»/«Code»/«Индикатор», если такая появится, иначе - S,
+// но только если в её заголовке нет ничего про исполнителей.
 const BB_SHEET_ID = '1PCFuUAColEZgV7Be3gXsNhJoFrv34Ni79yR-_3zuJ5o';
 const BB_WANT = [/^time$/, /^ticker$/, /^direction$/, /^price$/, /^settings$/, /^direction1$/, /^tg$/, /^receivedat$/, /^close/, /^result$/];
-const BB_SELECT_DEFAULT = 'A,B,C,D,G,H,K,M,O,P';
+const BB_GRP_RE = /^(indicator|индикатор|code|код|group|группа)$/;
+const BB_GRP_COL = 18;                                  // S
+const BB_PRIVATE_RE = /exec|исполн|^ex\d/;
+const BB_SELECT_DEFAULT = 'A,B,C,D,G,H,K,M,O,P,S';
+const BB_SELECT_SAFE = 'A,B,C,D,G,H,K,M,O,P';           // если S в листе нет
 let bybitSignalRows = null;
 
 function bbColLetter_(i) {
@@ -1207,11 +1216,16 @@ function bbColLetter_(i) {
 // сигнала в ней, и rowUtcMs_ читает именно первую ячейку строки.
 function bbSelectFromHead_(head) {
   const idx = [0];
-  (head || []).forEach((h, i) => {
-    const v = String(h || '').trim().toLowerCase();
+  const hs = (head || []).map(h => String(h || '').trim().toLowerCase());
+  hs.forEach((v, i) => {
     if (i > 0 && BB_WANT.some(re => re.test(v))) idx.push(i);
   });
-  return idx.length > 3 ? idx.map(bbColLetter_).join(',') : null;
+  if (idx.length <= 3) return null;
+  // Индикатор - последним: в ответе он будет единственной колонкой не из BB_WANT.
+  let g = hs.findIndex((v, i) => i > 0 && BB_GRP_RE.test(v));
+  if (g < 0 && hs.length > BB_GRP_COL && !BB_PRIVATE_RE.test(hs[BB_GRP_COL])) g = BB_GRP_COL;
+  if (g > 0 && !idx.includes(g)) idx.push(g);
+  return idx.map(bbColLetter_).join(',');
 }
 async function bbGviz_(tq) {
   const url = `https://docs.google.com/spreadsheets/d/${BB_SHEET_ID}/gviz/tq?tqx=out:csv&headers=1&sheet=5Msignal&tq=${encodeURIComponent(tq)}`;
@@ -1227,7 +1241,11 @@ async function fetchBybitSignals() {
     let select = null;
     try { select = bbSelectFromHead_(((await bbGviz_('select * limit 0')) || [])[0]); }
     catch (e) { console.log('5Msignal header error:', e); }
-    bybitSignalRows = (await bbGviz_('select ' + (select || BB_SELECT_DEFAULT))) || [];
+    bybitSignalRows = await bbGviz_('select ' + (select || BB_SELECT_DEFAULT));
+    // Запасной набор просит S вслепую; если колонки нет, gviz отвечает ошибкой
+    // на весь запрос - тогда без неё, индикатор выведем из кода конфигурации.
+    if (!bybitSignalRows && !select) bybitSignalRows = await bbGviz_('select ' + BB_SELECT_SAFE);
+    bybitSignalRows = bybitSignalRows || [];
   } catch (e) {
     console.log('5Msignal fetch error:', e);
     bybitSignalRows = [];
@@ -8497,9 +8515,9 @@ const BB_LOSS = 1.0267;
 const BB_BE = 100 * BB_LOSS / (BB_PAYOUT + BB_LOSS);
 const bbPctTxt_ = v => (Math.round(v * 100) / 100) + '%';   // 57.04%
 const BB_PAGE = 30;                 // строк журнала за один показ
-// Запасные номера - под ответ на BB_SELECT_DEFAULT (A,B,C,D,G,H,K,M,O,P),
+// Запасные номера - под ответ на BB_SELECT_DEFAULT (A,B,C,D,G,H,K,M,O,P,S),
 // если в нём вдруг не окажется заголовков.
-const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 4, ver: 5, tg: 6, recv: 7, close: 8 };
+const BB_COLS_DEFAULT = { ticker: 1, dir: 2, price: 3, settings: 4, ver: 5, tg: 6, recv: 7, close: 8, grp: 10 };
 const BB_COLOR = '#22D3EE';
 const BB_DOW = {
   ru: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
@@ -8516,7 +8534,29 @@ function bbCols_(rows) {
     settings: at(/^settings$/, d.settings), ver: at(/^direction1$/, d.ver), tg: at(/^tg$/, d.tg),
     recv: at(/^receivedat$/, d.recv), close: at(/^close/, d.close),
     res: at(/^result$/, -1),
+    grp: bbGrpCol_(head),
   };
+}
+// Колонка индикатора в ответе: по заголовку «Indicator»/«Code»…, иначе -
+// единственная колонка не из BB_WANT (её добавил bbSelectFromHead_), а без
+// заголовков - запасной номер. -1 - колонки нет, индикатор выводим из кода.
+function bbGrpCol_(head) {
+  if (!head.length || head.every(h => !h)) return BB_COLS_DEFAULT.grp;
+  const byName = head.findIndex((h, i) => i > 0 && BB_GRP_RE.test(h));
+  if (byName > 0) return byName;
+  const rest = head.findIndex((h, i) => i > 0 && !BB_WANT.some(re => re.test(h)) && !BB_PRIVATE_RE.test(h));
+  return rest > 0 ? rest : -1;
+}
+// Индикатор одной строкой, как в колонке S: v.5000, v.6000, v.8000, v.7.
+// Пустая ячейка - выводим из кода конфигурации по тому же правилу, что и в
+// листе: v.5143/1 → v.5000, v.8005/5 → v.8000, v.7/2 → v.7.
+function bbGrp_(raw, ver) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (s) return s;
+  const m = String(ver || '').match(/v\.?\s*(\d+)/i);
+  if (!m) return '';
+  const n = +m[1];
+  return 'v.' + (n >= 1000 ? Math.floor(n / 1000) * 1000 : n);
 }
 
 // Цена из листа: хук пишет «2449.86», формула - «2452,28», бывает и
@@ -8552,6 +8592,7 @@ function bbParseRow_(r, c) {
     price, close, move: price && close != null ? (close - price) / price * 100 : null,
     priceRaw: String(r[c.price] || '').trim(),
     ver: String(r[c.ver] || '').trim() || String(r[c.settings] || '').trim(),
+    grp: bbGrp_(c.grp >= 0 ? r[c.grp] : '', r[c.ver]),
     tg: String(r[c.tg] || '').trim(),
   };
 }
@@ -8786,11 +8827,11 @@ async function renderBybitStats() {
     if (pairEl && pairTable) pairEl.innerHTML = pairTable + bbPairsTotalHtml_(sigs, pairOrder) + wrLegendHtml(BB_BE);
     bbShow_('bbPairsCard', !!pairTable);
 
-    // По конфигурациям - только когда их больше одной, иначе это та же
-    // строка TOTAL, что и в таблице пар.
-    const verOrder = mexcPairOrder_(sigs.map(s => ({ pair: s.ver || '-' })));
+    // По индикаторам (колонка S листа: v.5000, v.6000, v.8000...) - только
+    // когда их больше одного, иначе это та же строка TOTAL, что и в таблице пар.
+    const verOrder = mexcPairOrder_(sigs.map(s => ({ pair: s.grp || '-' })));
     const verTable = verOrder.length > 1
-      ? devBuildTable(verOrder.map(chanEsc_), devAggregate(sigs, s => chanEsc_(s.ver || '-')), BB_BE) : '';
+      ? devBuildTable(verOrder.map(chanEsc_), devAggregate(sigs, s => chanEsc_(s.grp || '-')), BB_BE) : '';
     statsShowTable_('bbVerTable', 'bbVerCard', verTable);
 
     const dowOrder = BB_DOW[currentLang] || BB_DOW.ru;

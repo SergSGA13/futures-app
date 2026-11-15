@@ -3079,6 +3079,246 @@ async function devRenderBlockedFilters() {
   } catch (e) { console.log('DEV blocked filters error:', e); }
 }
 
+// ===== DEV: ПОДЫТОГ · РЕАЛЬНЫЕ СДЕЛКИ =====
+// Короткая сводка над ресерчами раздела: как идут ветки на аккаунт, что режут
+// фильтры исполнителя, что с 30 минутами. Числа считаются здесь же из листов
+// (ALLsignal, MEXCsignal, MEXC30signal, 5Msignal, BLOCKEDsignal) при каждом
+// открытии раздела и по «Обновить анализ», поэтому не устаревают. Выводы,
+// которые сами не пересчитываются, подписаны датой замера DEV_SUM_MEASURED.
+//
+// Счёт тот же, что у платформы (сверено на её данных 15.11):
+//  - «WIN & LOSE» (на одном аккаунте плюс, на другом минус, реже цена закрытия
+//    равна цене открытия) - половина плюса и половина минуса: в WR идёт 0.5,
+//    итог (выплата - 1) / 2 ставки, а не 0, как пишет лист. Поэтому WR здесь
+//    может чуть отличаться от таблиц веток ниже, где такие строки вне WR;
+//  - окно - скользящие N суток по моменту сигнала (колонка A), все пары ветки;
+//  - LB - нижняя граница Wilson 95%; безубыток - по средней выплате ветки
+//    (колонка Payout, без неё - выплата ветки по умолчанию);
+//  - EV - средний итог сделки в процентах ставки.
+const DEV_SUM_MEASURED = '15.11';
+const DEV_SUM_BRANCHES = [
+  { key: 'pro',    label: 'Binance Pro · 10 мин', payout: 0.8,   fetch: () => fetchAllSignals() },
+  { key: 'mexc10', label: 'MEXC · 10 мин',        payout: 0.8,   fetch: () => fetchMexcSignals() },
+  { key: 'mexc30', label: 'MEXC · 30 мин',        payout: 0.85,  fetch: () => fetchMexc30Signals() },
+  { key: 'bybit5', label: 'ByBit · 5 мин',        payout: 0.754, fetch: () => fetchBybitSignals() },
+];
+const DEV_SUM_BLK_PAYOUT = 0.8;
+const DEV_SUM_BLK_MIN = 10;                   // код фильтра с меньшим числом сигналов за 30 дн. не показываем
+const DEV_SUM_DAY = 864e5;
+const DEV_SUM_BLK_TEXT = {
+  F1: 'блок по часу', F2: 'блок по минуте (UP)', F2B: 'блок по минуте (UP)', F3: 'блок по минуте (DOWN)',
+  F4: 'лимит окна по активу', F4P: 'слот конфига', F4BD: 'лимит ставок одного направления',
+  F5: 'лимит цены', F6: 'авто-карантин DEV_BADLIST (WR за 4 дня)', F7: 'окна времени (день недели и час)',
+  F8: 'кап 5 ставок за 11 мин', FC: 'конфликт направлений по активу', FD: 'дубликат сигнала',
+  SES: 'вне торговой сессии',
+};
+// Выводы замера по кодам: сами не пересчитываются, поэтому с датой.
+const DEV_SUM_BLK_NOTE = {
+  F7: `Рекомендация (замер ${DEV_SUM_MEASURED}): пересмотреть или выключить F7. Та же идея «плохих часов» на платформе не прошла проверку половинами (08.11): часы, выбранные на одной половине истории, на другой теряли ставки.`,
+  F4: 'Режет сигналы сильного хода: это цена лимита экспозиции, а не ошибка фильтра.',
+  F4P: 'Режет сигналы сильного хода: это цена лимита экспозиции, а не ошибка фильтра.',
+  F8: 'Режет сигналы сильного хода: это цена лимита экспозиции, а не ошибка фильтра.',
+};
+
+function devSumHead_(rows) {
+  const m = {};
+  ((rows && rows[0]) || []).forEach((h, i) => {
+    const k = String(h || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (k && m[k] == null) m[k] = i;
+  });
+  return m;
+}
+function devSumCell_(r, hm, name) {
+  const i = hm[name];
+  return i != null && i < r.length ? String(r[i] || '').trim() : '';
+}
+// Результат: по заголовку, иначе якорем по значению, как везде в приложении.
+function devSumRes_(r, hm) {
+  for (const n of ['rez', 'result', 'results']) {
+    const v = devSumCell_(r, hm, n);
+    if (DEV_RESOLVED.has(v)) return v;
+  }
+  for (let i = 9; i < r.length; i++) {
+    const v = String(r[i] || '').trim();
+    if (DEV_RESOLVED.has(v)) return v;
+  }
+  return null;
+}
+// Строки листа -> [{ts, dir, res, pay, why}]. Без момента сигнала или
+// направления строка пропускается; без результата - остаётся (ждёт исхода).
+function devSumParse_(rows, payout, withReason) {
+  if (!rows || rows.length < 2) return [];
+  const hm = devSumHead_(rows);
+  let ri = hm.reason;
+  if (withReason && ri == null) ri = devBlkFindReasonCol_(rows).idx;
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !String(r[0] || '').trim()) continue;
+    const ts = rowUtcMs_(r);
+    const dir = (devSumCell_(r, hm, 'direction') || String(r[2] || '').trim()).toUpperCase();
+    if (ts == null || (dir !== 'UP' && dir !== 'DOWN')) continue;
+    const pv = parseFloat(devSumCell_(r, hm, 'payout').replace(',', '.'));
+    out.push({
+      ts, dir, res: devSumRes_(r, hm),
+      pay: pv >= 50 && pv <= 100 ? Math.round(pv * 10) / 1000 : payout,
+      why: withReason && ri != null && ri >= 0 ? String(r[ri] || '').trim() : '',
+    });
+  }
+  return out;
+}
+function devSumWilson_(w, n) {
+  if (!n) return null;
+  const z = 1.96, z2 = z * z, p = w / n;
+  return 100 * (p + z2 / (2 * n) - z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))) / (1 + z2 / n);
+}
+// Счёт на аккаунт: WIN = +выплата, LOSE = -1, «WIN & LOSE» = половина того и другого.
+function devSumAgg_(xs) {
+  let w = 0, n = 0, d = 0, gain = 0, pays = 0, first = null;
+  for (const x of xs) {
+    if (!x.res) continue;
+    n++;
+    pays += x.pay;
+    if (x.res === 'WIN') { w += 1; gain += x.pay; }
+    else if (x.res === 'LOSE') gain -= 1;
+    else { w += 0.5; d++; gain += (x.pay - 1) / 2; }
+    if (first == null || x.ts < first) first = x.ts;
+  }
+  if (!n) return { n: 0, w: 0, d: 0, wr: null, lb: null, be: null, ev: null, pnl: 0, first: null };
+  return { n, w, d, wr: 100 * w / n, lb: devSumWilson_(w, n), be: 100 / (1 + pays / n), ev: 100 * gain / n, pnl: gain, first };
+}
+const devSumSince_ = (xs, days) => { const t0 = Date.now() - days * DEV_SUM_DAY; return xs.filter(x => x.ts >= t0); };
+const devSumW_ = w => (w % 1 ? w.toFixed(1) : String(w));
+const devSumP_ = v => (v == null ? '-' : v.toFixed(1));
+const devSumSigned_ = v => (v >= 0 ? '+' : '') + v.toFixed(1);
+const devSumDate_ = ts => { const p = tzParts_(ts, TZ_HOME); return `${tzPad_(p.d)}.${tzPad_(p.mo)}.${p.y}`; };
+// WR синим, если выше безубытка, красным - если ниже. LB синим, только когда и
+// нижняя граница выше безубытка (край доказан), иначе приглушённо: это ещё не минус.
+const devSumWrB_ = (a, be) => `<b class="${a.wr >= be ? 'dev-sum-up' : 'dev-sum-down'}">${devSumP_(a.wr)}%</b>`;
+const devSumLbB_ = (a, be) => `<b class="${a.lb >= be ? 'dev-sum-up' : 'dev-sum-muted'}">${devSumP_(a.lb)}</b>`;
+const devSumSub_ = txt => `<div class="dev-sum-sub">${txt}</div>`;
+
+function devSumBranchBlock_(b, xs) {
+  const a30 = devSumAgg_(devSumSince_(xs, 30)), a14 = devSumAgg_(devSumSince_(xs, 14)), all = devSumAgg_(xs);
+  if (!all.n) return { html: devInsightBlock('', b.label, ['Сделок с исходом в листе нет.']), a30, all };
+  const be = (a30.n ? a30.be : all.be);
+  const lines = [];
+  lines.push(a30.n
+    ? `30 дн.: ${devSumWrB_(a30, be)} (${devSumW_(a30.w)} из ${a30.n}) · LB ${devSumLbB_(a30, be)} · EV <b>${devSumSigned_(a30.ev)}%</b>` +
+      (a14.n ? ` · 14 дн.: ${devSumWrB_(a14, be)} (${devSumW_(a14.w)} из ${a14.n})` : '')
+    : '30 дн.: сделок нет.');
+  // История короче окна (ветка новая) - отдельной строкой «всё время» не повторяем.
+  if (all.first < Date.now() - 31 * DEV_SUM_DAY && all.n > a30.n) {
+    lines.push(`Всё время с ${devSumDate_(all.first)}: ${devSumWrB_(all, all.be)} (${devSumW_(all.w)} из ${all.n}) · LB ${devSumLbB_(all, all.be)} · EV <b>${devSumSigned_(all.ev)}%</b>`);
+  } else {
+    lines.push(`Ветка с ${devSumDate_(all.first)}: вся её история и есть эти 30 дн.`);
+  }
+  if (a30.d) lines.push(`«WIN & LOSE» за 30 дн.: ${a30.d}.`);
+  const weak = (a30.n && a30.wr < be) || (a14.n >= 10 && a14.wr < be);
+  const cls = weak ? 'dev-insight-bad' : (a30.lb != null && a30.lb >= be ? 'dev-insight-info' : '');
+  const title = `${b.label} <span class="dev-sum-be">безубыток ${be.toFixed(2)}%</span>`;
+  return { html: devInsightBlock(cls, title, lines), a30, a14, all, be };
+}
+
+function devSumBlkCode_(why) {
+  const m = String(why).match(/^\s*([A-Za-z]{1,3}\d{0,3}[a-z]{0,3})\s*:/);
+  return (m ? m[1] : (String(why).split(':')[0].trim() || '?')).toUpperCase();
+}
+
+function devSumBlockedHtml_(blk, placed30) {
+  const blk30 = devSumSince_(blk, 30), blk60 = devSumSince_(blk, 60);
+  const by = (xs) => {
+    const g = {};
+    for (const x of xs) (g[devSumBlkCode_(x.why)] = g[devSumBlkCode_(x.why)] || []).push(x);
+    return g;
+  };
+  const g30 = by(blk30), g60 = by(blk60);
+  const out = [];
+  const pl = placed30.n
+    ? `Поставлено за те же 30 дн. (Binance Pro + MEXC 10 мин): <b>${devSumP_(placed30.wr)}%</b> (${devSumW_(placed30.w)} из ${placed30.n}).`
+    : 'Поставленных за 30 дн. нет.';
+  out.push(devInsightBlock('', `Не поставлено исполнителем за 30 дн.: ${devSumAgg_(blk30).n}`, [pl,
+    'Ставки ниже - в единицах ставки на аккаунт при выплате 0.8: плюс значит, что фильтр отсеял выигрыш (не взято), минус - что уберёг.']));
+  const codes = Object.keys(g30).filter(c => c !== 'F6' && devSumAgg_(g30[c]).n >= DEV_SUM_BLK_MIN)
+    .sort((a, b) => devSumAgg_(g30[b]).n - devSumAgg_(g30[a]).n);
+  for (const c of codes) {
+    const a = devSumAgg_(g30[c]);
+    const a60 = devSumAgg_(g60[c] || []);
+    const be = a.be;
+    const lines = [`Отсеял <b>${a.n}</b>: WR ${devSumWrB_(a, be)} (${devSumW_(a.w)} из ${a.n}) · LB ${devSumLbB_(a, be)}` +
+      (placed30.n ? ` против ${devSumP_(placed30.wr)}% у поставленных` : '') + '.',
+      `${a.pnl >= 0 ? 'Не взято' : 'Уберёг'} <b>${Math.abs(a.pnl).toFixed(1)}</b> ставки за 30 дн.` +
+      (a60.n > a.n ? `, за 60 дн. ${a60.pnl >= 0 ? 'не взято' : 'уберёг'} ${Math.abs(a60.pnl).toFixed(1)}.` : '')];
+    if (DEV_SUM_BLK_NOTE[c]) lines.push(DEV_SUM_BLK_NOTE[c]);
+    // Красный - фильтр с отсеянными выше безубытка (стоит денег) и с выводом
+    // «пересмотреть»; фиолетовый - объяснимая цена лимита; без цвета - прочее.
+    const cls = c === 'F7' && a.wr >= be ? 'dev-insight-bad' : DEV_SUM_BLK_NOTE[c] ? 'dev-insight-note' : '';
+    out.push(devInsightBlock(cls, `${c}: ${DEV_SUM_BLK_TEXT[c] || 'фильтр исполнителя'}`, lines));
+  }
+  // F6 показываем всегда: его вывод важен и тогда, когда за месяц он не сработал.
+  const f6 = devSumAgg_(g30.F6 || []);
+  out.push(devInsightBlock('dev-insight-note', `F6: ${DEV_SUM_BLK_TEXT.F6}`, [
+    `За 30 дн. отсеял ${f6.n}${f6.n ? `: WR ${devSumP_(f6.wr)}%` : ''}.`,
+    `Замер ${DEV_SUM_MEASURED}: на платформе удаление и пауза по итогам 4 дней трижды теряли ставки (04.11, 09.11, 11.11): плохие 4 дня не предсказывают следующие.`]));
+  return out.join('');
+}
+
+function devSum30Html_(m30) {
+  const xs = devSumSince_(m30, 30);
+  const up = xs.filter(x => x.dir === 'UP').length, dn = xs.length - up;
+  return [
+    devInsightBlock(dn ? '' : 'dev-insight-bad', `MEXC30signal за 30 дн.: UP ${up}, DOWN ${dn}`, [
+      'Считается из листа: сколько 30-минутных сигналов каждого направления дошли до ставки на MEXC.']),
+    devInsightBlock('dev-insight-bad', `Замер ${DEV_SUM_MEASURED}: DOWN 30 мин не доходят до ставки`, [
+      'Из 28 срабатываний 30-минутных алертов DOWN в TradingView за 30 дн. ни одно не попало в MEXC30signal (и ни в какой лист со строкой exp=30). У UP дошли все 10 срабатываний журнала TV.',
+      'В журнале TV DOWN 30 мин 18 из 28 в плюс, но реальных ставок по ним нет. На поиск 30-минутных уходит 27% времени сервера B.',
+      'Вывод по 30 минутам - после решения, будет дописан сюда.']),
+  ].join('');
+}
+
+async function devRenderSummary() {
+  const el = document.getElementById('devSummaryBlock');
+  const card = document.getElementById('devSummaryCard');
+  if (!el || !card) return;
+  try {
+    const [rowsB, blkRows] = await Promise.all([
+      Promise.all(DEV_SUM_BRANCHES.map(b => b.fetch().catch(() => null))),
+      fetchBlockedSignals().catch(() => null),
+    ]);
+    const parsed = {};
+    DEV_SUM_BRANCHES.forEach((b, i) => { parsed[b.key] = devSumParse_(rowsB[i], b.payout, false); });
+    const blk = devSumParse_(blkRows, DEV_SUM_BLK_PAYOUT, true);
+
+    const html = [];
+    html.push(devSumSub_('1. Ветки: WR на аккаунт'));
+    const res = DEV_SUM_BRANCHES.map(b => Object.assign({ b }, devSumBranchBlock_(b, parsed[b.key])));
+    res.forEach(r => html.push(r.html));
+    // Месяц против истории: только у веток, где история заметно длиннее месяца.
+    const cmp = res.filter(r => r.all && r.a30 && r.a30.n && r.all.first < Date.now() - 60 * DEV_SUM_DAY);
+    if (cmp.length) {
+      const diffs = cmp.map(r => ({ r, d: r.a30.wr - r.all.wr }));
+      const hot = diffs.filter(x => x.d >= 3);
+      const txt = diffs.map(x => `${x.r.b.label}: ${devSumP_(x.r.a30.wr)}% против ${devSumP_(x.r.all.wr)}% (${devSumSigned_(x.d)} пп)`).join('; ');
+      html.push(hot.length
+        ? devInsightBlock('dev-insight-note', 'Последний месяц выше всей истории', [txt + '.',
+            'Месячный WR не ожидание: ориентир - история и LB. Ставку по удачному месяцу не поднимать.'])
+        : devInsightBlock('', 'Месяц близок к истории', [txt + '.']));
+    }
+
+    html.push(devSumSub_('2. Фильтры исполнителя (BLOCKEDsignal)'));
+    const placed = devSumAgg_(devSumSince_(parsed.pro.concat(parsed.mexc10), 30));
+    html.push(blk.length ? devSumBlockedHtml_(blk, placed) : devInsightBlock('', 'BLOCKEDsignal не прочитан', ['Лист пуст или недоступен.']));
+
+    html.push(devSumSub_('3. 30 минут'));
+    html.push(devSum30Html_(parsed.mexc30));
+
+    el.innerHTML = html.join('');
+    card.style.display = 'block';
+  } catch (e) {
+    console.log('DEV summary error:', e);
+  }
+}
+
 // ===== ВКЛАДКИ DEV-РАЗДЕЛА =====
 // Карточек в разделе за три десятка, одной лентой это не читается. Разносим их
 // по смысловым группам, НЕ трогая порядок в разметке: контейнеры создаются на
@@ -3087,7 +3327,7 @@ async function devRenderBlockedFilters() {
 // своей видимостью (devShowTable ставит ей display) - группа прячет только
 // обёртку.
 const DEV_TABS = [
-  { key: 'now',   lbl: 'dev.tab.now',   cards: ['devWrDailyCard', 'devBranchesCard', 'devBranchPnlCard', 'devPnlCard', 'devUrgentCard', 'devInsightsCard'] },
+  { key: 'now',   lbl: 'dev.tab.now',   cards: ['devSummaryCard', 'devWrDailyCard', 'devBranchesCard', 'devBranchPnlCard', 'devPnlCard', 'devUrgentCard', 'devInsightsCard'] },
   { key: 'time',  lbl: 'dev.tab.time',  cards: ['devStopCard', 'devGoodCard', 'devDowCard', 'devHourCard', 'devTFCard', 'dev5minCard', 'devHeatmapCard', 'devQHeatmapCard', 'devQHeatmapWdCard'] },
   { key: 'ind',   lbl: 'dev.tab.ind',   cards: ['devBadlistCard', 'devToplistCard', 'devOpportunityCard', 'devCrossCard', 'devCrossEthCard', 'devCrossBtcCard', 'devShareCard', 'devTrendCard', 'devConfidenceCard'] },
   { key: 'money', lbl: 'dev.tab.money', cards: ['devPairsCard', 'devDrawdownCard', 'devPnlEthCard', 'devPnlBtcCard', 'devVolatilityCard', 'devDayStopCard', 'devStreakCard'] },
@@ -5631,6 +5871,7 @@ async function renderDevL30d() {
     if (sum) {
       sum.innerHTML = `${t('stats.dev.src')}: ALLsignal <b>${cntAll}</b> + BLOCKEDsignal <b class="dev-blocked-num">${cntBlocked}</b> = <b>${cntAll + cntBlocked}</b>`;
     }
+    try { devRenderSummary(); } catch (e) { console.log('DEV summary error:', e); }
     try { devRenderWrDaily(); } catch (e) { console.log('DEV WR daily error:', e); }
     try { devRenderBranchesTables(); } catch (e) { console.log('DEV branches error:', e); }
     try { devRenderBranchPnlChart(); } catch (e) { console.log('DEV branch PNL error:', e); }
@@ -5742,6 +5983,9 @@ function refreshDevL30d() {
   allSignalRows = null;
   blockedSignalRows = null;
   mexcSignalRows = null;
+  // подытог читает ещё MEXC30signal и 5Msignal - их тоже перечитываем
+  mexc30SignalRows = null;
+  bybitSignalRows = null;
   devL30dRendered = false;
   // разобранные сигналы веток тоже устарели - иначе кнопка обновит
   // сырые листы, а итоги и график останутся на прежних числах

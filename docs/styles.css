@@ -1562,6 +1562,17 @@ body { background: transparent; }
 .dev-insight-body + .dev-insight-body { margin-top: 4px; }
 .dev-insight-body b { color: var(--text); }
 
+/* Подытог · реальные сделки (DEV): синий - выше безубытка, фиолетовый - пояснение, красный - внимание */
+#devSummaryCard { border-color: rgba(102, 163, 255, 0.35); }
+.dev-insight-item.dev-insight-info { border-color: rgba(102, 163, 255, 0.3); background: rgba(102, 163, 255, 0.06); }
+.dev-insight-item.dev-insight-note { border-color: rgba(157, 80, 255, 0.3); background: rgba(157, 80, 255, 0.06); }
+.dev-sum-sub { font-size: 12px; font-weight: 700; color: #9D50FF; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+.dev-sum-sub:first-child { margin-top: 0; }
+.dev-sum-be { font-size: 11px; font-weight: 500; color: var(--text-muted); margin-left: 6px; }
+.dev-insight-body b.dev-sum-up { color: #66A3FF; }
+.dev-insight-body b.dev-sum-down { color: #FF5272; }
+.dev-insight-body b.dev-sum-muted { color: var(--text-muted); }
+
 /* Тепловая карта День × Час */
 .dev-heatmap-wrap, .heatmap-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -16px; padding: 0 16px; }
 .dev-heatmap-table, .heatmap-table { width: 100%; min-width: 300px; border-collapse: separate; border-spacing: 2px; font-size: 10px; }

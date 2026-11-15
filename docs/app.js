@@ -3266,13 +3266,23 @@ function devSumBlockedHtml_(blk, placed30) {
 function devSum30Html_(m30) {
   const xs = devSumSince_(m30, 30);
   const up = xs.filter(x => x.dir === 'UP').length, dn = xs.length - up;
+  // Край за всё время - живым числом: решение 15.11 опиралось на то, что LB
+  // ниже безубытка; если это изменится, блок покажет новое соотношение.
+  const all = devSumAgg_(m30);
+  const edge = all.n
+    ? `Край не доказан: за всё время ${devSumP_(all.wr)}% (${devSumW_(all.w)} из ${all.n}), LB <b class="${all.lb >= all.be ? 'dev-sum-up' : 'dev-sum-down'}">${devSumP_(all.lb)}</b> ${all.lb >= all.be ? 'выше' : 'ниже'} безубытка ${all.be.toFixed(2)}%.`
+    : 'Сделок 30 мин с исходом в листе нет.';
   return [
-    devInsightBlock(dn ? '' : 'dev-insight-bad', `MEXC30signal за 30 дн.: UP ${up}, DOWN ${dn}`, [
+    devInsightBlock('', `MEXC30signal за 30 дн.: UP ${up}, DOWN ${dn}`, [
       'Считается из листа: сколько 30-минутных сигналов каждого направления дошли до ставки на MEXC.']),
-    devInsightBlock('dev-insight-bad', `Замер ${DEV_SUM_MEASURED}: DOWN 30 мин не доходят до ставки`, [
+    devInsightBlock('dev-insight-bad', `Замер ${DEV_SUM_MEASURED}: DOWN 30 мин не доходили до ставки`, [
       'Из 28 срабатываний 30-минутных алертов DOWN в TradingView за 30 дн. ни одно не попало в MEXC30signal (и ни в какой лист со строкой exp=30). У UP дошли все 10 срабатываний журнала TV.',
-      'В журнале TV DOWN 30 мин 18 из 28 в плюс, но реальных ставок по ним нет. На поиск 30-минутных уходит 27% времени сервера B.',
-      'Вывод по 30 минутам - после решения, будет дописан сюда.']),
+      'В журнале TV DOWN 30 мин 18 из 28 в плюс, но реальных ставок по ним нет.']),
+    devInsightBlock('dev-insight-note', `Решение ${DEV_SUM_MEASURED}: поиск под 30 мин снят`, [
+      edge,
+      'Поиск 30-минутных снят (его время ушло на 10 и 5 мин), 6 алертов ETH DOWN 30 мин удалены: их сигналы не доходили до MEXC30signal, реальных ставок не было. Автоцикл платформы 30-минутные больше не переносит.',
+      'Остался один 30-минутный алерт: ETH UP v.5.1/5 (12/2/-1.9), реальные 7 из 10.',
+      'Для хука: если 30-минутные DOWN когда-то вернутся, сначала выяснить, почему они не пишутся в MEXC30signal.']),
   ].join('');
 }
 

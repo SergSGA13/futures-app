@@ -5452,7 +5452,7 @@ function devBuildInsights(sigs, combinedRaw, ethPriceMap, btcPriceMap, dateKeys)
 }
 
 // ===== ЧЕК-ЛИСТ "КОНФИГУРАЦИИ НА УДАЛЕНИЕ" (вкладка DEV_BADLIST) =====
-// Вкладку строит GitHub Actions ежедневно в 02:37 UTC (scripts/dev_badlist.py):
+// Вкладку строит GitHub Actions ежедневно в 02:37 UTC (scripts/actions/dev_badlist.py):
 // активные конфигурации, у которых WR за последние 4 дня ниже безубытка 55.6%.
 function devEscapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

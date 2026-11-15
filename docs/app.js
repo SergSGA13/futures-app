@@ -9062,7 +9062,7 @@ async function wkDraw_(d) {
   const c = cv.getContext('2d');
   c.scale(WK_S, WK_S);
   try { await document.fonts.load('900 40px "Orbitron FP"'); } catch (e) {}
-  const [bg, logo] = await Promise.all([wkLoadImg_('brand/bg-portrait-1170x2532.jpg').catch(() => null), wkLoadImg_('img/logo.png').catch(() => null)]);
+  const [bg, logo] = await Promise.all([wkLoadImg_('brand/bg-portrait-1170x2532.jpg').catch(() => null), wkLoadImg_('img/logo.webp').catch(() => null)]);
 
   // Фон: сцена «по ширине», сверху затемнение - чтобы карточки читались.
   c.fillStyle = '#05060E'; c.fillRect(0, 0, WK_W, WK_H);

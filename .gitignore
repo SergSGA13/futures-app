@@ -10,23 +10,8 @@ fut_strat*.csv
 __pycache__/
 *.pyc
 
-# MEXC Executor: локальные секреты/сессия/логи - НИКОГДА не коммитить
-scripts/mexc-executor/config.json
-# Любые копии конфига (config.pre-*.json от migrate/add-asset, свои
-# configBUG.json и т.п.) - в них тот же секрет. Пример остаётся в git.
-scripts/mexc-executor/config*.json
-!scripts/mexc-executor/config.example.json
-scripts/mexc-executor/state.json
-scripts/mexc-executor/profile/
-scripts/mexc-executor/profile-*/
-scripts/mexc-executor/logs/
-scripts/mexc-executor/node_modules/
-scripts/mexc-executor/package*.json
-
-# Копии, которые делает `node executor.js backup`: внутри секрет панели,
-# токен бота и профиль браузера с живыми сессиями бирж.
-scripts/mexc-executor/backup/
-
-# Своя подложка панели: картинка личная, у каждого своя, и в репозитории
-# ей не место - панель подхватывает её с диска, если файл рядом.
-scripts/mexc-executor/panel-bg.*
+# Исполнитель MEXC живёт в отдельном проекте. В старых клонах этого
+# репозитория в scripts/mexc-executor/ остаются его config.json (секрет),
+# профиль браузера с сессиями бирж, бэкапы и логи - вся папка игнорируется,
+# чтобы они никогда не попали в коммит.
+scripts/mexc-executor/

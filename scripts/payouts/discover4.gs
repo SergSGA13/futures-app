@@ -54,18 +54,27 @@ function discoverToobit2() {
 }
 
 function discoverApex2() {
-  var r = UrlFetchApp.fetch('https://omni.apex.exchange/api/v3/symbols', { muteHttpExceptions: true });
-  var t = r.getContentText();
-  console.log('apex /api/v3/symbols → HTTP ' + r.getResponseCode() + ', ' + t.length + ' байт');
-  try {
-    var j = JSON.parse(t), d = j.data || j;
-    console.log('Ключи: ' + Object.keys(d).join(', '));
-    Object.keys(d).forEach(function (k) {
-      if (d[k] && typeof d[k] === 'object') console.log('  ' + k + ': ' + Object.keys(d[k]).slice(0, 30).join(', '));
-    });
-  } catch (e) {}
-  var c = t.match(/.{0,200}(payout|"pp"|event|predict).{0,300}/gi) || [];
-  console.log('Совпадения (' + c.length + '):\n' + c.slice(0, 6).join('\n---\n'));
+  var base = 'https://omni.apex.exchange/api/v3';
+  var t = get4_(base + '/symbols');
+  console.log('symbols: ' + t.length + ' байт');
+  var ev = JSON.parse(t).data.eventConfig || {};
+  console.log('eventConfig.global: ' + JSON.stringify(ev.global).slice(0, 1500));
+  var list = ev.contract || [];
+  console.log('Event-рынков: ' + list.length);
+  list.forEach(function (c) {
+    console.log(' - ' + [c.symbol, c.crossSymbolName, c.symbolDisplayName, c.contractId, c.enableTrade].join(' | '));
+  });
+  if (list[0]) console.log('Первый рынок целиком:\n' + JSON.stringify(list[0]).slice(0, 3500));
+  var sym = list[0] ? list[0].symbol : 'BTCUSDT';
+  var cross = list[0] ? (list[0].crossSymbolName || sym) : 'BTCUSDT';
+  [
+    '/event/price', '/event/price?symbol=' + sym, '/event/price?symbol=' + cross,
+    '/ticker?symbol=' + sym, '/ticker?symbol=' + cross,
+    '/event/kline?symbol=' + sym + '&interval=1&limit=1'
+  ].forEach(function (path) {
+    var r = UrlFetchApp.fetch(base + path, { muteHttpExceptions: true });
+    console.log(path + ' → HTTP ' + r.getResponseCode() + '\n' + r.getContentText().slice(0, 800));
+  });
 }
 
 function get4_(u) {

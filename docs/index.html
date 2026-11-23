@@ -239,10 +239,10 @@
               <div class="sig-timer-badge" id="signalTimer">-</div>
             </div>
 
-            <!-- Ветка (PRO/MEXC/ALT10m/ByBit 5m) + дата -->
+            <!-- Ветка (10m - ключ PRO/MEXC/ALT10m/ByBit 5m) + дата -->
             <div class="sig-head2">
               <div class="fs-seg compact sig-branch-seg" id="sigBranchSeg">
-                <button class="active" data-branch="PRO">PRO</button>
+                <button class="active" data-branch="PRO">10m</button>
                 <button data-branch="MEXC">MEXC</button>
                 <button data-branch="ALT10m">ALT10</button>
                 <button data-branch="BYBIT">ByBit</button>
@@ -1085,14 +1085,14 @@
         <div class="pnl-chart-card" id="devWrDailyCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9D50FF" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>WinRate по дням - 30 дней <span class="dev-chip">DEV</span></div>
           <div class="pnl-chart-wrap" style="height:190px"><canvas id="devWrDailyChart"></canvas></div>
-          <p class="dev-note" style="margin-top:8px">Суммарно по всем веткам - PRO, MEXC и ALT10m вместе, без разбивки. Жёлтая черта - безубыток 55.6%. Серым отмечены дни, где сигналов меньше 5 и выводы делать рано.</p>
+          <p class="dev-note" style="margin-top:8px">Суммарно по всем веткам - 10m, MEXC и ALT10m вместе, без разбивки. Жёлтая черта - безубыток 55.6%. Серым отмечены дни, где сигналов меньше 5 и выводы делать рано.</p>
         </div>
 
         <div class="pnl-chart-card" id="devBranchesCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="10.5" y="8" width="7" height="13" rx="1"/><rect x="18" y="12" width="3" height="9" rx="1"/></svg>Результаты по веткам - Last 30 Days <span class="dev-chip">DEV</span></div>
-          <p class="dev-note" style="margin-bottom:12px">Сравнение веток за 30 дней: PRO, MEXC, TEST ALT10m. Под каждой таблицей - PNL и WR по своим ставкам: PRO и ALT10m считаются как ETH 125 / BTC 250 USDT, MEXC как ETH 150 / BTC 250 USDT. Выплата 0.8.</p>
+          <p class="dev-note" style="margin-bottom:12px">Сравнение веток за 30 дней: 10m, MEXC, TEST ALT10m. Под каждой таблицей - PNL и WR по своим ставкам: 10m и ALT10m считаются как ETH 125 / BTC 250 USDT, MEXC как ETH 150 / BTC 250 USDT. Выплата 0.8.</p>
 
-          <div class="dev-branch-sub"><span class="dev-branch-dot" style="background:#66A3FF"></span>PRO</div>
+          <div class="dev-branch-sub"><span class="dev-branch-dot" style="background:#66A3FF"></span>10m</div>
           <div id="devBranchProTable"></div>
 
           <div class="dev-branch-sub"><span class="dev-branch-dot" style="background:#F7931A"></span>MEXC</div>
@@ -1124,7 +1124,7 @@
 
         <div class="pnl-chart-card dev-urgent-card" id="devStopCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF5272" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Стоп-окна: сигналы лучше остановить <span class="dev-chip">DEV</span></div>
-          <p class="dev-note" style="margin-bottom:10px">Окно попадает сюда, только если оно ниже безубытка НА ВСЕХ горизонтах сразу - год / полгода / 3 месяца / 30 дней, причём на самом длинном - с запасом в 3 п.п. (иначе «55% при безубытке 55.6%» считалось бы проблемой наравне с 40%). Так отсекаются и разовые провалы, и старая слабость, которая давно выправилась: остаётся то, что проблемно на постоянной основе. Четыре уровня: час, день недели + час, 15-минутный интервал и фаза 4-часовой свечи; если час плох целиком, его же клетки не дублируются. Время везде варшавское, кроме границ 4H - они считаются по UTC с поправкой на летнее время. К каждому окну подписана вероятная причина (сессии, макро-данные, начало/конец недели) - это гипотеза по совпадению времени, а не доказанная связь. Данные: ALLsignal + BLOCKEDsignal, деньги по ставкам PRO (ETH 125 / BTC 250).</p>
+          <p class="dev-note" style="margin-bottom:10px">Окно попадает сюда, только если оно ниже безубытка НА ВСЕХ горизонтах сразу - год / полгода / 3 месяца / 30 дней, причём на самом длинном - с запасом в 3 п.п. (иначе «55% при безубытке 55.6%» считалось бы проблемой наравне с 40%). Так отсекаются и разовые провалы, и старая слабость, которая давно выправилась: остаётся то, что проблемно на постоянной основе. Четыре уровня: час, день недели + час, 15-минутный интервал и фаза 4-часовой свечи; если час плох целиком, его же клетки не дублируются. Время везде варшавское, кроме границ 4H - они считаются по UTC с поправкой на летнее время. К каждому окну подписана вероятная причина (сессии, макро-данные, начало/конец недели) - это гипотеза по совпадению времени, а не доказанная связь. Данные: ALLsignal + BLOCKEDsignal, деньги по ставкам 10m (ETH 125 / BTC 250).</p>
           <div class="dev-win-filters">
             <div class="dev-win-frow">
               <span class="dev-win-lbl">Уровень</span>
@@ -1324,7 +1324,7 @@
 
         <div class="pnl-chart-card dev-insights-card" id="devBlkCard" style="display:none">
           <div class="pnl-chart-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4EFFA0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="9"/><line x1="6" y1="18" x2="18" y2="6"/></svg><span data-i18n="blk.title">Успешность фильтров блокировки</span> <span class="dev-chip">DEV</span></div>
-          <p class="dev-note" style="margin-bottom:12px" data-i18n="blk.note">Сигналы из BLOCKEDsignal, сгруппированные по причине блокировки. Фильтр успешен, когда отсеянные им сигналы в большинстве проигрышные: «сэкономил» - это ровно то, что они потеряли бы. Отрицательная экономия значит, что фильтр отнял прибыль. Группировка «Правило» складывает одинаковые по смыслу срабатывания: окно внутри часа сводится к минутам, поэтому 00:00-00:09 и 10:00-10:09 попадают в одну строку :00-:09. «Подробно» показывает каждую формулировку отдельно. Правила, набравшие меньше 10 сигналов, не показываются - на такой выборке вердикт ничего не значит; сколько их скрыто, написано в строке итога. Деньги считаются по ставкам ветки PRO.</p>
+          <p class="dev-note" style="margin-bottom:12px" data-i18n="blk.note">Сигналы из BLOCKEDsignal, сгруппированные по причине блокировки. Фильтр успешен, когда отсеянные им сигналы в большинстве проигрышные: «сэкономил» - это ровно то, что они потеряли бы. Отрицательная экономия значит, что фильтр отнял прибыль. Группировка «Правило» складывает одинаковые по смыслу срабатывания: окно внутри часа сводится к минутам, поэтому 00:00-00:09 и 10:00-10:09 попадают в одну строку :00-:09. «Подробно» показывает каждую формулировку отдельно. Правила, набравшие меньше 10 сигналов, не показываются - на такой выборке вердикт ничего не значит; сколько их скрыто, написано в строке итога. Деньги считаются по ставкам ветки 10m.</p>
           <div id="devBlkBlock"></div>
         </div>
 
@@ -1355,7 +1355,7 @@
       <div class="page-content">
         <h2 class="section-title" style="margin-bottom:10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#66A3FF" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:8px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>ALL Periods</h2>
         <div class="pf-chip-slot"></div>
-        <p class="dev-note" data-i18n="allp.note">Статистика сигналов, поступивших в группу PRO (10m). Окно выбирается кнопками - все разрезы ниже пересчитываются под него.</p>
+        <p class="dev-note" data-i18n="allp.note">Статистика сигналов, поступивших в группу 10m. Окно выбирается кнопками - все разрезы ниже пересчитываются под него.</p>
 
         <div class="sig-head2 allp-head2">
           <span class="mexc-src-lbl" data-i18n="allp.period">Период</span>
@@ -1458,7 +1458,7 @@
         <div class="pf-chip-slot"></div>
         <p class="dev-note pro-only" data-i18n="era.note">Тот же набор разрезов, что и в ALL Periods, но выборка начинается с 1 июня 2026 - месяца, в котором алгоритмы подачи сигналов перестроили под новую систему. Более ранняя история описывает уже другую стратегию и в общий итог не входит.</p>
 
-        <!-- Источник строк: 10m - лист ALLsignal (дошло до группы PRO),
+        <!-- Источник строк: 10m - лист ALLsignal (дошло до группы 10m),
              ALT10 - лист BLOCKEDsignal (отсеяно фильтрами и лимитом окон). -->
         <div class="sig-head2 era-head2 pro-only">
           <span class="mexc-src-lbl" data-i18n="era.src">Источник</span>
@@ -1469,7 +1469,7 @@
             <button data-src="ALT10">ALT10</button>
           </div>
         </div>
-        <p class="mexc-slot-note pro-only" data-i18n="era.src.note">10m - сигналы, дошедшие до группы PRO (лист ALLsignal). ALT10 - отсеянные фильтрами и лимитом одновременных окон (лист BLOCKEDsignal): они не торговались, поэтому их результат показывает, чего отсев стоил. «Все» - объединение обоих листов.</p>
+        <p class="mexc-slot-note pro-only" data-i18n="era.src.note">10m - сигналы, дошедшие до группы 10m (лист ALLsignal). ALT10 - отсеянные фильтрами и лимитом одновременных окон (лист BLOCKEDsignal): они не торговались, поэтому их результат показывает, чего отсев стоил. «Все» - объединение обоих листов.</p>
 
         <!-- Ставка - из профиля пользователя (плашка под заголовком). -->
         <p class="mexc-slot-note pro-only" data-i18n="era.stake.note">Ставка берётся из вашего профиля - плашка вверху страницы. Выплата 0.8, ничья считается нулём. Ставка меняет PNL и просадку, но не винрейт: безубыток остаётся 55.6% при любой сумме.</p>
@@ -1566,7 +1566,7 @@
     <div class="page" id="page-stats-weekly">
       <div class="page-content">
         <h2 class="section-title" style="margin-bottom:10px">Weekly Report <span class="dev-badge">для разработчика</span></h2>
-        <p class="dev-note">Слайд 4:5 с итогами недели (Пн–Вс по Варшаве). Цифры недели, пары и WinRate по месяцам - сигналы PRO-группы в Telegram для Binance. PNL на одной шкале: Binance - только 10-минутные сигналы, MEXC - 10- и 30-минутные, ByBit - только 5-минутные по ETH. Деньги - на депозит 5 000 USDT с боевыми ставками.</p>
+        <p class="dev-note">Слайд 4:5 с итогами недели (Пн–Вс по Варшаве). Цифры недели, пары и WinRate по месяцам - сигналы группы 10m в Telegram для Binance. PNL на одной шкале: Binance - только 10-минутные сигналы, MEXC - 10- и 30-минутные, ByBit - только 5-минутные по ETH. Деньги - на депозит 5 000 USDT с боевыми ставками.</p>
         <div class="wk-weekbar">
           <button type="button" class="wk-nav" onclick="wkShift(-1)" aria-label="Предыдущая неделя">‹</button>
           <div class="wk-week"><b id="wkWeekLbl"></b><span id="wkWeekNote"></span></div>

@@ -3097,7 +3097,7 @@ async function devRenderBlockedFilters() {
 //  - EV - средний итог сделки в процентах ставки.
 const DEV_SUM_MEASURED = '15.11';
 const DEV_SUM_BRANCHES = [
-  { key: 'pro',    label: 'Binance Pro · 10 мин', payout: 0.8,   fetch: () => fetchAllSignals() },
+  { key: 'pro',    label: 'Binance 10m · 10 мин', payout: 0.8,   fetch: () => fetchAllSignals() },
   { key: 'mexc10', label: 'MEXC · 10 мин',        payout: 0.8,   fetch: () => fetchMexcSignals() },
   { key: 'mexc30', label: 'MEXC · 30 мин',        payout: 0.85,  fetch: () => fetchMexc30Signals() },
   { key: 'bybit5', label: 'ByBit · 5 мин',        payout: 0.754, fetch: () => fetchBybitSignals() },
@@ -3235,7 +3235,7 @@ function devSumBlockedHtml_(blk, placed30) {
   const g30 = by(blk30), g60 = by(blk60);
   const out = [];
   const pl = placed30.n
-    ? `Поставлено за те же 30 дн. (Binance Pro + MEXC 10 мин): <b>${devSumP_(placed30.wr)}%</b> (${devSumW_(placed30.w)} из ${placed30.n}).`
+    ? `Поставлено за те же 30 дн. (Binance 10m + MEXC 10 мин): <b>${devSumP_(placed30.wr)}%</b> (${devSumW_(placed30.w)} из ${placed30.n}).`
     : 'Поставленных за 30 дн. нет.';
   out.push(devInsightBlock('', `Не поставлено исполнителем за 30 дн.: ${devSumAgg_(blk30).n}`, [pl,
     'Ставки ниже - в единицах ставки на аккаунт при выплате 0.8: плюс значит, что фильтр отсеял выигрыш (не взято), минус - что уберёг.']));
@@ -4996,7 +4996,7 @@ function statsRenderSlice_(cfg, rows, sigs, opts) {
 // ===== ALL PERIODS С ПЕРЕКЛЮЧАТЕЛЕМ ПЕРИОДА =====
 // «Last 30 Days» и «ALL Periods» были отдельными страницами с одинаковым
 // набором разрезов - разница только в окне. Теперь это одна страница, а окно
-// выбирается кнопками. Данные - сигналы, поступившие в группу PRO (10m).
+// выбирается кнопками. Данные - сигналы, поступившие в группу 10m.
 // Периоды: null = вся история, остальное - число дней назад от сегодня.
 const ALLP_PERIODS = [
   { code: 'ALL',  days: null },
@@ -5129,7 +5129,7 @@ function initAllPeriodsUI() {
 const ERA_SINCE_DK = '2026-06-01';
 
 // Источник строк. Листы называем так, как они называются в жизни:
-// 10m    - ALLsignal, сигналы, дошедшие до группы PRO;
+// 10m    - ALLsignal, сигналы, дошедшие до группы 10m;
 // ALT10  - BLOCKEDsignal, отсеянные фильтрами и лимитом окон.
 // «Все» - объединение: показывает, каким был бы результат без отсева.
 // Ставка на сигнал. По умолчанию 125 на оба актива - это плоская модель
@@ -9130,7 +9130,7 @@ function initBybitUI() {
 // пары за неделю, WR по месяцам - рисуется одним слайдом 1080×1350 (в файле -
 // вдвое крупнее) и уходит PNG, PDF или ботом в личку.
 //
-// Цифры недели, пары и WR по месяцам - это сигналы PRO-группы в Telegram,
+// Цифры недели, пары и WR по месяцам - это сигналы группы 10m в Telegram,
 // они для Binance; на слайде это написано прямо. На графике PNL рядом с ними
 // MEXC и ByBit 5m - у каждой линии подписана биржа.
 //
@@ -9143,8 +9143,8 @@ const WK = { mon: null, data: null, canvas: null, busy: false };
 const WK_DEP = 5000;
 const WK_W = 1080, WK_H = 1350, WK_S = 2;
 const WK_COLORS = { PRO: '#66A3FF', MEXC: '#F7931A', BYBIT: BB_COLOR };
-const WK_SRC = 'PRO-группа в Telegram';            // откуда цифры недели
-const WK_SUB = 'PRO-группа Telegram · Binance';    // подпись нижних карточек
+const WK_SRC = 'группа 10m в Telegram';            // откуда цифры недели
+const WK_SUB = 'Группа 10m в Telegram · Binance';  // подпись нижних карточек
 
 function wkAddDays_(dk, n) {
   const [y, m, d] = dk.split('-').map(Number);
@@ -9390,12 +9390,12 @@ async function wkDraw_(d) {
   // PNL трёх бирж на одной шкале. Легенда - столбиками: биржа и её цвет,
   // под ними - неделя в % и WR.
   // Под названием биржи - какие сигналы в её линии.
-  const lines = [{ key: 'PRO', name: 'Binance · PRO', note: 'только 10-минутные сигналы', b: d.pro }];
+  const lines = [{ key: 'PRO', name: 'Binance · 10m', note: 'только 10-минутные сигналы', b: d.pro }];
   if (d.mexc.has) lines.push({ key: 'MEXC', name: 'MEXC', note: '10- и 30-минутные сигналы', b: d.mexc });
   if (d.bybit.has) lines.push({ key: 'BYBIT', name: 'ByBit 5m', note: 'только 5-минутные сигналы по ETH', b: d.bybit });
   const py = ky + kh * 2 + 12 + 16, ph = 456;
   wkCard_(c, P, py, WK_W - P * 2, ph);
-  wkText_(c, 'Total PNL — ' + lines.map(l => l.name.replace(' · PRO', '')).join(', ').replace(/, ([^,]*)$/, ' и $1'),
+  wkText_(c, 'Total PNL — ' + lines.map(l => l.name.replace(' · 10m', '')).join(', ').replace(/, ([^,]*)$/, ' и $1'),
     P + 24, py + 40, wkF_(700, 22), '#FFFFFF');
   const legW = (WK_W - P * 2 - 48) / 3;
   lines.forEach((l, i) => {
@@ -9486,7 +9486,7 @@ async function wkDraw_(d) {
   row(hy + 88, 'BTC', d.pairs[1]);
   row(hy + 132, 'ИТОГО', d.tot, true);
 
-  // WR по месяцам - сигналы PRO (Binance)
+  // WR по месяцам - сигналы группы 10m (Binance)
   const mx = P + rw + 16;
   wkCard_(c, mx, ry, rw, rh);
   c.save(); c.fillStyle = '#FFD166'; c.shadowColor = '#FFD166'; c.shadowBlur = 10; c.fillRect(mx + 22, ry + 26, 10, 10); c.restore();

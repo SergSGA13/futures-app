@@ -4,10 +4,13 @@
  * Раз в 5 минут снимает текущие выплаты и пишет их в таблицу:
  *   PAYOUTS_LOG — длинный журнал, одна строка = один замер одной комбинации
  *                 Биржа – Сеть – Актив – Направление – Экспирация – Выплата %;
- *   PAYOUTS_NOW — последний снимок по каждой комбинации + состояние источников.
+ *   PAYOUTS_NOW — последний снимок по каждой комбинации + состояние источников;
+ *   PAYOUTS_DAILY — среднее, минимум и максимум за день (по Варшаве)
+ *                 по КАЖДОМУ 5-минутному замеру, в каком бы режиме ни писался журнал.
  *
- * Существующие листы (MEXC_PAYOUT, MEXC30_PAYOUT, TOOBIT_PAYOUT, ALLsignal и
- * все остальные) этот код только ЧИТАЕТ или не трогает вовсе.
+ * MEXC не собирается и не запрашивается вовсе.
+ * Существующие листы (TOOBIT_PAYOUT — только чтение; MEXC_PAYOUT, ALLsignal и
+ * все остальные) этот код не меняет.
  *
  * Все имена начинаются с payouts_ / PAYOUTS_, чтобы не пересечься с другими
  * скриптами, но ставить код лучше ОТДЕЛЬНЫМ проектом (см. README.md).
@@ -27,8 +30,10 @@
  *                          задан, старые строки переносятся туда, иначе удаляются.
  *   PAYOUTS_SOURCES      — какие источники включены, через запятую
  *                          (по умолчанию 'speed,monitor').
+ *   PAYOUTS_MONITOR_TZ   — часовой пояс времени в листе монитора вида
+ *                          «23.11 22:15» (по умолчанию Europe/Warsaw).
  *   PAYOUTS_SPEED_ASSETS — активы Speed Markets для проверки
- *                          (по умолчанию BTC,ETH,SOL,XRP,DOGE,BNB,ADA,AVAX,LINK,POL).
+ *                          (по умолчанию ETH,BTC).
  *                          Пишутся только те, что контракт сам отмечает
  *                          как поддерживаемые.
  *   PAYOUTS_SPEED_EXPIRIES — экспирации Speed Markets в минутах
@@ -43,6 +48,11 @@
 
 var PAYOUTS_LOG_SHEET = 'PAYOUTS_LOG';
 var PAYOUTS_NOW_SHEET = 'PAYOUTS_NOW';
+var PAYOUTS_DAILY_SHEET = 'PAYOUTS_DAILY';
+var PAYOUTS_DAILY_HEADER = [
+  'Дата (Варшава)', 'Биржа', 'Сеть', 'Актив', 'Направление', 'Экспирация',
+  'Средняя %', 'Мин %', 'Макс %', 'Замеров'
+];
 var PAYOUTS_TZ_LOCAL = 'Europe/Warsaw';
 var PAYOUTS_INTERVAL_MIN = 5;
 
@@ -63,10 +73,9 @@ var PAYOUTS_SPEED_NETWORKS = [
 ];
 
 // Листы монитора исполнителя: читаем последнюю запись каждого актива.
-// Формат: Time | Asset ("ETH 10м") | Payout ("82/72" = up/down) | Source.
+// Формат: Time ("23.11 22:15") | Asset ("ETH 10м") | Payout ("82/72" = up/down) | Source.
+// MEXC сознательно не включён.
 var PAYOUTS_MONITOR_SHEETS = [
-  { sheet: 'MEXC_PAYOUT', exchange: 'MEXC' },
-  { sheet: 'MEXC30_PAYOUT', exchange: 'MEXC' },
   { sheet: 'TOOBIT_PAYOUT', exchange: 'Toobit' }
 ];
 // Запись монитора старше этого считаем устаревшей и не переписываем.
@@ -104,10 +113,12 @@ function payouts_run() {
 
     rows = rows.filter(payouts_valid_);
     var ss = payouts_ss_();
-    var toWrite = payouts_dedup_(rows, now);
-    payouts_append_(ss, toWrite);
+    var d = payouts_dedup_(rows, now);
+    payouts_append_(ss, d.write);
     payouts_writeNow_(ss, rows, status, now);
-    console.log('payouts_run: замеров ' + rows.length + ', записано строк ' + toWrite.length);
+    payouts_daily_(ss, d.fresh, now);
+    console.log('payouts_run: замеров ' + rows.length + ', новых ' + d.fresh.length +
+      ', записано в журнал ' + d.write.length);
   } finally {
     lock.releaseLock();
   }
@@ -162,6 +173,8 @@ function payouts_trim() {
     var ash = payouts_sheet_(arch, PAYOUTS_LOG_SHEET + '_' + String(old[0][0]).slice(0, 7), PAYOUTS_HEADER);
     ash.getRange(ash.getLastRow() + 1, 1, n, PAYOUTS_HEADER.length).setValues(old);
   }
+  // Google не даёт удалить все строки листа, кроме закреплённой: оставим пустую.
+  if (sh.getMaxRows() <= n + 1) sh.insertRowsAfter(sh.getMaxRows(), 1);
   sh.deleteRows(2, n);
   console.log('payouts_trim: ' + (archiveId ? 'перенесено в архив ' : 'удалено ') + n + ' строк');
 }
@@ -175,6 +188,38 @@ function payouts_probe(url) {
   url = url || 'https://contract.mexc.com/api/v1/contract/ping';
   var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
   console.log(url + ' → HTTP ' + res.getResponseCode() + '\n' + res.getContentText().slice(0, 1500));
+}
+
+/**
+ * Поиск, откуда страница биржи берёт выплату (для Toobit, ApeX и т.п.).
+ * Запрос идёт С СЕРВЕРОВ GOOGLE, не с вашего IP. Ничего не сохраняет.
+ * Пример: payouts_discover('https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT')
+ * Печатает: код ответа, есть ли «payout» прямо в HTML, и пути API из
+ * скриптов страницы, похожие на event / predict / payout / odds.
+ * Результат журнала пришлите — по нему подключается источник.
+ */
+function payouts_discover(url) {
+  url = url || 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT';
+  var ua = { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en-US,en;q=0.9' };
+  var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, headers: ua });
+  var html = res.getContentText();
+  console.log(url + ' → HTTP ' + res.getResponseCode() + ', ' + html.length + ' байт');
+  var hits = html.match(/.{0,120}payout.{0,160}/gi) || [];
+  console.log('«payout» в HTML: ' + hits.length + '\n' + hits.slice(0, 5).join('\n---\n'));
+  var origin = url.match(/^https?:\/\/[^\/]+/)[0];
+  var scripts = [], m, re = /<script[^>]+src="([^"]+)"/gi;
+  while ((m = re.exec(html))) scripts.push(m[1].indexOf('http') === 0 ? m[1] : m[1].charAt(0) === '/' ? (m[1].charAt(1) === '/' ? 'https:' + m[1] : origin + m[1]) : origin + '/' + m[1]);
+  console.log('Скриптов на странице: ' + scripts.length);
+  var found = {};
+  var pathRe = /["'`]((?:https?:\/\/[a-z0-9.\-]+)?\/[a-z0-9_\-\/.{}$]*(?:event|predict|payout|odds|option|binary|updown|up-down)[a-z0-9_\-\/.{}$?=&]*)["'`]/gi;
+  [html].concat(scripts.slice(0, 40).map(function (u) {
+    try { return UrlFetchApp.fetch(u, { muteHttpExceptions: true, headers: ua }).getContentText(); } catch (e) { return ''; }
+  })).forEach(function (txt) {
+    var x;
+    while ((x = pathRe.exec(txt))) if (x[1].length < 200) found[x[1]] = true;
+  });
+  var list = Object.keys(found).sort();
+  console.log('Похожие пути API (' + list.length + '):\n' + list.slice(0, 150).join('\n'));
 }
 
 /** Пробный проход без записи в таблицу: печатает, что было бы записано. */
@@ -201,8 +246,7 @@ function payouts_dryRun() {
  */
 
 function payouts_sourceSpeed_(now) {
-  var assets = payouts_list_(payouts_prop_('PAYOUTS_SPEED_ASSETS') ||
-    'BTC,ETH,SOL,XRP,DOGE,BNB,ADA,AVAX,LINK,POL').map(function (s) { return s.toUpperCase(); });
+  var assets = payouts_list_(payouts_prop_('PAYOUTS_SPEED_ASSETS') || 'ETH,BTC').map(function (s) { return s.toUpperCase(); });
   var expiries = payouts_list_(payouts_prop_('PAYOUTS_SPEED_EXPIRIES') || '1,2,5,10,15,30,60')
     .map(Number).filter(function (x) { return x > 0; });
   var rows = [], errors = [];
@@ -351,9 +395,9 @@ function payouts_num_(hex) {
 function payouts_p_(x) { return (Math.round(x * 10000) / 100) + '%'; }
 
 
-/* ===================== ИСТОЧНИК: ЛИСТЫ МОНИТОРА (MEXC / Toobit) ===================== */
+/* ===================== ИСТОЧНИК: ЛИСТ МОНИТОРА (Toobit) ===================== */
 /*
- * Только ЧТЕНИЕ существующих листов MEXC_PAYOUT / MEXC30_PAYOUT / TOOBIT_PAYOUT.
+ * Только ЧТЕНИЕ существующего листа TOOBIT_PAYOUT. Сам Toobit не запрашивается.
  * Берём последнюю запись по каждому активу и переносим в длинный формат.
  * Новая строка в журнале появляется, только когда монитор записал новый замер.
  */
@@ -373,8 +417,7 @@ function payouts_sourceMonitor_(now) {
     vals.forEach(function (v) {
       var label = String(v[1] || '').trim();
       if (!label) return;
-      var t = v[0] instanceof Date ? v[0] : new Date(v[0]);
-      var tt = isNaN(t.getTime()) ? null : t;
+      var tt = payouts_parseMonitorTime_(v[0], now);
       var prev = latest[label];
       if (!prev || !tt || !prev.t || tt >= prev.t) latest[label] = { t: tt, raw: v };
     });
@@ -403,6 +446,41 @@ function payouts_sourceMonitor_(now) {
 }
 
 
+/**
+ * Время монитора: дата из таблицы или текст «23.11 22:15» (день.месяц часы:минуты,
+ * по PAYOUTS_MONITOR_TZ). Год берётся текущий; если дата выходит в будущее
+ * больше чем на сутки (запись 31.12 прочитана 1 января) — прошлый.
+ */
+function payouts_parseMonitorTime_(v, now) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  var m = String(v || '').trim().match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) {
+    var t = new Date(v);
+    return isNaN(t.getTime()) ? null : t;
+  }
+  var tz = payouts_prop_('PAYOUTS_MONITOR_TZ') || PAYOUTS_TZ_LOCAL;
+  var year = m[3] ? Number(m[3].length === 2 ? '20' + m[3] : m[3]) : Number(Utilities.formatDate(now, tz, 'yyyy'));
+  function build(y) {
+    var iso = y + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2) + 'T' +
+      ('0' + m[4]).slice(-2) + ':' + m[5] + ':' + (m[6] || '00');
+    // Переводим «местное» время пояса tz в настоящий момент времени.
+    var guess = new Date(iso + 'Z');
+    var off = payouts_tzOffsetMin_(guess, tz);
+    return new Date(guess.getTime() - off * 60000);
+  }
+  var t2 = build(year);
+  if (!m[3] && t2 - now > 86400000) t2 = build(year - 1);
+  return isNaN(t2.getTime()) ? null : t2;
+}
+
+/** Смещение пояса tz от UTC в минутах в момент d (учитывает летнее время). */
+function payouts_tzOffsetMin_(d, tz) {
+  var z = Utilities.formatDate(d, tz, 'Z');   // например +0100
+  var sign = z.charAt(0) === '-' ? -1 : 1;
+  return sign * (Number(z.substr(1, 2)) * 60 + Number(z.substr(3, 2)));
+}
+
+
 /* ===================== ЗАПИСЬ ===================== */
 
 function payouts_valid_(r) {
@@ -427,14 +505,15 @@ function payouts_dedup_(rows, now) {
   var mode = (payouts_prop_('PAYOUTS_WRITE_MODE') || 'change').toLowerCase();
   var heartbeatMs = Number(payouts_prop_('PAYOUTS_HEARTBEAT_MIN') || 60) * 60000;
   var slotMs = PAYOUTS_INTERVAL_MIN * 60000;
-  var out = [];
+  var out = [], fresh = [];
   rows.forEach(function (r) {
     var k = payouts_key_(r);
     var s = state[k];
     var slot = r.srcKey || String(Math.floor(r.ts.getTime() / slotMs));
-    if (s && s.slot === slot) return;                       // этот замер уже записан
+    if (s && s.slot === slot) return;                       // этот замер уже учтён
+    fresh.push(r);                                          // новый замер — идёт в дневное среднее
     if (mode === 'change' && s && s.p === r.payout && (now.getTime() - s.w) < heartbeatMs) {
-      s.slot = slot;                                        // не изменилось — пропускаем
+      s.slot = slot;                                        // не изменилось — в журнал не пишем
       return;
     }
     state[k] = { slot: slot, p: r.payout, w: now.getTime() };
@@ -444,7 +523,49 @@ function payouts_dedup_(rows, now) {
   var dayAgo = now.getTime() - 86400000;
   Object.keys(state).forEach(function (k) { if (state[k].w < dayAgo) delete state[k]; });
   props.setProperty('PAYOUTS_STATE', JSON.stringify(state));
-  return out;
+  return { write: out, fresh: fresh };
+}
+
+/**
+ * Дневное среднее по Варшаве: копит сумму, число, мин и макс каждого нового
+ * замера и переписывает строки СЕГОДНЯШНЕГО дня внизу PAYOUTS_DAILY.
+ * Прошедшие дни остаются в листе как есть.
+ */
+function payouts_daily_(ss, fresh, now) {
+  var props = PropertiesService.getScriptProperties();
+  var acc;
+  try { acc = JSON.parse(props.getProperty('PAYOUTS_DAILY_ACC') || 'null'); } catch (e) { acc = null; }
+  var sh = payouts_sheet_(ss, PAYOUTS_DAILY_SHEET, PAYOUTS_DAILY_HEADER);
+  var today = Utilities.formatDate(now, PAYOUTS_TZ_LOCAL, 'yyyy-MM-dd');
+  if (!acc || acc.date !== today) acc = { date: today, c: {} };   // новый день: вчерашние строки уже в листе
+  fresh.forEach(function (r) {
+    // Замер монитора, сделанный вчера, во вчерашний день уже не попадёт — пропускаем.
+    if (Utilities.formatDate(r.ts, PAYOUTS_TZ_LOCAL, 'yyyy-MM-dd') !== today) return;
+    var k = payouts_key_(r);
+    var a = acc.c[k] || (acc.c[k] = { s: 0, n: 0, mn: r.payout, mx: r.payout });
+    a.s += r.payout; a.n++;
+    if (r.payout < a.mn) a.mn = r.payout;
+    if (r.payout > a.mx) a.mx = r.payout;
+  });
+  props.setProperty('PAYOUTS_DAILY_ACC', JSON.stringify(acc));
+
+  var keys = Object.keys(acc.c).sort();
+  if (!keys.length) return;
+  // Сегодняшние строки идут подряд в конце листа — стираем их и пишем заново.
+  var last = sh.getLastRow();
+  var first = last + 1;
+  if (last >= 2) {
+    var dates = sh.getRange(2, 1, last - 1, 1).getDisplayValues();
+    while (first - 2 > 0 && String(dates[first - 3][0]) === today) first--;
+    if (first <= last) sh.getRange(first, 1, last - first + 1, PAYOUTS_DAILY_HEADER.length).clearContent();
+  }
+  var data = keys.map(function (k) {
+    var p = k.split('|'), a = acc.c[k];
+    return [today, p[0], p[1], p[2], p[3], p[4],
+      Math.round(a.s / a.n * 100) / 100, a.mn, a.mx, a.n];
+  });
+  sh.getRange(first, 1, data.length, 1).setNumberFormat('@');
+  sh.getRange(first, 1, data.length, PAYOUTS_DAILY_HEADER.length).setValues(data);
 }
 
 function payouts_append_(ss, rows) {

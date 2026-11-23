@@ -361,7 +361,19 @@ function payouts_speedNetwork_(netName, rpc, amm, assets, expiries, now) {
   return rows;
 }
 
+// Публичные узлы ограничивают размер пачки (Optimism отвечает 413),
+// поэтому шлём запросы порциями.
+var PAYOUTS_RPC_CHUNK = 5;
+
 function payouts_ethCallBatch_(rpc, to, datas) {
+  var out = [];
+  for (var k = 0; k < datas.length; k += PAYOUTS_RPC_CHUNK) {
+    payouts_ethCallChunk_(rpc, to, datas.slice(k, k + PAYOUTS_RPC_CHUNK)).forEach(function (r) { out.push(r); });
+  }
+  return out;
+}
+
+function payouts_ethCallChunk_(rpc, to, datas, attempt) {
   var body = datas.map(function (data, i) {
     return { jsonrpc: '2.0', id: i, method: 'eth_call', params: [{ to: to, data: data }, 'latest'] };
   });
@@ -370,6 +382,10 @@ function payouts_ethCallBatch_(rpc, to, datas) {
     muteHttpExceptions: true
   });
   var code = res.getResponseCode();
+  if (code === 429 && (attempt || 0) < 2) {      // «слишком часто» — подождать и повторить
+    Utilities.sleep(1500);
+    return payouts_ethCallChunk_(rpc, to, datas, (attempt || 0) + 1);
+  }
   if (code !== 200) throw new Error('RPC HTTP ' + code);
   var arr = JSON.parse(res.getContentText());
   if (!Array.isArray(arr)) throw new Error('RPC: ' + payouts_short_(res.getContentText()));

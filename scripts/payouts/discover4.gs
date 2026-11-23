@@ -53,6 +53,26 @@ function discoverToobit2() {
     Object.keys(ctx).map(function (x) { return ctx[x] + ': ' + x; }).join('\n======\n'));
 }
 
+// Адрес запроса symbolList (список рынков с longPayRate/shortPayRate). Запуск: discoverToobit3.
+function discoverToobit3() {
+  var page = 'https://www.toobit.com/en-US/event-futures/ETH-SWAP-USDT';
+  var html = get4_(page);
+  var queue = [], m, re = /(?:src|href)="([^"]+\.js[^"]*)"/gi;
+  while ((m = re.exec(html))) queue.push(abs4_(m[1].replace(/&amp;/g, '&'), page));
+  var seen = {}, n = 0, out = [], t0 = Date.now();
+  var focus = /.{0,250}(symbolList\s*:|baseURL|baseUrl|apiPrefix|API_HOST|apiHost).{0,250}/g;
+  while (queue.length && n < 500 && out.length < 14 && Date.now() - t0 < 300000) {
+    var u = queue.shift(); if (seen[u]) continue; seen[u] = true; n++;
+    var t = get4_(u); if (!t) continue;
+    var r2 = /["'`(](\.\/[A-Za-z0-9_\-.]+\.js)["'`)]/g;
+    while ((m = r2.exec(t))) { var v = abs4_(m[1], u); if (!seen[v]) queue.push(v); }
+    var c = t.match(focus) || [];
+    c.forEach(function (x) { if (out.length < 14) out.push(u.split('/').pop() + ': ' + x); });
+  }
+  console.log('Просмотрено файлов: ' + n);
+  console.log('Найдено (' + out.length + '):\n' + out.join('\n======\n'));
+}
+
 function discoverApex2() {
   var base = 'https://omni.apex.exchange/api/v3';
   var t = get4_(base + '/symbols');

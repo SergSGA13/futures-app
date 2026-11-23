@@ -441,7 +441,7 @@ function payouts_sourceToobit_(now) {
           ts: now, exchange: 'Toobit', network: '', asset: asset, direction: x[0],
           expiry: payouts_expLabel_(minutes), payout: Math.round(v * 100) / 100,
           source: 'toobit-api',
-          note: 'cycle ' + c.code + (Number(c.payRateType) === 3 ? ' (акция)' : '')
+          note: 'cycle ' + c.code + ', type ' + c.payRateType
         });
       });
     });

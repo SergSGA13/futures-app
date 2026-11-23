@@ -28,8 +28,8 @@
 | Площадка | Откуда | Состояние |
 |---|---|---|
 | **Speed Market** (Thales/Overtime): Optimism, Arbitrum, Base | Прямо из контракта `SpeedMarketsAMM` через публичные узлы сетей (`eth_call`), без логина | Готово. Формула проверена по исходникам контракта. Живые данные ещё не проверены, см. ниже |
-| **Toobit** (BTC, ETH, SOL, XRP) | Пока — копия последних записей листа монитора `TOOBIT_PAYOUT` (только чтение, время вида `23.11 22:15`). Работает, пока монитор пишет этот лист | Прямой опрос страниц `toobit.com/…/event-futures/…-SWAP-USDT` — после `payouts_discover` (см. ниже) |
-| **ApeX** (ETH, BTC) | — | Нужен `payouts_discover` для страницы рынка |
+| **Toobit** (BTC, ETH, SOL, XRP) | Тот же запрос, которым страница event-futures получает список рынков: `GET …/bapi/v1/event/contract/symbol/list`, без входа. По каждой экспирации — `longPayRate` (UP) и `shortPayRate` (DOWN) | Готово. Запрос идёт с серверов Google, не с вашего IP |
+| **ApeX** (BTC, ETH) | Выплата (`pp`) приходит странице только по WebSocket, обычного запроса нет | Отложено: Apps Script не умеет WebSocket. Возможный путь — отдельный новый Cloudflare Worker |
 | **ByBit Odds** | — | Выключено. Публичного API нет |
 | **MEXC** | — | Не собирается по вашему решению |
 
@@ -79,7 +79,8 @@ skew = текущий риск / максимальный риск × maxSkewImp
    | `PAYOUTS_SHEET_ID` | id таблицы Signals Log, часть адреса между `/d/` и `/edit` |
 
    Остальные свойства не обязательны, см. таблицу ниже.
-4. Выберите функцию `payouts_dryRun` и нажмите **Выполнить**. Google попросит
+4. Выберите функцию `payouts_testToobit` → **Выполнить**: печатает сырой
+   ответ Toobit и разобранные выплаты. Затем `payouts_dryRun` и нажмите **Выполнить**. Google попросит
    разрешения: доступ к таблицам и к внешним адресам. В журнале появятся
    замеры, в таблицу ничего не пишется.
 5. Выберите `payouts_install` → **Выполнить**. Ставятся два триггера
@@ -97,7 +98,8 @@ skew = текущий риск / максимальный риск × maxSkewImp
 | `PAYOUTS_HEARTBEAT_MIN` | `60` | Для `change`: как часто писать строку без изменений |
 | `PAYOUTS_KEEP_DAYS` | `14` | Сколько дней держать в `PAYOUTS_LOG` |
 | `PAYOUTS_ARCHIVE_ID` | — | id **отдельной** таблицы-архива. Если задан, старые строки переносятся туда (вкладки по месяцам), иначе удаляются |
-| `PAYOUTS_SOURCES` | `speed,monitor` | Какие источники включены |
+| `PAYOUTS_SOURCES` | `speed,toobit` | Какие источники включены. `monitor` — копия листа `TOOBIT_PAYOUT`, если нужна |
+| `PAYOUTS_TOOBIT_ASSETS` | `BTC,ETH,SOL,XRP` | Активы Toobit |
 | `PAYOUTS_SPEED_ASSETS` | `ETH,BTC` | Какие активы проверять на Speed Market |
 | `PAYOUTS_MONITOR_TZ` | `Europe/Warsaw` | В каком поясе время `23.11 22:15` в листе монитора |
 | `PAYOUTS_SPEED_EXPIRIES` | `1,2,5,10,15,30,60` | Экспирации Speed Market, минуты |

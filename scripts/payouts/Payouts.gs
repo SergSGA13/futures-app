@@ -29,7 +29,9 @@
  *   PAYOUTS_ARCHIVE_ID   — (необязательно) id ОТДЕЛЬНОЙ таблицы-архива. Если
  *                          задан, старые строки переносятся туда, иначе удаляются.
  *   PAYOUTS_SOURCES      — какие источники включены, через запятую
- *                          (по умолчанию 'speed,monitor').
+ *                          (по умолчанию 'speed,toobit'). 'monitor' — копия
+ *                          листа TOOBIT_PAYOUT, если он вдруг нужен.
+ *   PAYOUTS_TOOBIT_ASSETS — активы Toobit (по умолчанию BTC,ETH,SOL,XRP).
  *   PAYOUTS_MONITOR_TZ   — часовой пояс времени в листе монитора вида
  *                          «23.11 22:15» (по умолчанию Europe/Warsaw).
  *   PAYOUTS_SPEED_ASSETS — активы Speed Markets для проверки
@@ -46,6 +48,7 @@
  *                          если Thales его сменит.
  */
 
+var PAYOUTS_DEFAULT_SOURCES = 'speed,toobit';
 var PAYOUTS_LOG_SHEET = 'PAYOUTS_LOG';
 var PAYOUTS_NOW_SHEET = 'PAYOUTS_NOW';
 var PAYOUTS_DAILY_SHEET = 'PAYOUTS_DAILY';
@@ -90,9 +93,10 @@ function payouts_run() {
   if (!lock.tryLock(5000)) { console.warn('payouts_run: предыдущий проход ещё идёт, пропуск'); return; }
   try {
     var now = new Date();
-    var enabled = payouts_list_(payouts_prop_('PAYOUTS_SOURCES') || 'speed,monitor');
+    var enabled = payouts_list_(payouts_prop_('PAYOUTS_SOURCES') || PAYOUTS_DEFAULT_SOURCES);
     var sources = {
       speed: payouts_sourceSpeed_,
+      toobit: payouts_sourceToobit_,
       monitor: payouts_sourceMonitor_
     };
     var rows = [];
@@ -225,12 +229,16 @@ function payouts_discover(url) {
 /** Пробный проход без записи в таблицу: печатает, что было бы записано. */
 function payouts_dryRun() {
   var now = new Date();
-  var r = payouts_sourceSpeed_(now);
-  console.log('Speed: ' + r.rows.length + ' замеров; ошибки: ' + (r.errors.join('; ') || 'нет'));
-  r.rows.slice(0, 60).forEach(function (x) { console.log(payouts_rowToArray_(x).join(' | ')); });
-  var m = payouts_sourceMonitor_(now);
-  console.log('Monitor: ' + m.rows.length + ' замеров; ошибки: ' + (m.errors.join('; ') || 'нет'));
-  m.rows.forEach(function (x) { console.log(payouts_rowToArray_(x).join(' | ')); });
+  var fns = { speed: payouts_sourceSpeed_, toobit: payouts_sourceToobit_, monitor: payouts_sourceMonitor_ };
+  payouts_list_(payouts_prop_('PAYOUTS_SOURCES') || PAYOUTS_DEFAULT_SOURCES).forEach(function (name) {
+    try {
+      var r = fns[name](now);
+      console.log(name + ': ' + r.rows.length + ' замеров; ошибки: ' + (r.errors.join('; ') || 'нет'));
+      r.rows.slice(0, 80).forEach(function (x) { console.log(payouts_rowToArray_(x).join(' | ')); });
+    } catch (e) {
+      console.log(name + ': ОШИБКА ' + payouts_short_(e));
+    }
+  });
 }
 
 
@@ -393,6 +401,116 @@ function payouts_num_(hex) {
   return h ? parseInt(h, 16) : 0;
 }
 function payouts_p_(x) { return (Math.round(x * 10000) / 100) + '%'; }
+
+
+/* ===================== ИСТОЧНИК: TOOBIT (event futures) ===================== */
+/*
+ * Тот же запрос, которым страница toobit.com/…/event-futures получает список
+ * рынков: GET @bapi/v1/event/contract/symbol/list, без входа в аккаунт.
+ * У каждого актива cycleList — экспирации, и у каждой longPayRate (UP) и
+ * shortPayRate (DOWN) в процентах: «бонус = (1 + выплата) × сумма», т.е. это
+ * чистая прибыль на ставку — как и наша колонка «Выплата %».
+ * Запрос идёт с серверов Google, не с вашего IP.
+ */
+
+var PAYOUTS_TOOBIT_PATH = '/v1/event/contract/symbol/list';
+var PAYOUTS_TOOBIT_BASES = [
+  'https://www.toobit.com/bapi',
+  'https://bapi.toobit.com',
+  'https://www.toobit.com/api/bapi',
+  'https://api.toobit.com/bapi'
+];
+
+function payouts_sourceToobit_(now) {
+  var want = payouts_list_(payouts_prop_('PAYOUTS_TOOBIT_ASSETS') || 'BTC,ETH,SOL,XRP')
+    .map(function (x) { return x.toUpperCase(); });
+  var list = payouts_toobitFetch_();
+  var rows = [], errors = [], seen = {};
+  list.forEach(function (sym) {
+    var name = String(sym.symbolName || sym.symbolId || '');
+    var asset = (name.match(/^[A-Za-z0-9]+?(?=[-_]?(?:SWAP|USDT|USD|$))/) || [name])[0].toUpperCase();
+    if (want.indexOf(asset) < 0) return;
+    seen[asset] = true;
+    if (sym.status !== undefined && Number(sym.status) !== 1) { errors.push(asset + ': рынок выключен'); return; }
+    if (Number(sym.allowOpen) === 2) { errors.push(asset + ': торговля приостановлена'); return; }
+    (sym.cycleList || []).forEach(function (c) {
+      var minutes = payouts_cycleMinutes_(c.code);
+      if (!minutes) { errors.push(asset + ': не понял экспирацию «' + c.code + '»'); return; }
+      [['UP', c.longPayRate], ['DOWN', c.shortPayRate]].forEach(function (x) {
+        var v = Number(x[1]);
+        if (x[1] === null || x[1] === undefined || x[1] === '' || !isFinite(v)) return;
+        rows.push({
+          ts: now, exchange: 'Toobit', network: '', asset: asset, direction: x[0],
+          expiry: payouts_expLabel_(minutes), payout: Math.round(v * 100) / 100,
+          source: 'toobit-api',
+          note: 'cycle ' + c.code + (Number(c.payRateType) === 3 ? ' (акция)' : '')
+        });
+      });
+    });
+  });
+  want.forEach(function (a) { if (!seen[a]) errors.push(a + ': нет в списке Toobit'); });
+  if (!rows.length) throw new Error('нет данных: ' + (errors.join('; ') || 'пустой ответ'));
+  return { rows: rows, errors: errors };
+}
+
+/** Запрашивает список; рабочий адрес запоминает в свойствах скрипта. */
+function payouts_toobitFetch_() {
+  var props = PropertiesService.getScriptProperties();
+  var saved = props.getProperty('PAYOUTS_TOOBIT_BASE');
+  var bases = saved ? [saved].concat(PAYOUTS_TOOBIT_BASES.filter(function (b) { return b !== saved; }))
+                    : PAYOUTS_TOOBIT_BASES;
+  var tried = [];
+  for (var i = 0; i < bases.length; i++) {
+    var url = bases[i] + PAYOUTS_TOOBIT_PATH;
+    try {
+      var res = UrlFetchApp.fetch(url, {
+        muteHttpExceptions: true, followRedirects: true,
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json',
+                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36' }
+      });
+      var code = res.getResponseCode(), txt = res.getContentText();
+      if (code !== 200) { tried.push(url + ' → HTTP ' + code); continue; }
+      var j = JSON.parse(txt);
+      var data = Array.isArray(j) ? j : (j.data || j.result || []);
+      if (data && !Array.isArray(data) && Array.isArray(data.list)) data = data.list;
+      if (!Array.isArray(data) || !data.length || !data[0].cycleList) {
+        tried.push(url + ' → не тот ответ: ' + txt.slice(0, 120));
+        continue;
+      }
+      if (saved !== bases[i]) props.setProperty('PAYOUTS_TOOBIT_BASE', bases[i]);
+      return data;
+    } catch (e) {
+      tried.push(url + ' → ' + payouts_short_(e));
+    }
+  }
+  throw new Error('Toobit не ответил: ' + tried.join(' | '));
+}
+
+/** Экспирация Toobit → минуты: '10m', '1h', '5min', '600' (секунды), '10' (минуты). */
+function payouts_cycleMinutes_(code) {
+  var s = String(code || '').trim().toLowerCase();
+  var m = s.match(/^(\d+(?:\.\d+)?)\s*(s|sec|m|min|мин|м|h|hr|ч|d|д)?$/);
+  if (!m) return 0;
+  var n = Number(m[1]), u = m[2] || '';
+  if (/^(s|sec)$/.test(u)) return n / 60;
+  if (/^(h|hr|ч)$/.test(u)) return n * 60;
+  if (/^(d|д)$/.test(u)) return n * 1440;
+  if (u) return n;
+  return n >= 120 && n % 60 === 0 ? n / 60 : n;   // голое число: 300/600 → секунды
+}
+
+
+/** Пробный запрос к Toobit: печатает сырой ответ по первому активу. */
+function payouts_testToobit() {
+  var list = payouts_toobitFetch_();
+  console.log('Адрес: ' + PropertiesService.getScriptProperties().getProperty('PAYOUTS_TOOBIT_BASE') +
+    PAYOUTS_TOOBIT_PATH + '\nАктивов: ' + list.length + ': ' +
+    list.map(function (x) { return x.symbolName || x.symbolId; }).join(', '));
+  console.log('Первый актив целиком:\n' + JSON.stringify(list[0]).slice(0, 2500));
+  var r = payouts_sourceToobit_(new Date());
+  console.log('Разобрано: ' + r.rows.length + '; замечания: ' + (r.errors.join('; ') || 'нет'));
+  r.rows.forEach(function (x) { console.log(payouts_rowToArray_(x).join(' | ')); });
+}
 
 
 /* ===================== ИСТОЧНИК: ЛИСТ МОНИТОРА (Toobit) ===================== */

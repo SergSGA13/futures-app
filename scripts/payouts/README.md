@@ -28,7 +28,7 @@
 | Площадка | Откуда | Состояние |
 |---|---|---|
 | **Speed Market** (Thales/Overtime): Optimism, Arbitrum, Base | Прямо из контракта `SpeedMarketsAMM` через публичные узлы сетей (`eth_call`), без логина | Готово. Формула проверена по исходникам контракта. Живые данные ещё не проверены, см. ниже |
-| **Toobit** (BTC, ETH, SOL, XRP) | Тот же запрос, которым страница event-futures получает список рынков: `GET …/bapi/v1/event/contract/symbol/list`, без входа. По каждой экспирации — `longPayRate` (UP) и `shortPayRate` (DOWN) | Готово. Запрос идёт с серверов Google, не с вашего IP |
+| **Toobit** (BTC, ETH, SOL, XRP) | Тот же запрос, которым страница event-futures получает список рынков: `GET https://bapi.toobit.com/bapi/v1/event/contract/symbol/list`, без входа. По каждой экспирации — `longPayRate` (UP) и `shortPayRate` (DOWN) | Готово. Запрос идёт с серверов Google, не с вашего IP |
 | **ApeX** (BTC, ETH) | Выплата (`pp`) приходит странице только по WebSocket, обычного запроса нет | Отложено: Apps Script не умеет WebSocket. Возможный путь — отдельный новый Cloudflare Worker |
 | **ByBit Odds** | — | Выключено. Публичного API нет |
 | **MEXC** | — | Не собирается по вашему решению |

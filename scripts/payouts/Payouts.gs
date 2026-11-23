@@ -414,11 +414,9 @@ function payouts_p_(x) { return (Math.round(x * 10000) / 100) + '%'; }
  */
 
 var PAYOUTS_TOOBIT_PATH = '/v1/event/contract/symbol/list';
+// Проверено с серверов Google: отвечает JSON {"code":200,"data":[…]}.
 var PAYOUTS_TOOBIT_BASES = [
-  'https://www.toobit.com/bapi',
-  'https://bapi.toobit.com',
-  'https://www.toobit.com/api/bapi',
-  'https://api.toobit.com/bapi'
+  'https://bapi.toobit.com/bapi'
 ];
 
 function payouts_sourceToobit_(now) {

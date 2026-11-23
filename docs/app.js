@@ -3340,7 +3340,7 @@ const DEV_TABS = [
   { key: 'now',   lbl: 'dev.tab.now',   cards: ['devSummaryCard', 'devWrDailyCard', 'devBranchesCard', 'devBranchPnlCard', 'devPnlCard', 'devUrgentCard', 'devInsightsCard'] },
   { key: 'time',  lbl: 'dev.tab.time',  cards: ['devStopCard', 'devGoodCard', 'devDowCard', 'devHourCard', 'devTFCard', 'dev5minCard', 'devHeatmapCard', 'devQHeatmapCard', 'devQHeatmapWdCard'] },
   { key: 'ind',   lbl: 'dev.tab.ind',   cards: ['devBadlistCard', 'devToplistCard', 'devOpportunityCard', 'devCrossCard', 'devCrossEthCard', 'devCrossBtcCard', 'devShareCard', 'devTrendCard', 'devConfidenceCard'] },
-  { key: 'money', lbl: 'dev.tab.money', cards: ['devPairsCard', 'devDrawdownCard', 'devPnlEthCard', 'devPnlBtcCard', 'devVolatilityCard', 'devDayStopCard', 'devStreakCard'] },
+  { key: 'money', lbl: 'dev.tab.money', cards: ['devPayoutCard', 'devPairsCard', 'devDrawdownCard', 'devPnlEthCard', 'devPnlBtcCard', 'devVolatilityCard', 'devDayStopCard', 'devStreakCard'] },
   { key: 'block', lbl: 'dev.tab.block', cards: ['devBchCard', 'devBlkCard', 'devBlockedCard'] },
 ];
 const DEV_TAB_STATE = { key: 'now' };
@@ -3394,6 +3394,150 @@ function devBuildTabs_() {
     document.getElementById('page-stats-l30d-dev').scrollTop = 0;
   });
   devTabsApply_();
+}
+
+// ===== ВЫПЛАТЫ ПЛОЩАДОК (лист PAYOUTS_DAILY) =====
+// Лист пишет отдельный сборщик выплат (Apps Script, раз в 5 минут): за каждый
+// день по Варшаве - средняя, минимальная и максимальная выплата и число
+// замеров по комбинации «биржа · сеть · актив · направление · экспирация».
+// Колонки: Дата | Биржа | Сеть | Актив | Направление | Экспирация | Средняя % |
+// Мин % | Макс % | Замеров.
+// Читаем без заголовков (headers=0): у листа шапки может не быть, а строку,
+// где в A не дата, просто пропускаем. Одна и та же комбинация за день может
+// встретиться дважды (сборщик переписывает сегодняшние строки) - берём
+// строку с наибольшим числом замеров, она самая полная.
+let payoutDailyRows = null;
+const DEV_PAY = { day: null, ex: 'ALL', asset: 'ALL', rows: [] };
+
+async function fetchPayoutsDaily_() {
+  if (payoutDailyRows) return payoutDailyRows;
+  const url = `https://docs.google.com/spreadsheets/d/${BB_SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=PAYOUTS_DAILY`;
+  try {
+    const res = await fetch(url);
+    const text = res.ok ? await res.text() : '';
+    payoutDailyRows = /^\s*</.test(text) ? [] : parseCSV(text);
+  } catch (e) {
+    console.log('PAYOUTS_DAILY fetch error:', e);
+    payoutDailyRows = [];
+  }
+  return payoutDailyRows;
+}
+
+// «2026-11-24» (так пишет сборщик) или «24.11.2026» -> «2026-11-24».
+function payDayKey_(v) {
+  const s = String(v || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return s;
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+}
+// Экспирация в минутах - для сортировки: «1м», «10м», «1ч», «5m», «30 min».
+function payExpMin_(v) {
+  const s = String(v || '').trim().toLowerCase();
+  const m = s.match(/^(\d+(?:[.,]\d+)?)\s*(ч|h|час|hour)?/);
+  if (!m) return 1e9;
+  const n = parseFloat(m[1].replace(',', '.'));
+  return m[2] ? n * 60 : n;
+}
+
+function payParse_(rows) {
+  const best = {};
+  for (const r of rows || []) {
+    const day = payDayKey_(r[0]);
+    const dir = String(r[4] || '').trim().toUpperCase();
+    const avg = bbNum_(r[6]);
+    if (!day || (dir !== 'UP' && dir !== 'DOWN') || avg == null || !(avg > 0)) continue;
+    const x = {
+      day, ex: String(r[1] || '').trim(), net: String(r[2] || '').trim(), asset: String(r[3] || '').trim().toUpperCase(),
+      dir, exp: String(r[5] || '').trim(), avg, min: bbNum_(r[7]), max: bbNum_(r[8]), n: bbNum_(r[9]) || 0,
+    };
+    if (!x.ex || !x.asset || !x.exp) continue;
+    const k = [x.day, x.ex, x.net, x.asset, x.dir, x.exp].join('|');
+    if (!best[k] || x.n > best[k].n) best[k] = x;
+  }
+  return Object.values(best);
+}
+
+function payFmt_(v) { return v == null ? '-' : (Math.round(v * 100) / 100).toFixed(2); }
+
+function devPayoutSeg_(id, items, cur, attr) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = items.map(([v, lbl]) =>
+    `<button data-${attr}="${chanEsc_(v)}"${v === cur ? ' class="active"' : ''}>${chanEsc_(lbl)}</button>`).join('');
+}
+
+function devPayoutDraw_() {
+  const all = DEV_PAY.rows;
+  const days = [...new Set(all.map(x => x.day))].sort().reverse().slice(0, 7);
+  if (!days.includes(DEV_PAY.day)) DEV_PAY.day = days[0] || null;
+  const today = warsawNow_().dk;
+  devPayoutSeg_('devPayoutDaySeg', days.map(d => [d, d === today ? 'Сегодня' : `${d.slice(8, 10)}.${d.slice(5, 7)}`]), DEV_PAY.day, 'day');
+
+  const ofDay = all.filter(x => x.day === DEV_PAY.day);
+  const exs = [...new Set(ofDay.map(x => x.ex))].sort();
+  if (DEV_PAY.ex !== 'ALL' && !exs.includes(DEV_PAY.ex)) DEV_PAY.ex = 'ALL';
+  devPayoutSeg_('devPayoutExSeg', [['ALL', 'Все'], ...exs.map(e => [e, e])], DEV_PAY.ex, 'ex');
+
+  const ofEx = ofDay.filter(x => DEV_PAY.ex === 'ALL' || x.ex === DEV_PAY.ex);
+  const assets = [...new Set(ofEx.map(x => x.asset))].sort();
+  if (DEV_PAY.asset !== 'ALL' && !assets.includes(DEV_PAY.asset)) DEV_PAY.asset = 'ALL';
+  devPayoutSeg_('devPayoutAssetSeg', [['ALL', 'Все'], ...assets.map(a => [a, a])], DEV_PAY.asset, 'asset');
+
+  const list = ofEx.filter(x => DEV_PAY.asset === 'ALL' || x.asset === DEV_PAY.asset).sort((a, b) =>
+    a.ex.localeCompare(b.ex) || a.net.localeCompare(b.net) || a.asset.localeCompare(b.asset) ||
+    payExpMin_(a.exp) - payExpMin_(b.exp) || a.exp.localeCompare(b.exp) || (a.dir === 'UP' ? -1 : 1));
+
+  const box = document.getElementById('devPayoutTable');
+  if (!box) return;
+  if (!list.length) {
+    box.innerHTML = '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет замеров за этот день.</div></div>';
+    return;
+  }
+  const rowsHtml = list.map(x => {
+    const net = x.net && x.net !== '-' ? `<div class="pay-sub">${chanEsc_(x.net)}</div>` : '';
+    const span = x.min != null && x.max != null && Math.abs(x.max - x.min) >= 0.005
+      ? `<div class="pay-sub">${payFmt_(x.min)}–${payFmt_(x.max)}</div>` : '';
+    const dir = x.dir === 'UP' ? '<span class="wr-green">↑ UP</span>' : '<span class="wr-red">↓ DOWN</span>';
+    return `<tr><td class="pay-ex">${chanEsc_(x.ex)}${net}</td><td>${chanEsc_(x.asset)}</td><td>${chanEsc_(x.exp)}</td>` +
+      `<td>${dir}</td><td class="pay-val"><b>${payFmt_(x.avg)}%</b>${span}</td></tr>`;
+  }).join('');
+  const nMeas = list.reduce((a, x) => a + x.n, 0);
+  box.innerHTML = '<div class="stats-table-wrap"><table class="anal-table pay-table"><thead><tr>' +
+    '<th>Биржа</th><th>Актив</th><th>Тайминг</th><th>Направление</th><th>Выплата</th></tr></thead>' +
+    `<tbody>${rowsHtml}</tbody></table></div>` +
+    `<div class="anal-draw-note">Комбинаций: ${list.length}, замеров за день: ${nMeas}.</div>`;
+}
+
+function devPayoutBind_() {
+  const card = document.getElementById('devPayoutCard');
+  if (!card || card.dataset.bound) return;
+  card.dataset.bound = '1';
+  card.addEventListener('click', e => {
+    const b = e.target.closest('#devPayoutFilters button');
+    if (!b) return;
+    if (b.dataset.day != null) DEV_PAY.day = b.dataset.day;
+    if (b.dataset.ex != null) { DEV_PAY.ex = b.dataset.ex; DEV_PAY.asset = 'ALL'; }
+    if (b.dataset.asset != null) DEV_PAY.asset = b.dataset.asset;
+    if (tg) tg.HapticFeedback?.selectionChanged();
+    devPayoutDraw_();
+  });
+}
+
+async function devRenderPayouts_() {
+  const card = document.getElementById('devPayoutCard');
+  if (!card) return;
+  devPayoutBind_();
+  DEV_PAY.rows = payParse_(await fetchPayoutsDaily_());
+  card.style.display = 'block';
+  if (!DEV_PAY.rows.length) {
+    document.getElementById('devPayoutFilters').style.display = 'none';
+    document.getElementById('devPayoutTable').innerHTML =
+      '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет данных: лист PAYOUTS_DAILY пуст или недоступен.</div></div>';
+    return;
+  }
+  document.getElementById('devPayoutFilters').style.display = '';
+  devPayoutDraw_();
 }
 
 // ===== ГРАФИК ЗАБЛОКИРОВАННЫХ СИГНАЛОВ =====
@@ -5868,6 +6012,8 @@ async function devRenderBadlist() {
 
 async function renderDevL30d() {
   if (devL30dRendered) return;
+  // Выплаты - свой лист и своя карточка, сигналы им не нужны.
+  devRenderPayouts_().catch(e => console.log('DEV payouts error:', e));
   try {
     // Цены грузим параллельно с сигналами — если сеть недоступна, графики PNL/таблицы всё равно отрисуются.
     const [{ sigs, cntAll, cntBlocked, combinedRaw }, ethPriceMap, btcPriceMap] = await Promise.all([

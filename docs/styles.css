@@ -3311,6 +3311,16 @@ body.zones-only .app-main { bottom: var(--safe-bottom); }
   box-shadow: 0 0 14px rgba(102, 163, 255, 0.32);
 }
 
+/* ===== DEV: ВЫПЛАТЫ ПЛОЩАДОК ===== */
+/* Пять узких колонок: общий min-width таблиц (340px) здесь не нужен - без
+   него таблица помещается в карточку и на 360px. */
+.pay-table { min-width: 0; }
+.pay-table td, .pay-table th { white-space: nowrap; padding-left: 2px; padding-right: 2px; }
+@media (max-width: 370px) { .pay-table { font-size: 10px; } }
+.pay-table td.pay-ex { text-align: left; }
+.pay-table .pay-sub { font-size: 10px; font-weight: 500; color: var(--text-muted); margin-top: 1px; }
+.pay-table td.pay-val b { font-weight: 800; }
+
 /* ===== ДОСТУП К КАНАЛАМ ===== */
 .access-link { cursor: pointer; }
 .access-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -3312,14 +3312,29 @@ body.zones-only .app-main { bottom: var(--safe-bottom); }
 }
 
 /* ===== DEV: ВЫПЛАТЫ ПЛОЩАДОК ===== */
-/* Пять узких колонок: общий min-width таблиц (340px) здесь не нужен - без
-   него таблица помещается в карточку и на 360px. */
+/* Компактная сетка: актив/направление × время отработки. Общий min-width
+   таблиц (340px) здесь не нужен - таблица помещается в карточку и на 360px. */
+.pay-grp { margin-top: 12px; }
+.pay-grp:first-child { margin-top: 0; }
 .pay-table { min-width: 0; }
-.pay-table td, .pay-table th { white-space: nowrap; padding-left: 2px; padding-right: 2px; }
+.pay-table th, .pay-table td { white-space: nowrap; padding: 4px 2px; }
+.pay-table th { font-size: 10px; }
+.pay-table td.pay-asset { text-align: left; color: var(--text); font-weight: 700; }
+.pay-table td.pay-dir { width: 14px; font-weight: 800; padding-right: 4px; }
+.pay-table tr.pay-first td { border-top: 1px solid var(--card-border); }
+.pay-table tbody tr:first-child td { border-top: 0; }
+.pay-table td.pay-cell { font-weight: 700; font-variant-numeric: tabular-nums; border-radius: 4px; }
+.pay-table td.pay-none { color: rgba(255,255,255,0.22); }
+.pay-g { color: #4EFFA0; }
+.pay-y { color: #FFD166; }
+.pay-r { color: #FF5272; }
+/* Цвет ячейки - сильнее общего серого цвета ячеек .anal-table td. */
+.pay-table td.pay-g { color: #4EFFA0; background: rgba(78,255,160,0.10); }
+.pay-table td.pay-y { color: #FFD166; background: rgba(255,209,102,0.11); }
+.pay-table td.pay-r { color: #FF5272; background: rgba(255,82,114,0.10); }
+.pay-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; font-size: 11px; font-weight: 700; }
+.pay-legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; background: currentColor; vertical-align: 0; }
 @media (max-width: 370px) { .pay-table { font-size: 10px; } }
-.pay-table td.pay-ex { text-align: left; }
-.pay-table .pay-sub { font-size: 10px; font-weight: 500; color: var(--text-muted); margin-top: 1px; }
-.pay-table td.pay-val b { font-weight: 800; }
 
 /* ===== ДОСТУП К КАНАЛАМ ===== */
 .access-link { cursor: pointer; }

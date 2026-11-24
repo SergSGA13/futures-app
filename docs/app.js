@@ -3407,7 +3407,7 @@ function devBuildTabs_() {
 // встретиться дважды (сборщик переписывает сегодняшние строки) - берём
 // строку с наибольшим числом замеров, она самая полная.
 let payoutDailyRows = null;
-const DEV_PAY = { day: null, ex: 'ALL', asset: 'ALL', rows: [] };
+const DEV_PAY = { day: null, ex: 'ALL', rows: [] };
 
 async function fetchPayoutsDaily_() {
   if (payoutDailyRows) return payoutDailyRows;
@@ -3459,12 +3459,53 @@ function payParse_(rows) {
 }
 
 function payFmt_(v) { return v == null ? '-' : (Math.round(v * 100) / 100).toFixed(2); }
+// Цвет выплаты: больше 75% - зелёный, 72-75% - жёлтый, ниже 72% - красный.
+// Сравниваем округлённое до сотых - ровно то, что видно в ячейке.
+const PAY_GREEN = 75, PAY_YELLOW = 72;
+function payCls_(v) {
+  const r = Math.round(v * 100) / 100;
+  return r > PAY_GREEN ? 'pay-g' : r >= PAY_YELLOW ? 'pay-y' : 'pay-r';
+}
+// Порядок активов: BTC, ETH, затем остальные по алфавиту.
+function payAssetCmp_(a, b) {
+  const w = x => (x === 'BTC' ? 0 : x === 'ETH' ? 1 : 2);
+  return w(a) - w(b) || a.localeCompare(b);
+}
+const PAY_DOT = { 'Speed Market': '#66A3FF', 'Toobit': '#F7931A' };
 
 function devPayoutSeg_(id, items, cur, attr) {
   const el = document.getElementById(id);
   if (!el) return;
   el.innerHTML = items.map(([v, lbl]) =>
     `<button data-${attr}="${chanEsc_(v)}"${v === cur ? ' class="active"' : ''}>${chanEsc_(lbl)}</button>`).join('');
+}
+
+// Одна компактная таблица на площадку (у Speed Market - на сеть): строки -
+// актив и направление, колонки - время отработки ставки, в ячейке - средняя
+// выплата за день. Мин/макс и число замеров - во всплывающей подсказке ячейки.
+function devPayoutGrid_(items) {
+  const exps = [...new Set(items.map(x => x.exp))].sort((a, b) => payExpMin_(a) - payExpMin_(b) || a.localeCompare(b));
+  const assets = [...new Set(items.map(x => x.asset))].sort(payAssetCmp_);
+  const at = {};
+  for (const x of items) at[[x.asset, x.dir, x.exp].join('|')] = x;
+  let body = '';
+  for (const a of assets) {
+    ['UP', 'DOWN'].forEach((d, i) => {
+      if (!exps.some(e => at[[a, d, e].join('|')])) return;
+      const first = i === 0 || !exps.some(e => at[[a, 'UP', e].join('|')]);
+      const cells = exps.map(e => {
+        const x = at[[a, d, e].join('|')];
+        if (!x) return '<td class="pay-none">–</td>';
+        const tip = `${a} ${d} ${e}: средняя ${payFmt_(x.avg)}%` +
+          (x.min != null && x.max != null ? `, мин ${payFmt_(x.min)}, макс ${payFmt_(x.max)}` : '') + `, замеров ${x.n}`;
+        return `<td class="pay-cell ${payCls_(x.avg)}" title="${chanEsc_(tip)}">${payFmt_(x.avg)}</td>`;
+      }).join('');
+      const arrow = d === 'UP' ? '<span class="wr-green">↑</span>' : '<span class="wr-red">↓</span>';
+      body += `<tr class="${first ? 'pay-first' : ''}"><td class="pay-asset">${first ? chanEsc_(a) : ''}</td><td class="pay-dir">${arrow}</td>${cells}</tr>`;
+    });
+  }
+  return '<table class="anal-table pay-table"><thead><tr><th>Актив</th><th></th>' +
+    exps.map(e => `<th>${chanEsc_(e)}</th>`).join('') + `</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function devPayoutDraw_() {
@@ -3479,33 +3520,25 @@ function devPayoutDraw_() {
   if (DEV_PAY.ex !== 'ALL' && !exs.includes(DEV_PAY.ex)) DEV_PAY.ex = 'ALL';
   devPayoutSeg_('devPayoutExSeg', [['ALL', 'Все'], ...exs.map(e => [e, e])], DEV_PAY.ex, 'ex');
 
-  const ofEx = ofDay.filter(x => DEV_PAY.ex === 'ALL' || x.ex === DEV_PAY.ex);
-  const assets = [...new Set(ofEx.map(x => x.asset))].sort();
-  if (DEV_PAY.asset !== 'ALL' && !assets.includes(DEV_PAY.asset)) DEV_PAY.asset = 'ALL';
-  devPayoutSeg_('devPayoutAssetSeg', [['ALL', 'Все'], ...assets.map(a => [a, a])], DEV_PAY.asset, 'asset');
-
-  const list = ofEx.filter(x => DEV_PAY.asset === 'ALL' || x.asset === DEV_PAY.asset).sort((a, b) =>
-    a.ex.localeCompare(b.ex) || a.net.localeCompare(b.net) || a.asset.localeCompare(b.asset) ||
-    payExpMin_(a.exp) - payExpMin_(b.exp) || a.exp.localeCompare(b.exp) || (a.dir === 'UP' ? -1 : 1));
-
+  const list = ofDay.filter(x => DEV_PAY.ex === 'ALL' || x.ex === DEV_PAY.ex);
   const box = document.getElementById('devPayoutTable');
   if (!box) return;
   if (!list.length) {
     box.innerHTML = '<div class="stats-table-wrap"><div class="dev-urgent-empty">Нет замеров за этот день.</div></div>';
     return;
   }
-  const rowsHtml = list.map(x => {
-    const net = x.net && x.net !== '-' ? `<div class="pay-sub">${chanEsc_(x.net)}</div>` : '';
-    const span = x.min != null && x.max != null && Math.abs(x.max - x.min) >= 0.005
-      ? `<div class="pay-sub">${payFmt_(x.min)}–${payFmt_(x.max)}</div>` : '';
-    const dir = x.dir === 'UP' ? '<span class="wr-green">↑ UP</span>' : '<span class="wr-red">↓ DOWN</span>';
-    return `<tr><td class="pay-ex">${chanEsc_(x.ex)}${net}</td><td>${chanEsc_(x.asset)}</td><td>${chanEsc_(x.exp)}</td>` +
-      `<td>${dir}</td><td class="pay-val"><b>${payFmt_(x.avg)}%</b>${span}</td></tr>`;
+  // Группы: площадка + сеть, по алфавиту.
+  const groups = {};
+  for (const x of list) (groups[x.ex + '\u0000' + x.net] = groups[x.ex + '\u0000' + x.net] || []).push(x);
+  const html = Object.keys(groups).sort().map(k => {
+    const [ex, net] = k.split('\u0000');
+    const name = net && net !== '-' ? `${ex} · ${net}` : ex;
+    return `<div class="dev-branch-sub pay-grp"><span class="dev-branch-dot" style="background:${PAY_DOT[ex] || '#9D50FF'}"></span>${chanEsc_(name)}</div>` +
+      `<div class="stats-table-wrap">${devPayoutGrid_(groups[k])}</div>`;
   }).join('');
   const nMeas = list.reduce((a, x) => a + x.n, 0);
-  box.innerHTML = '<div class="stats-table-wrap"><table class="anal-table pay-table"><thead><tr>' +
-    '<th>Биржа</th><th>Актив</th><th>Тайминг</th><th>Направление</th><th>Выплата</th></tr></thead>' +
-    `<tbody>${rowsHtml}</tbody></table></div>` +
+  box.innerHTML = html +
+    `<div class="pay-legend"><span class="pay-g">больше ${PAY_GREEN}%</span><span class="pay-y">${PAY_YELLOW}–${PAY_GREEN}%</span><span class="pay-r">ниже ${PAY_YELLOW}%</span></div>` +
     `<div class="anal-draw-note">Комбинаций: ${list.length}, замеров за день: ${nMeas}.</div>`;
 }
 
@@ -3517,8 +3550,7 @@ function devPayoutBind_() {
     const b = e.target.closest('#devPayoutFilters button');
     if (!b) return;
     if (b.dataset.day != null) DEV_PAY.day = b.dataset.day;
-    if (b.dataset.ex != null) { DEV_PAY.ex = b.dataset.ex; DEV_PAY.asset = 'ALL'; }
-    if (b.dataset.asset != null) DEV_PAY.asset = b.dataset.asset;
+    if (b.dataset.ex != null) DEV_PAY.ex = b.dataset.ex;
     if (tg) tg.HapticFeedback?.selectionChanged();
     devPayoutDraw_();
   });
